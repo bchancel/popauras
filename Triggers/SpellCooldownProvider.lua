@@ -1,0 +1,1250 @@
+local _, ns = ...
+
+local provider = ns.TriggerBase:CreateProvider("spell_cooldown", {
+  events = {
+    "SPELL_UPDATE_COOLDOWN",
+    "SPELL_UPDATE_CHARGES",
+    "UNIT_SPELLCAST_SUCCEEDED",
+    "PLAYER_TALENT_UPDATE",
+    "PLAYER_SPECIALIZATION_CHANGED",
+    "TRAIT_CONFIG_UPDATED",
+    "SPELLS_CHANGED",
+    "PLAYER_ENTERING_WORLD",
+  },
+  cache = {},
+  recentCasts = {},
+})
+
+local spellIDsCache = setmetatable({}, { __mode = "k" })
+local REAL_TIME_MODIFIER = Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime or nil
+local IsCooldownActive
+
+local function GetSpellIDs(trigger)
+  trigger = trigger or {}
+  local signatureParts = { tostring(tonumber(trigger.spellId or 0) or 0) }
+  if type(trigger.spellIDs) == "table" then
+    for _, value in ipairs(trigger.spellIDs) do
+      signatureParts[#signatureParts + 1] = tostring(tonumber(value or 0) or 0)
+    end
+  end
+  local signature = table.concat(signatureParts, ",")
+  local cached = spellIDsCache[trigger]
+  if cached and cached.signature == signature then
+    return cached.ids
+  end
+
+  local ids = {}
+  local seen = {}
+  if type(trigger.spellIDs) == "table" then
+    for _, value in ipairs(trigger.spellIDs) do
+      local spellId = tonumber(value or 0) or 0
+      if spellId > 0 and not seen[spellId] then
+        seen[spellId] = true
+        ids[#ids + 1] = spellId
+      end
+    end
+  end
+  local primary = tonumber(trigger.spellId or 0) or 0
+  if primary > 0 and not seen[primary] then
+    ids[#ids + 1] = primary
+  end
+  spellIDsCache[trigger] = {
+    signature = signature,
+    ids = ids,
+  }
+  return ids
+end
+
+local function SafeNumber(value)
+  if value == nil then
+    return nil
+  end
+  if issecretvalue and issecretvalue(value) then
+    return nil
+  end
+  if type(value) == "number" then
+    return value
+  end
+  return nil
+end
+
+local function SafeBoolean(value)
+  if value == nil then
+    return nil
+  end
+  if issecretvalue and issecretvalue(value) then
+    return nil
+  end
+  if type(value) == "boolean" then
+    return value
+  end
+  return nil
+end
+
+local function PickDisplayValue(...)
+  for index = 1, select("#", ...) do
+    local value = select(index, ...)
+    if issecretvalue and issecretvalue(value) then
+      return value
+    end
+    local valueType = type(value)
+    if valueType == "number" or valueType == "string" then
+      return value
+    end
+  end
+  return nil
+end
+
+local function BuildStackDisplayValue(rawValue, safeText, safeNumber, allowZero)
+  if issecretvalue and issecretvalue(rawValue) then
+    return rawValue, true
+  end
+
+  local rawType = type(rawValue)
+  if rawType == "string" then
+    if rawValue ~= "" or allowZero == true then
+      return rawValue, true
+    end
+  elseif rawType == "number" then
+    if allowZero == true or rawValue > 0 then
+      return rawValue, true
+    end
+  end
+
+  if type(safeText) == "string" and (safeText ~= "" or allowZero == true) then
+    return safeText, true
+  end
+  if type(safeNumber) == "number" and (allowZero == true or safeNumber > 0) then
+    return safeNumber, true
+  end
+
+  return nil, false
+end
+
+local function CallDurationObjectMethod(durationObject, methodName)
+  if not durationObject then
+    return nil
+  end
+
+  local method = durationObject[methodName]
+  if type(method) ~= "function" then
+    return nil
+  end
+
+  local ok, value
+  if REAL_TIME_MODIFIER ~= nil then
+    ok, value = pcall(method, durationObject, REAL_TIME_MODIFIER)
+  else
+    ok, value = pcall(method, durationObject)
+  end
+
+  if not ok then
+    return nil
+  end
+
+  return SafeNumber(value)
+end
+
+local function IsLikelyGCD(duration)
+  return type(duration) == "number" and duration > 0 and duration <= 1.6
+end
+
+local function GetBaseCooldownSeconds(spellId)
+  if not spellId or spellId == 0 then
+    return 0
+  end
+
+  if GetSpellBaseCooldown then
+    local ms = GetSpellBaseCooldown(spellId)
+    if type(ms) == "number" and ms > 0 then
+      local seconds = ms / 1000
+      if not IsLikelyGCD(seconds) then
+        return seconds
+      end
+    end
+  end
+
+  return 0
+end
+
+local function GetConfiguredCooldown(trigger, spellId)
+  local manual = tonumber(trigger and trigger.manualCooldown or 0) or 0
+  if manual > 0 then
+    return manual
+  end
+  return GetBaseCooldownSeconds(spellId)
+end
+
+local function ShouldProbeSpellCooldownDuration(cooldown)
+  if type(cooldown) ~= "table" then
+    return false
+  end
+
+  local isOnGCD = SafeBoolean(cooldown.isOnGCD)
+  if isOnGCD == true then
+    return false
+  end
+
+  local explicitActive = SafeBoolean(cooldown.isActive)
+  if explicitActive ~= nil then
+    return explicitActive == true
+  end
+
+  local duration = SafeNumber(cooldown.duration)
+  local startTime = SafeNumber(cooldown.startTime)
+  return (duration and duration > 0 and not IsLikelyGCD(duration)) or (startTime and startTime > 0) or false
+end
+
+local function GetSpellCooldownTiming(spellId, cooldown)
+  local duration = 0
+  local expirationTime = 0
+  local durationObject = nil
+  local now = GetTime()
+  local isOnGCD = cooldown and SafeBoolean(cooldown.isOnGCD)
+
+  if ShouldProbeSpellCooldownDuration(cooldown) and C_Spell and C_Spell.GetSpellCooldownDuration then
+    local ok, rawDurationObject = pcall(C_Spell.GetSpellCooldownDuration, spellId)
+    if ok and rawDurationObject then
+      durationObject = rawDurationObject
+      local totalDuration = CallDurationObjectMethod(rawDurationObject, "GetTotalDuration")
+      local remaining = nil
+      if C_Spell.GetSpellCooldownRemaining then
+        local remainingOK, rawRemaining = pcall(C_Spell.GetSpellCooldownRemaining, spellId)
+        remaining = remainingOK and SafeNumber(rawRemaining) or nil
+      end
+      if remaining == nil then
+        remaining = CallDurationObjectMethod(rawDurationObject, "GetRemainingDuration")
+      end
+      local startTime = CallDurationObjectMethod(rawDurationObject, "GetStartTime")
+      local endTime = CallDurationObjectMethod(rawDurationObject, "GetEndTime")
+
+      if totalDuration and totalDuration > 0 then
+        duration = totalDuration
+      end
+      if remaining and remaining > 0 then
+        expirationTime = now + remaining
+      elseif endTime and endTime > now then
+        expirationTime = endTime
+      elseif startTime and duration and duration > 0 then
+        expirationTime = startTime + duration
+      end
+      if duration <= 0 and startTime and endTime and endTime > startTime then
+        duration = endTime - startTime
+      end
+    end
+  end
+
+  if duration <= 0 then
+    local liveDuration = cooldown and SafeNumber(cooldown.duration) or 0
+    if liveDuration and liveDuration > 0 and isOnGCD ~= true and not IsLikelyGCD(liveDuration) then
+      duration = liveDuration
+    end
+  end
+
+  if expirationTime <= 0 then
+    local startTime = cooldown and SafeNumber(cooldown.startTime)
+    local liveDuration = cooldown and SafeNumber(cooldown.duration)
+    if startTime and liveDuration and liveDuration > 0 and isOnGCD ~= true and not IsLikelyGCD(liveDuration) then
+      expirationTime = startTime + liveDuration
+    end
+  end
+
+  if duration <= 0 and expirationTime > now then
+    duration = expirationTime - now
+  end
+
+  return duration, expirationTime, durationObject, isOnGCD
+end
+
+local function GetSpellCooldownInfoForID(queryId)
+  if not C_Spell or not C_Spell.GetSpellCooldown then
+    return nil
+  end
+
+  queryId = tonumber(queryId or 0) or 0
+  if queryId <= 0 then
+    return nil
+  end
+
+  local ok, cooldown = pcall(C_Spell.GetSpellCooldown, queryId)
+  if not ok then
+    return nil
+  end
+  return cooldown
+end
+
+local function BuildCooldownQueryIDs(spellId, cache, cdmState)
+  local ids = {}
+  local seen = {}
+
+  local function add(id)
+    id = tonumber(id or 0) or 0
+    if id > 0 and not seen[id] then
+      seen[id] = true
+      ids[#ids + 1] = id
+    end
+  end
+
+  add(spellId)
+  add(cache and cache.cooldownID)
+  add(cdmState and cdmState.cooldownID)
+
+  if ns.CooldownManager and ns.CooldownManager.GetCooldownIDsForSpellID then
+    for _, cooldownID in ipairs(ns.CooldownManager:GetCooldownIDsForSpellID(spellId)) do
+      add(cooldownID)
+    end
+  end
+
+  return ids
+end
+
+local function ScoreCooldownQuery(cooldown, duration, expirationTime, durationObject, isOnGCD)
+  local score = 0
+  if durationObject ~= nil then
+    score = score + 120
+  end
+
+  if IsCooldownActive(cooldown) then
+    score = score + 90
+  end
+
+  if type(duration) == "number" and duration > 0 and type(expirationTime) == "number" and expirationTime > GetTime() then
+    score = score + 60
+  end
+
+  if SafeBoolean(cooldown and cooldown.isActive) == true then
+    score = score + 20
+  end
+
+  if isOnGCD == true then
+    score = score - 150
+  end
+
+  return score
+end
+
+local function SelectBestCooldownQuery(spellId, cache, cdmState)
+  local best = nil
+
+  for _, queryId in ipairs(BuildCooldownQueryIDs(spellId, cache, cdmState)) do
+    local cooldown = GetSpellCooldownInfoForID(queryId)
+    if cooldown then
+      local duration, expirationTime, durationObject, isOnGCD = GetSpellCooldownTiming(queryId, cooldown)
+      local score = ScoreCooldownQuery(cooldown, duration, expirationTime, durationObject, isOnGCD)
+
+      if not best
+        or score > best.score
+        or (score == best.score and (expirationTime or 0) > (best.expirationTime or 0))
+        or (score == best.score and (expirationTime or 0) == (best.expirationTime or 0) and (duration or 0) > (best.duration or 0)) then
+        best = {
+          queryId = queryId,
+          cooldown = cooldown,
+          duration = duration,
+          expirationTime = expirationTime,
+          durationObject = durationObject,
+          isOnGCD = isOnGCD,
+          score = score,
+        }
+      end
+    end
+  end
+
+  if best then
+    return best.queryId, best.cooldown, best.duration, best.expirationTime, best.durationObject, best.isOnGCD
+  end
+
+  return spellId, nil, 0, 0, nil, nil
+end
+
+local function GetSpellChargeTiming(spellId, chargeInfo)
+  local duration = chargeInfo and SafeNumber(chargeInfo.cooldownDuration) or 0
+  local expirationTime = 0
+  local durationObject = nil
+  local now = GetTime()
+
+  if C_Spell and C_Spell.GetSpellChargeDuration then
+    local ok, rawDurationObject = pcall(C_Spell.GetSpellChargeDuration, spellId)
+    if ok and rawDurationObject then
+      durationObject = rawDurationObject
+      local totalDuration = CallDurationObjectMethod(rawDurationObject, "GetTotalDuration")
+      local remaining = CallDurationObjectMethod(rawDurationObject, "GetRemainingDuration")
+      local startTime = CallDurationObjectMethod(rawDurationObject, "GetStartTime")
+      local endTime = CallDurationObjectMethod(rawDurationObject, "GetEndTime")
+
+      if totalDuration and totalDuration > 0 then
+        duration = totalDuration
+      end
+      if remaining and remaining > 0 then
+        expirationTime = now + remaining
+      elseif endTime and endTime > now then
+        expirationTime = endTime
+      elseif startTime and duration and duration > 0 then
+        expirationTime = startTime + duration
+      end
+      if duration <= 0 and startTime and endTime and endTime > startTime then
+        duration = endTime - startTime
+      end
+    end
+  end
+
+  if expirationTime <= 0 then
+    local startTime = chargeInfo and SafeNumber(chargeInfo.cooldownStartTime)
+    if startTime and duration and duration > 0 then
+      expirationTime = startTime + duration
+    end
+  end
+
+  if duration <= 0 and expirationTime > now then
+    duration = expirationTime - now
+  end
+
+  return duration, expirationTime, durationObject
+end
+
+local function GetCDMState(spellId)
+  if not ns.CooldownManager or not ns.CooldownManager.GetCooldownStateForSpell then
+    return nil
+  end
+  return ns.CooldownManager:GetCooldownStateForSpell(spellId)
+end
+
+local function GetCDMAuraState(spellId)
+  if not ns.CooldownManager or not ns.CooldownManager.GetAuraStateForSpell then
+    return nil
+  end
+
+  -- Spell cooldown triggers should only borrow player aura state. Target debuffs
+  -- with the same spell ID can otherwise replace the actual cooldown state.
+  local auraState = ns.CooldownManager:GetAuraStateForSpell(spellId, "player")
+  if auraState and auraState.auraData then
+    return auraState
+  end
+
+  return nil
+end
+
+local function GetSecretSafeAuraTiming(unit, auraInstanceID, auraData)
+  local duration = 0
+  local expirationTime = 0
+  local durationObject = nil
+  local now = GetTime()
+
+  if C_UnitAuras and C_UnitAuras.GetAuraDurationRemaining and auraInstanceID and unit then
+    local ok, remaining = pcall(C_UnitAuras.GetAuraDurationRemaining, unit, auraInstanceID)
+    remaining = ok and SafeNumber(remaining) or nil
+    if remaining and remaining > 0 then
+      expirationTime = now + remaining
+    end
+  end
+
+  if C_UnitAuras and C_UnitAuras.GetAuraDuration and auraInstanceID and unit then
+    local ok, rawDurationObject = pcall(C_UnitAuras.GetAuraDuration, unit, auraInstanceID)
+    if ok and rawDurationObject then
+      durationObject = rawDurationObject
+      local totalDuration = CallDurationObjectMethod(rawDurationObject, "GetTotalDuration")
+      local remaining = CallDurationObjectMethod(rawDurationObject, "GetRemainingDuration")
+      local startTime = CallDurationObjectMethod(rawDurationObject, "GetStartTime")
+      local endTime = CallDurationObjectMethod(rawDurationObject, "GetEndTime")
+      if totalDuration and totalDuration > 0 then
+        duration = totalDuration
+      end
+      if remaining and remaining > 0 then
+        expirationTime = now + remaining
+      elseif endTime and endTime > now then
+        expirationTime = endTime
+      elseif startTime and duration and duration > 0 then
+        expirationTime = startTime + duration
+      end
+      if duration <= 0 and startTime and endTime and endTime > startTime then
+        duration = endTime - startTime
+      end
+      if type(rawDurationObject) == "table" then
+        duration = SafeNumber(rawDurationObject.duration) or duration
+        remaining = SafeNumber(rawDurationObject.remainingTime) or remaining
+        startTime = SafeNumber(rawDurationObject.startTime) or startTime
+        if remaining and remaining > 0 then
+          expirationTime = now + remaining
+        elseif startTime and duration and duration > 0 then
+          expirationTime = startTime + duration
+        end
+      end
+    end
+  end
+
+  if duration <= 0 and C_UnitAuras and C_UnitAuras.GetAuraBaseDuration and auraInstanceID and unit then
+    local ok, baseDuration = pcall(C_UnitAuras.GetAuraBaseDuration, unit, auraInstanceID, SafeNumber(auraData and auraData.spellId))
+    duration = ok and (SafeNumber(baseDuration) or duration) or duration
+  end
+
+  if duration <= 0 then
+    duration = SafeNumber(auraData and auraData.duration) or 0
+  end
+  if expirationTime <= 0 then
+    expirationTime = SafeNumber(auraData and auraData.expirationTime) or 0
+  end
+  if duration <= 0 and expirationTime > now then
+    duration = expirationTime - now
+  end
+
+  return duration, expirationTime, durationObject
+end
+
+local function GetSecretSafeAuraStacks(unit, auraInstanceID, auraData)
+  local liveAuraData = auraData
+  if C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID and unit and auraInstanceID then
+    local ok, refreshedAuraData = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, auraInstanceID)
+    if ok and refreshedAuraData then
+      liveAuraData = refreshedAuraData
+    end
+  end
+
+  local stacks = SafeNumber(liveAuraData and liveAuraData.applications)
+    or SafeNumber(liveAuraData and liveAuraData.charges)
+    or SafeNumber(auraData and auraData.applications)
+    or SafeNumber(auraData and auraData.charges)
+  local stackText = (stacks and stacks > 0) and tostring(stacks) or nil
+  local rawStackValue = PickDisplayValue(
+    liveAuraData and liveAuraData.applications,
+    liveAuraData and liveAuraData.charges,
+    auraData and auraData.applications,
+    auraData and auraData.charges
+  )
+
+  if C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount and auraInstanceID and unit then
+    local ok, count = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, unit, auraInstanceID, 0)
+    if ok and not (issecretvalue and issecretvalue(count)) then
+      if type(count) == "string" then
+        local displayText = count ~= "" and count or nil
+        if displayText ~= nil then
+          local numeric = tonumber(displayText)
+          if numeric ~= nil then
+            local stackDisplayValue, hasStackDisplayValue = BuildStackDisplayValue(rawStackValue, displayText, numeric, false)
+            return numeric, displayText, stackDisplayValue, hasStackDisplayValue
+          end
+          local stackDisplayValue, hasStackDisplayValue = BuildStackDisplayValue(rawStackValue, displayText, stacks or 0, false)
+          return stacks or 0, displayText, stackDisplayValue, hasStackDisplayValue
+        end
+      elseif type(count) == "number" and count > 0 then
+        local stackDisplayValue, hasStackDisplayValue = BuildStackDisplayValue(rawStackValue, tostring(count), count, false)
+        return count, tostring(count), stackDisplayValue, hasStackDisplayValue
+      end
+    end
+  end
+  local stackDisplayValue, hasStackDisplayValue = BuildStackDisplayValue(rawStackValue, stackText, stacks or 0, false)
+  return stacks or 0, stackText, stackDisplayValue, hasStackDisplayValue
+end
+
+local function GetSafeAuraString(value)
+  if issecretvalue and issecretvalue(value) then
+    return nil
+  end
+  if type(value) == "string" then
+    return value
+  end
+  return nil
+end
+
+local function GetCDMAuraDetails(cdmAuraState)
+  if type(cdmAuraState) ~= "table" or type(cdmAuraState.auraData) ~= "table" then
+    return nil
+  end
+
+  local auraData = cdmAuraState.auraData
+  local unit = cdmAuraState.unit
+  local auraInstanceID = cdmAuraState.auraInstanceID
+  local duration, expirationTime, durationObject = GetSecretSafeAuraTiming(unit, auraInstanceID, auraData)
+  local stacks, stackText, stackDisplayValue, hasStackDisplayValue = GetSecretSafeAuraStacks(unit, auraInstanceID, auraData)
+
+  return {
+    active = auraInstanceID ~= nil and (stacks > 0 or duration > 0 or expirationTime > GetTime() or auraData ~= nil),
+    duration = duration,
+    expirationTime = expirationTime,
+    durationObject = durationObject,
+    stacks = stacks,
+    stackText = stackText,
+    stackDisplayValue = stackDisplayValue,
+    hasStackDisplayValue = hasStackDisplayValue,
+    icon = SafeNumber(auraData.icon),
+    name = GetSafeAuraString(auraData.name),
+    auraInstanceID = auraInstanceID,
+    unit = unit,
+  }
+end
+
+local function BuildDebugBits(parts)
+  local result = {}
+  for _, value in ipairs(parts or {}) do
+    if value and value ~= "" then
+      result[#result + 1] = tostring(value)
+    end
+  end
+  return table.concat(result, " ")
+end
+
+function provider:GetAffectedAurasForSpellIDs(spellIDs)
+  local wanted = {}
+  for _, spellID in ipairs(spellIDs or {}) do
+    spellID = tonumber(spellID or 0) or 0
+    if spellID > 0 then
+      wanted[spellID] = true
+    end
+  end
+
+  if next(wanted) == nil then
+    return {}
+  end
+
+  return ns.Registry:CollectAuraIds(function(aura)
+    local trigger = aura and aura.triggers and aura.triggers[1]
+    if not trigger or trigger.type ~= "spell_cooldown" then
+      return false
+    end
+
+    for _, spellID in ipairs(GetSpellIDs(trigger)) do
+      if wanted[spellID] then
+        return true
+      end
+    end
+
+    return false
+  end)
+end
+
+function provider:GetAffectedAuras(event, ...)
+  if event == "SPELL_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_CHARGES" then
+    return ns.Registry:CollectAuraIds(function(aura)
+      local trigger = aura and aura.triggers and aura.triggers[1]
+      return trigger and trigger.type == "spell_cooldown"
+    end)
+  end
+
+  if event == "UNIT_SPELLCAST_SUCCEEDED" then
+    local unit, _, spellID = ...
+    if unit == "player" and spellID then
+      return self:GetAffectedAurasForSpellIDs({ spellID })
+    end
+    return {}
+  end
+
+  return true
+end
+
+function provider:PruneCache()
+  local activeSpellIDs = {}
+  for _, aura in ns.Registry:IterateAll() do
+    local trigger = aura and aura.triggers and aura.triggers[1]
+    if trigger and trigger.type == "spell_cooldown" then
+      for _, spellID in ipairs(GetSpellIDs(trigger)) do
+        activeSpellIDs[spellID] = true
+      end
+    end
+  end
+
+  for spellID in pairs(self.cache) do
+    if not activeSpellIDs[spellID] then
+      self.cache[spellID] = nil
+    end
+  end
+end
+
+IsCooldownActive = function(cooldown)
+  if type(cooldown) ~= "table" then
+    return false
+  end
+  local isOnGCD = SafeBoolean(cooldown.isOnGCD)
+  if isOnGCD == true then
+    return false
+  end
+  local duration = SafeNumber(cooldown.duration)
+  local startTime = SafeNumber(cooldown.startTime)
+  local enabled = SafeBoolean(cooldown.isEnabled)
+  local explicitActive = SafeBoolean(cooldown.isActive)
+  if explicitActive ~= nil then
+    if explicitActive ~= true then
+      return false
+    end
+    if duration and IsLikelyGCD(duration) then
+      return false
+    end
+    return (duration and duration > 0) or (startTime and enabled == true) or false
+  end
+
+  return startTime and duration and enabled == true and duration > 0 and not IsLikelyGCD(duration) or false
+end
+
+local function IsChargeCooldownActive(chargeInfo)
+  if type(chargeInfo) ~= "table" then
+    return false
+  end
+  local explicitActive = SafeBoolean(chargeInfo.isActive)
+  if explicitActive ~= nil then
+    return explicitActive
+  end
+
+  local currentCharges = SafeNumber(chargeInfo.currentCharges)
+  local maxCharges = SafeNumber(chargeInfo.maxCharges)
+  local duration = SafeNumber(chargeInfo.cooldownDuration)
+  local startTime = SafeNumber(chargeInfo.cooldownStartTime)
+  return currentCharges and maxCharges and maxCharges > 1 and currentCharges < maxCharges and startTime and duration and duration > 0 or false
+end
+
+local function ShouldShowChargeCount(currentCharges, maxCharges)
+  currentCharges = SafeNumber(currentCharges)
+  maxCharges = SafeNumber(maxCharges)
+  return currentCharges ~= nil and maxCharges ~= nil and maxCharges > 1
+end
+
+local function HasMissingCharges(currentCharges, maxCharges)
+  currentCharges = SafeNumber(currentCharges)
+  maxCharges = SafeNumber(maxCharges)
+  return currentCharges ~= nil and maxCharges ~= nil and maxCharges > 1 and currentCharges < maxCharges
+end
+
+local function InferReadyChargeCount(cache, maxCharges, isReady, cooldownIsOnGCD)
+  maxCharges = SafeNumber(maxCharges)
+  if maxCharges == nil or maxCharges <= 1 then
+    return nil
+  end
+  if not isReady or cooldownIsOnGCD == true then
+    return nil
+  end
+  if cache and cache.expirationTime and cache.expirationTime > GetTime() then
+    return nil
+  end
+  return maxCharges
+end
+
+local function AdvanceCachedCharges(cache)
+  if type(cache) ~= "table" or cache.isChargeSpell ~= true then
+    return
+  end
+
+  local maxCharges = SafeNumber(cache.maxCharges)
+  local currentCharges = SafeNumber(cache.currentCharges)
+  local duration = SafeNumber(cache.duration)
+  local expirationTime = SafeNumber(cache.expirationTime)
+  if maxCharges == nil or maxCharges <= 1 or currentCharges == nil or duration == nil or duration <= 0 or expirationTime == nil or expirationTime <= 0 then
+    return
+  end
+
+  local now = GetTime()
+  while currentCharges < maxCharges and expirationTime <= now do
+    currentCharges = math.min(maxCharges, currentCharges + 1)
+    if currentCharges < maxCharges then
+      expirationTime = expirationTime + duration
+    else
+      expirationTime = 0
+      cache.active = false
+      break
+    end
+  end
+
+  cache.currentCharges = currentCharges
+  cache.expirationTime = expirationTime
+end
+
+function provider:HandleEvent(event, ...)
+  if event == "UNIT_SPELLCAST_SUCCEEDED" then
+    local unit, _, spellId = ...
+    if unit ~= "player" or type(spellId) ~= "number" then
+      return {}
+    end
+
+    local affectedAuraIds = self:GetAffectedAurasForSpellIDs({ spellId })
+    if #affectedAuraIds == 0 then
+      return affectedAuraIds
+    end
+
+    local now = GetTime()
+    self.recentCasts = self.recentCasts or {}
+    local lastCastAt = self.recentCasts[spellId]
+    if lastCastAt and (now - lastCastAt) < 0.15 then
+      return affectedAuraIds
+    end
+    self.recentCasts[spellId] = now
+
+    for _, auraId in ipairs(affectedAuraIds) do
+      local aura = ns.Registry:GetAura(auraId)
+      local trigger = aura and aura.triggers and aura.triggers[1]
+      if trigger and trigger.type == "spell_cooldown" then
+        local baseCooldown = GetConfiguredCooldown(trigger, spellId)
+        local triggerSpellIDs = GetSpellIDs(trigger)
+        if not baseCooldown or baseCooldown <= 0 then
+          for _, linkedSpellID in ipairs(triggerSpellIDs) do
+            local cache = self.cache[linkedSpellID]
+            if cache and cache.duration and cache.duration > 0 then
+              baseCooldown = cache.duration
+              break
+            end
+            local cdmState = GetCDMState(linkedSpellID)
+            if cdmState and cdmState.maxDuration and cdmState.maxDuration > 0 then
+              baseCooldown = cdmState.maxDuration
+              break
+            end
+            if C_Spell and C_Spell.GetSpellCharges then
+              local chargeInfo = C_Spell.GetSpellCharges(linkedSpellID)
+              local chargeDuration = select(1, GetSpellChargeTiming(linkedSpellID, chargeInfo))
+              if chargeDuration and chargeDuration > 0 then
+                baseCooldown = chargeDuration
+                break
+              end
+            end
+          end
+        end
+
+        if baseCooldown and baseCooldown > 0 and not IsLikelyGCD(baseCooldown) then
+          for _, linkedSpellID in ipairs(triggerSpellIDs) do
+            self.cache[linkedSpellID] = self.cache[linkedSpellID] or {}
+            self.cache[linkedSpellID].duration = baseCooldown
+            self.cache[linkedSpellID].expirationTime = now + baseCooldown
+            self.cache[linkedSpellID].active = true
+            self.cache[linkedSpellID].source = "learned_cast"
+            local inferredCharges = self.cache[linkedSpellID].currentCharges
+            if inferredCharges == nil and (self.cache[linkedSpellID].isChargeSpell or ((self.cache[linkedSpellID].maxCharges or 0) > 1)) then
+              inferredCharges = self.cache[linkedSpellID].maxCharges
+            end
+            if inferredCharges and inferredCharges > 0 then
+              self.cache[linkedSpellID].currentCharges = math.max(0, inferredCharges - 1)
+            end
+          end
+        end
+      end
+    end
+    return affectedAuraIds
+  elseif event == "PLAYER_ENTERING_WORLD" or event == "SPELLS_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "PLAYER_SPECIALIZATION_CHANGED" or event == "TRAIT_CONFIG_UPDATED" then
+    self:PruneCache()
+    if ns.CooldownManager and ns.CooldownManager.Invalidate then
+      ns.CooldownManager:Invalidate()
+    end
+    for spellId, entry in pairs(self.cache) do
+      local baseCooldown = GetBaseCooldownSeconds(spellId)
+      if baseCooldown and baseCooldown > 0 then
+        entry.duration = baseCooldown
+      end
+    end
+    return true
+  end
+end
+
+function provider:Evaluate(trigger)
+  local spellIDs = GetSpellIDs(trigger)
+  if #spellIDs == 0 or not C_Spell then
+    return ns.Schema.NormalizeRuntimeState({ show = false, active = false, source = "spell_cooldown" })
+  end
+  local allowChargeTracking = #spellIDs == 1
+
+  local sharedCache = {}
+  local sharedCharges
+  local sharedDisplayCharges
+  local sharedMaxCharges
+  local sharedStackText
+  local sharedStackDisplayValue
+  local sharedHasStackDisplayValue
+  for _, spellId in ipairs(spellIDs) do
+    local cache = self.cache[spellId]
+    if cache then
+      if cache.expirationTime and (not sharedCache.expirationTime or cache.expirationTime > sharedCache.expirationTime) then
+        sharedCache.expirationTime = cache.expirationTime
+        sharedCache.duration = cache.duration
+        sharedCache.source = cache.source
+        sharedCache.cooldownID = cache.cooldownID
+      end
+      if cache.duration and (not sharedCache.duration or cache.duration > sharedCache.duration) then
+        sharedCache.duration = cache.duration
+      end
+      if cache.maxCharges ~= nil and (sharedMaxCharges == nil or cache.maxCharges > sharedMaxCharges) then
+        sharedMaxCharges = cache.maxCharges
+      end
+    end
+  end
+
+  local bestState
+  local fallbackState
+  local fallbackPriority = nil
+
+  for _, spellId in ipairs(spellIDs) do
+    local name = C_Spell.GetSpellName(spellId)
+    local icon = C_Spell.GetSpellTexture(spellId)
+    local chargeInfo = C_Spell.GetSpellCharges(spellId)
+    local chargeDuration, chargeExpirationTime, chargeDurationObject = GetSpellChargeTiming(spellId, chargeInfo)
+    local cache = self.cache[spellId] or {}
+    AdvanceCachedCharges(cache)
+    local isReady = true
+    local duration = 0
+    local expirationTime = 0
+    local currentCharges
+    local activeDurationObject = nil
+    local source = "spell_cooldown"
+    local configuredCooldown = GetConfiguredCooldown(trigger, spellId)
+    local currentStackDisplayValue = nil
+    local hasCurrentStackDisplayValue = false
+    local activeAuraOnly = false
+
+    local cdmState = GetCDMState(spellId)
+    if cdmState and cdmState.maxDuration and cdmState.maxDuration > 0 then
+      cache.duration = cdmState.maxDuration
+      cache.cooldownID = cdmState.cooldownID
+      cache.source = "cdm"
+    end
+
+    local cooldownQueryID, cooldown, cooldownDuration, cooldownExpirationTime, cooldownDurationObject, cooldownIsOnGCD =
+      SelectBestCooldownQuery(spellId, cache, cdmState)
+
+    if cdmState and cdmState.active then
+      isReady = false
+      duration = cdmState.duration or 0
+      expirationTime = cdmState.expirationTime or 0
+      cache.duration = duration
+      cache.expirationTime = expirationTime
+      cache.active = true
+      cache.cooldownID = cdmState.cooldownID
+      cache.source = "cdm"
+      source = "cdm"
+    end
+
+    local cdmCountText = cdmState and cdmState.countText or nil
+    local cdmCount = cdmState and cdmState.count or nil
+    if cdmCountText and cdmCountText ~= "" then
+      currentCharges = cdmCount or currentCharges
+      sharedStackText = sharedStackText or cdmCountText
+      currentStackDisplayValue = cdmCountText
+      hasCurrentStackDisplayValue = true
+    end
+    if currentCharges ~= nil and (sharedCharges == nil or currentCharges > sharedCharges) then
+      sharedCharges = currentCharges
+    end
+    if cdmCount ~= nil and cdmCount > 0 and (sharedDisplayCharges == nil or cdmCount > sharedDisplayCharges) then
+      sharedDisplayCharges = cdmCount
+    end
+
+    local cdmAuraState = GetCDMAuraState(spellId)
+    local cdmAuraDetails = GetCDMAuraDetails(cdmAuraState)
+    local cdmAuraData = cdmAuraState and cdmAuraState.auraData or nil
+    local cdmAuraStacks = cdmAuraDetails and cdmAuraDetails.stacks or 0
+    local cdmAuraDuration = cdmAuraDetails and cdmAuraDetails.duration or 0
+    local cdmAuraExpiration = cdmAuraDetails and cdmAuraDetails.expirationTime or 0
+    local cdmAuraActive = cdmAuraDetails and cdmAuraDetails.active or false
+
+    local cdmAuraStackText = cdmAuraDetails and cdmAuraDetails.stackText or nil
+    if cdmAuraStacks > 0 then
+      currentCharges = cdmAuraStacks
+      if sharedCharges == nil or cdmAuraStacks > sharedCharges then
+        sharedCharges = cdmAuraStacks
+      end
+      if sharedDisplayCharges == nil or cdmAuraStacks > sharedDisplayCharges then
+        sharedDisplayCharges = cdmAuraStacks
+      end
+      if not sharedStackText or sharedStackText == "" then
+        sharedStackText = cdmAuraStackText or tostring(cdmAuraStacks)
+      end
+      if cdmAuraDetails and cdmAuraDetails.hasStackDisplayValue == true then
+        currentStackDisplayValue = cdmAuraDetails.stackDisplayValue
+        hasCurrentStackDisplayValue = true
+      end
+    end
+
+    local startTime = cooldown and SafeNumber(cooldown.startTime)
+    local liveDuration = cooldown and SafeNumber(cooldown.duration)
+    local cooldownActive = IsCooldownActive(cooldown)
+    local expectedCooldown = cache.duration or sharedCache.duration or configuredCooldown or 0
+    if cooldownActive and liveDuration and IsLikelyGCD(liveDuration) and expectedCooldown > (liveDuration + 0.2) then
+      cooldownActive = false
+    end
+    if cooldownIsOnGCD == true and cooldownDurationObject == nil then
+      cooldownActive = false
+    end
+
+    local hasCooldownDurationObject = cooldownDurationObject ~= nil and (
+      cooldownActive
+      or (cooldownExpirationTime or 0) > GetTime()
+      or (cooldownDuration or 0) > 0
+    )
+    if isReady and (hasCooldownDurationObject or (cooldownActive and cooldownExpirationTime > GetTime() and cooldownDuration > 0)) then
+      isReady = false
+      duration = cooldownDuration
+      expirationTime = cooldownExpirationTime
+      activeDurationObject = cooldownDurationObject
+      if cooldownDuration and cooldownDuration > 0 then
+        cache.duration = cooldownDuration
+      end
+      if cooldownExpirationTime and cooldownExpirationTime > 0 then
+      cache.expirationTime = cooldownExpirationTime
+      end
+      cache.active = true
+      cache.source = hasCooldownDurationObject and "api_duration" or "api"
+      cache.deferredByActiveAura = nil
+      source = cache.source
+    end
+
+    if allowChargeTracking and chargeInfo then
+      cache.isChargeSpell = true
+    end
+
+    if allowChargeTracking and (chargeInfo or cache.isChargeSpell) then
+      local rawCurrentCharges = nil
+      if chargeInfo then
+        rawCurrentCharges = chargeInfo.currentCharges
+      end
+      local safeCurrentCharges = SafeNumber(chargeInfo and chargeInfo.currentCharges)
+      local safeMaxCharges = SafeNumber(chargeInfo and chargeInfo.maxCharges) or cache.maxCharges
+      local safeChargeDuration = chargeDuration or 0
+      local safeChargeExpiration = chargeExpirationTime or 0
+      local hasRealCharges = safeMaxCharges and safeMaxCharges > 1
+      if safeCurrentCharges == nil and ShouldShowChargeCount(cache.currentCharges, safeMaxCharges) then
+        safeCurrentCharges = cache.currentCharges
+      end
+      if safeCurrentCharges == nil then
+        safeCurrentCharges = InferReadyChargeCount(cache, safeMaxCharges, isReady, cooldownIsOnGCD)
+      end
+      local shouldShowCharges = ShouldShowChargeCount(safeCurrentCharges, safeMaxCharges)
+      local missingCharges = HasMissingCharges(safeCurrentCharges, safeMaxCharges)
+      local noChargesAvailable = missingCharges and safeCurrentCharges == 0
+      if hasRealCharges then
+        if shouldShowCharges then
+          local chargeDisplayValue, hasChargeDisplayValue = BuildStackDisplayValue(rawCurrentCharges, tostring(safeCurrentCharges), safeCurrentCharges, true)
+          currentCharges = safeCurrentCharges
+          cache.currentCharges = safeCurrentCharges
+          if sharedCharges == nil or safeCurrentCharges > sharedCharges then
+            sharedCharges = safeCurrentCharges
+          end
+          if sharedDisplayCharges == nil or safeCurrentCharges > sharedDisplayCharges then
+            sharedDisplayCharges = safeCurrentCharges
+          end
+          if not sharedStackText or sharedStackText == "" then
+            sharedStackText = tostring(safeCurrentCharges)
+          end
+          currentStackDisplayValue = chargeDisplayValue
+          hasCurrentStackDisplayValue = hasChargeDisplayValue
+        else
+          currentCharges = cache.currentCharges
+        end
+        cache.maxCharges = safeMaxCharges
+        if sharedMaxCharges == nil or safeMaxCharges > sharedMaxCharges then
+          sharedMaxCharges = safeMaxCharges
+        end
+        if safeChargeDuration and safeChargeDuration > 0 then
+          cache.duration = safeChargeDuration
+        end
+        if missingCharges and safeChargeExpiration and safeChargeExpiration > 0 then
+          cache.expirationTime = safeChargeExpiration
+        end
+      else
+        cache.currentCharges = nil
+        cache.maxCharges = safeMaxCharges
+        cache.isChargeSpell = false
+      end
+      local chargeCooldownActive = chargeInfo and IsChargeCooldownActive(chargeInfo) or false
+      local hasChargeDurationObject = chargeDurationObject ~= nil and (
+        (safeChargeExpiration or 0) > GetTime()
+        or (safeChargeDuration or 0) > 0
+      )
+      local shouldShowChargeCooldown = hasRealCharges and missingCharges and (trigger.showChargeCooldown ~= false or noChargesAvailable)
+      if shouldShowChargeCooldown and isReady and (
+        hasChargeDurationObject
+        or (chargeCooldownActive and safeChargeDuration and safeChargeDuration > 0)
+        or (cache.expirationTime and cache.expirationTime > GetTime() and (cache.duration or 0) > 0)
+      ) then
+        isReady = false
+        activeDurationObject = chargeDurationObject or activeDurationObject
+        if safeChargeDuration and safeChargeDuration > 0 and safeChargeExpiration and safeChargeExpiration > GetTime() then
+          duration = safeChargeDuration
+          expirationTime = safeChargeExpiration
+          cache.duration = safeChargeDuration
+          cache.expirationTime = expirationTime
+        else
+          duration = cache.duration or 0
+          expirationTime = cache.expirationTime or 0
+        end
+        cache.active = true
+        cache.source = "charges"
+        cache.deferredByActiveAura = nil
+        source = "charges"
+      end
+    end
+
+    activeAuraOnly = cdmAuraActive
+      and not (cdmState and cdmState.active)
+      and not hasCooldownDurationObject
+      and not cooldownActive
+      and activeDurationObject == nil
+
+    if activeAuraOnly then
+      if cache.source == "learned_cast" and (cache.expirationTime or 0) > GetTime() and (cache.duration or 0) > 0 then
+        cache.deferredByActiveAura = true
+        cache.expirationTime = 0
+        cache.active = false
+      end
+      isReady = false
+      duration = 0
+      expirationTime = 0
+      activeDurationObject = nil
+      source = "cdm_aura"
+      cache.source = "cdm_aura"
+      cache.active = false
+    elseif cache.deferredByActiveAura == true and isReady and (cache.duration or 0) > 0 then
+      cache.expirationTime = GetTime() + (cache.duration or 0)
+      cache.active = true
+      cache.source = "learned_cast_deferred"
+      cache.deferredByActiveAura = nil
+    end
+
+    if currentCharges == nil and ShouldShowChargeCount(cache.currentCharges, cache.maxCharges) then
+      currentCharges = cache.currentCharges
+    end
+    if currentCharges ~= nil and ShouldShowChargeCount(currentCharges, cache.maxCharges or sharedMaxCharges) then
+      if sharedCharges == nil or currentCharges > sharedCharges then
+        sharedCharges = currentCharges
+      end
+      if sharedDisplayCharges == nil or currentCharges > sharedDisplayCharges then
+        sharedDisplayCharges = currentCharges
+      end
+      if not sharedStackText or sharedStackText == "" then
+        sharedStackText = tostring(currentCharges)
+      end
+    end
+
+    local cacheExpirationTime = cache.expirationTime or sharedCache.expirationTime
+    local cacheDuration = cache.duration or sharedCache.duration
+    if isReady and not activeAuraOnly and cacheExpirationTime and cacheExpirationTime > GetTime() then
+      isReady = false
+      duration = cacheDuration or GetConfiguredCooldown(trigger, spellId)
+      expirationTime = cacheExpirationTime
+      source = cache.source or sharedCache.source or "learned_cast"
+    end
+
+    if not isReady and activeDurationObject == nil and expirationTime <= GetTime() then
+      isReady = true
+      duration = 0
+      expirationTime = 0
+      cache.active = false
+    end
+
+    if not cache.duration or cache.duration <= 0 then
+      local baseCooldown = configuredCooldown
+      if baseCooldown and baseCooldown > 0 then
+        cache.duration = baseCooldown
+      end
+    end
+
+    self.cache[spellId] = cache
+
+    local candidateDisplayCharges = cdmCount
+      or cdmAuraStacks
+      or currentCharges
+    local candidateStackText = cdmCountText
+      or cdmAuraStackText
+      or (candidateDisplayCharges ~= nil and candidateDisplayCharges > 0 and tostring(candidateDisplayCharges) or nil)
+    local candidateStackDisplayValue = currentStackDisplayValue
+    local candidateHasStackDisplayValue = hasCurrentStackDisplayValue
+    local candidateProgressType = (activeDurationObject ~= nil or duration > 0 or expirationTime > GetTime()) and "timed" or "static"
+    local candidateValue = duration
+    local candidateTotal = duration
+    if activeAuraOnly then
+      candidateProgressType = "static"
+      candidateValue = 1
+      candidateTotal = 1
+    end
+
+    local candidate = ns.Schema.NormalizeRuntimeState({
+      show = trigger.showAlways ~= false or not isReady,
+      active = not isReady,
+      icon = (cdmAuraDetails and cdmAuraDetails.icon) or icon,
+      name = (cdmAuraDetails and cdmAuraDetails.name) or name,
+      stacks = candidateDisplayCharges or 0,
+      stackText = candidateStackText,
+      stackDisplayValue = candidateStackDisplayValue,
+      hasStackDisplayValue = candidateHasStackDisplayValue,
+      duration = duration,
+      expirationTime = expirationTime,
+      durationObject = activeDurationObject or nil,
+      progressType = candidateProgressType,
+      value = candidateValue,
+      total = candidateTotal,
+      isReady = isReady,
+      isUsable = true,
+      auraInstanceID = cdmAuraDetails and cdmAuraDetails.auraInstanceID or nil,
+      unit = (cdmAuraDetails and cdmAuraDetails.unit) or nil,
+      spellId = spellId,
+      source = source,
+      statusText = isReady and "Ready" or ((source == "cdm_aura" and "Active") or "Cooldown"),
+      debugExtra = BuildDebugBits({
+        string.format("spellIDs=%s", table.concat(spellIDs, ",")),
+        string.format("cdmID=%s", tostring(cdmState and cdmState.cooldownID or cache.cooldownID or "")),
+        string.format("cooldownQueryID=%s", tostring(cooldownQueryID or "")),
+        string.format("cdmActive=%s", tostring(cdmState and cdmState.active or false)),
+        string.format("cdmCount=%s", tostring(cdmCount ~= nil and cdmCount or "")),
+        string.format("cdmText=%s", tostring(cdmCountText or "")),
+        string.format("cdmAura=%s", tostring(cdmAuraActive)),
+        string.format("isOnGCD=%s", tostring(cooldownIsOnGCD == true)),
+        string.format("durObj=%s", tostring(hasCooldownDurationObject)),
+        string.format("chargeObj=%s", tostring(chargeDurationObject ~= nil)),
+        string.format("chargeCount=%s", tostring(currentCharges ~= nil and currentCharges or "")),
+        string.format("chargeMax=%s", tostring(cache.maxCharges ~= nil and cache.maxCharges or "")),
+        string.format("chargeDisplay=%s", tostring(candidateDisplayCharges ~= nil and candidateDisplayCharges or "")),
+        string.format("activeAuraOnly=%s", tostring(activeAuraOnly == true)),
+        string.format("apiActive=%s", tostring(cooldownActive)),
+      }),
+    })
+    local cooldownEnabled = cooldown and SafeBoolean(cooldown.isEnabled)
+    candidate.isEnabled = cooldownEnabled ~= false
+
+    if candidate.active then
+      if not bestState or (candidate.expirationTime or 0) > (bestState.expirationTime or 0) then
+        bestState = candidate
+      end
+    else
+      local candidatePriority = 0
+      if (candidate.stackText and candidate.stackText ~= "") or (candidate.stacks or 0) > 0 then
+        candidatePriority = candidatePriority + 2
+      end
+      if candidate.source == "cdm" or candidate.source == "cdm_aura" then
+        candidatePriority = candidatePriority + 1
+      end
+      if not fallbackState or candidatePriority > (fallbackPriority or -1) then
+        fallbackState = candidate
+        fallbackPriority = candidatePriority
+      end
+    end
+
+    if candidateDisplayCharges ~= nil and (sharedDisplayCharges == nil or candidateDisplayCharges >= sharedDisplayCharges) then
+      if candidateHasStackDisplayValue == true then
+        sharedStackDisplayValue = candidateStackDisplayValue
+        sharedHasStackDisplayValue = true
+      elseif candidateStackText and candidateStackText ~= "" then
+        sharedStackDisplayValue = candidateStackText
+        sharedHasStackDisplayValue = true
+      end
+    end
+  end
+
+  local finalState = bestState or fallbackState or ns.Schema.NormalizeRuntimeState({ show = false, active = false, source = "spell_cooldown" })
+  if sharedDisplayCharges ~= nil then
+    finalState.stacks = sharedDisplayCharges
+  end
+  if sharedStackText and sharedStackText ~= "" then
+    finalState.stackText = sharedStackText
+  elseif sharedDisplayCharges ~= nil and sharedDisplayCharges > 0 and (not finalState.stackText or finalState.stackText == "") then
+    finalState.stackText = tostring(sharedDisplayCharges)
+  end
+  if sharedHasStackDisplayValue == true then
+    finalState.stackDisplayValue = sharedStackDisplayValue
+    finalState.hasStackDisplayValue = true
+  end
+
+  for _, spellId in ipairs(spellIDs) do
+    self.cache[spellId] = self.cache[spellId] or {}
+    if sharedCharges ~= nil and ShouldShowChargeCount(sharedCharges, sharedMaxCharges) then
+      self.cache[spellId].currentCharges = sharedCharges
+    elseif not self.cache[spellId].isChargeSpell then
+      self.cache[spellId].currentCharges = nil
+    end
+    if sharedMaxCharges ~= nil then
+      self.cache[spellId].maxCharges = sharedMaxCharges
+    end
+    if sharedCache.duration and (not self.cache[spellId].duration or self.cache[spellId].duration <= 0) then
+      self.cache[spellId].duration = sharedCache.duration
+    end
+  end
+
+  return finalState
+end

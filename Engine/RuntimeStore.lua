@@ -1,0 +1,340 @@
+local _, ns = ...
+
+local RuntimeStore = {}
+ns.runtime = RuntimeStore
+
+RuntimeStore.states = {}
+RuntimeStore.presentations = {}
+RuntimeStore.regions = {}
+RuntimeStore.activationOrder = {}
+RuntimeStore.activationCounter = 0
+RuntimeStore.timedRegions = {}
+RuntimeStore.timerElapsed = 0
+
+local TIMED_UPDATE_INTERVAL = 0.05
+
+local function IsGroupAura(aura)
+  return aura and (aura.kind == "group" or aura.kind == "dynamic_group")
+end
+
+local function CountEntries(tbl)
+  local count = 0
+  for _ in pairs(tbl or {}) do
+    count = count + 1
+  end
+  return count
+end
+
+local function ProfileStart(bucket)
+  if ns.Profiler and ns.Profiler.IsEnabled and ns.Profiler:IsEnabled() then
+    return ns.Profiler:Begin(bucket)
+  end
+  return nil
+end
+
+local function ProfileFinish(bucket, startedAt)
+  if startedAt and ns.Profiler and ns.Profiler.Finish then
+    ns.Profiler:Finish(bucket, startedAt)
+  end
+end
+
+local function IsAuraInSelectedGroup(auraId, selectedAuraId)
+  if not auraId or not selectedAuraId then
+    return false
+  end
+
+  local cursor = ns.Registry:GetAura(auraId)
+  while cursor and cursor.parentId do
+    if cursor.parentId == selectedAuraId then
+      return true
+    end
+    cursor = ns.Registry:GetAura(cursor.parentId)
+  end
+  return false
+end
+
+function RuntimeStore:GetState(auraId)
+  return self.states[auraId]
+end
+
+function RuntimeStore:SetState(auraId, state)
+  self.states[auraId] = state
+end
+
+function RuntimeStore:SetPresentation(auraId, presentation)
+  self.presentations[auraId] = presentation
+end
+
+function RuntimeStore:GetPresentation(auraId)
+  return self.presentations[auraId]
+end
+
+function RuntimeStore:GetRegionByAuraId(auraId)
+  return self.regions[auraId]
+end
+
+function RuntimeStore:SetRegion(auraId, region)
+  self.regions[auraId] = region
+end
+
+function RuntimeStore:EnsureTimerDriver()
+  if self.timerFrame then
+    return
+  end
+
+  local frame = CreateFrame("Frame")
+  frame:Hide()
+  frame:SetScript("OnUpdate", function(driver, elapsed)
+    self.timerElapsed = (self.timerElapsed or 0) + (elapsed or 0)
+    if self.timerElapsed < TIMED_UPDATE_INTERVAL then
+      return
+    end
+
+    local profileStart = ProfileStart("runtime:timer_driver")
+    self.timerElapsed = 0
+    local now = GetTime()
+    for auraId, region in pairs(self.timedRegions) do
+      if not region or not region.OnTimerUpdate then
+        self.timedRegions[auraId] = nil
+      else
+        local keepRunning = region:OnTimerUpdate(now)
+        if keepRunning == false then
+          self.timedRegions[auraId] = nil
+        end
+      end
+    end
+
+    if next(self.timedRegions) == nil then
+      driver:Hide()
+    end
+    ProfileFinish("runtime:timer_driver", profileStart)
+  end)
+
+  self.timerFrame = frame
+end
+
+function RuntimeStore:RegisterTimedRegion(auraId, region)
+  if not auraId or not region then
+    return
+  end
+
+  self:EnsureTimerDriver()
+  self.timedRegions[auraId] = region
+  self.timerElapsed = 0
+  if self.timerFrame then
+    self.timerFrame:Show()
+  end
+end
+
+function RuntimeStore:UnregisterTimedRegion(auraId)
+  if not auraId then
+    return
+  end
+
+  self.timedRegions[auraId] = nil
+  if self.timerFrame and next(self.timedRegions) == nil then
+    self.timerFrame:Hide()
+  end
+end
+
+function RuntimeStore:ReleaseMissingRegions()
+  for auraId, region in pairs(self.regions) do
+    if not ns.Registry:GetAura(auraId) then
+      self:UnregisterTimedRegion(auraId)
+      if region.Release then
+        region:Release()
+      elseif region.frame then
+        region.frame:Hide()
+      end
+      self.regions[auraId] = nil
+      self.states[auraId] = nil
+      self.presentations[auraId] = nil
+      self.activationOrder[auraId] = nil
+    end
+  end
+end
+
+function RuntimeStore:GetActivationOrder(auraId)
+  return self.activationOrder[auraId] or 0
+end
+
+local function BuildAncestorDepths(auraId, depths)
+  local depth = 0
+  local cursor = auraId and ns.Registry:GetAura(auraId) or nil
+  while cursor and cursor.parentId do
+    depth = depth + 1
+    local parentId = cursor.parentId
+    depths[parentId] = math.max(depths[parentId] or 0, depth)
+    cursor = ns.Registry:GetAura(parentId)
+  end
+end
+
+local function GetAuraDepth(auraId)
+  local depth = 0
+  local cursor = auraId and ns.Registry:GetAura(auraId) or nil
+  while cursor and cursor.parentId do
+    depth = depth + 1
+    cursor = ns.Registry:GetAura(cursor.parentId)
+  end
+  return depth
+end
+
+function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
+  local aura = ns.Registry:GetAura(auraId)
+  if not aura then
+    return
+  end
+
+  local refreshProfile = ProfileStart("runtime:refresh_aura")
+
+  local previousState = self.states[auraId]
+  local loadProfile = ProfileStart("runtime:load_eval")
+  local shouldLoad = ns.LoadEvaluator:Matches(aura)
+  ProfileFinish("runtime:load_eval", loadProfile)
+  local state
+  if shouldLoad then
+    local triggerProfile = ProfileStart("runtime:trigger_eval")
+    state = ns.TriggerEngine:EvaluateAura(aura)
+    ProfileFinish("runtime:trigger_eval", triggerProfile)
+    local conditionProfile = ProfileStart("runtime:condition_apply")
+    state = ns.ConditionEngine:Apply(aura, state)
+    ProfileFinish("runtime:condition_apply", conditionProfile)
+  else
+    state = ns.Schema.NormalizeRuntimeState({ show = false, active = false })
+  end
+
+  local editorOpen = ns.ui and ns.ui.MainWindow and ns.ui.MainWindow.IsOpen and ns.ui.MainWindow:IsOpen()
+  local selectedAuraId = ns.db.ui.selectedAuraId
+  local isSelected = selectedAuraId == aura.id
+  local selectedAura = selectedAuraId and ns.Registry:GetAura(selectedAuraId) or nil
+  local selectedIsGroup = selectedAura and (selectedAura.kind == "group" or selectedAura.kind == "dynamic_group")
+
+  if editorOpen and isSelected and (aura.display and aura.display.previewAnimate) then
+    state = ns.TriggerEngine:BuildPreviewState(aura)
+  elseif editorOpen and selectedIsGroup and aura.parentId == selectedAuraId and not state.show then
+    state = ns.TriggerEngine:BuildPreviewState(aura)
+  end
+
+  if state.show and (not previousState or not previousState.show) then
+    self.activationCounter = self.activationCounter + 1
+    self.activationOrder[auraId] = self.activationCounter
+  end
+
+  self:SetState(auraId, state)
+  self:SetPresentation(auraId, state)
+  local renderProfile = ProfileStart("runtime:render_aura")
+  ns.Render:RenderAura(aura, state)
+  ProfileFinish("runtime:render_aura", renderProfile)
+  if not skipVisibilitySync and ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
+    ns.CooldownManager:ApplyVisibilityOverrides()
+  end
+  ProfileFinish("runtime:refresh_aura", refreshProfile)
+end
+
+function RuntimeStore:RefreshAuras(auraIds, skipVisibilitySync)
+  if type(auraIds) ~= "table" or #auraIds == 0 then
+    return
+  end
+
+  local refreshProfile = ProfileStart("runtime:refresh_batch")
+  self:ReleaseMissingRegions()
+
+  local leafSet = {}
+  local groupSet = {}
+  local ancestorDepths = {}
+
+  for _, auraId in ipairs(auraIds) do
+    local aura = ns.Registry:GetAura(auraId)
+    if aura then
+      if IsGroupAura(aura) then
+        groupSet[auraId] = true
+        ancestorDepths[auraId] = math.max(ancestorDepths[auraId] or 0, GetAuraDepth(auraId))
+      else
+        leafSet[auraId] = true
+      end
+      BuildAncestorDepths(auraId, ancestorDepths)
+    end
+  end
+
+  for ancestorId in pairs(ancestorDepths) do
+    groupSet[ancestorId] = true
+  end
+
+  for _, auraId in ipairs(ns.Registry:GetFlatOrder()) do
+    if leafSet[auraId] then
+      self:RefreshAura(auraId, true)
+    end
+  end
+
+  local groups = {}
+  for auraId, depth in pairs(ancestorDepths) do
+    groups[#groups + 1] = { auraId = auraId, depth = depth }
+  end
+  for auraId in pairs(groupSet) do
+    if not ancestorDepths[auraId] then
+      groups[#groups + 1] = { auraId = auraId, depth = 0 }
+    end
+  end
+
+  table.sort(groups, function(left, right)
+    if left.depth == right.depth then
+      return tostring(left.auraId) < tostring(right.auraId)
+    end
+    return left.depth > right.depth
+  end)
+
+  for _, entry in ipairs(groups) do
+    self:RefreshAura(entry.auraId, true)
+  end
+
+  if not skipVisibilitySync and ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
+    ns.CooldownManager:ApplyVisibilityOverrides()
+  end
+  ProfileFinish("runtime:refresh_batch", refreshProfile)
+end
+
+function RuntimeStore:RefreshAll()
+  local refreshProfile = ProfileStart("runtime:refresh_all")
+  self:ReleaseMissingRegions()
+  local groupIds = {}
+
+  for _, auraId in ipairs(ns.Registry:GetFlatOrder()) do
+    local aura = ns.Registry:GetAura(auraId)
+    if aura then
+      if IsGroupAura(aura) then
+        groupIds[#groupIds + 1] = auraId
+      else
+        self:RefreshAura(auraId, true)
+      end
+    end
+  end
+
+  for index = #groupIds, 1, -1 do
+    self:RefreshAura(groupIds[index], true)
+  end
+
+  if ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
+    ns.CooldownManager:ApplyVisibilityOverrides()
+  end
+  ProfileFinish("runtime:refresh_all", refreshProfile)
+end
+
+function RuntimeStore:GetMemoryStats()
+  local auraProvider = ns.providers and ns.providers.aura or nil
+  local targetCacheEntries = 0
+  if auraProvider and type(auraProvider.cachedTargetAuras) == "table" then
+    for _, cache in pairs(auraProvider.cachedTargetAuras) do
+      targetCacheEntries = targetCacheEntries + CountEntries(cache and cache.byGUID or nil)
+    end
+  end
+
+  return {
+    auraCount = #(ns.Registry.GetFlatOrder and ns.Registry:GetFlatOrder() or {}),
+    stateCount = CountEntries(self.states),
+    regionCount = CountEntries(self.regions),
+    timedRegionCount = CountEntries(self.timedRegions),
+    targetCacheEntries = targetCacheEntries,
+    learnedDurationCount = CountEntries(ns.session and ns.session.learnedTargetDurations or nil),
+    talentCatalogClasses = CountEntries(ns.session and ns.session.talentCatalog or nil),
+  }
+end

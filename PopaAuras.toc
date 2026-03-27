@@ -1,0 +1,72 @@
+## Interface: 120001
+## Title: PopAuras
+## Notes: Midnight-safe WeakAuras-like addon focused on reliable bars and icons
+## Author: Popabeast-Sargeras
+## Version: 0.1.0
+## SavedVariables: PopAurasDB
+
+PopAuras.lua
+
+Core\Constants.lua
+Util\Tables.lua
+Util\Strings.lua
+Util\Colors.lua
+Util\Fonts.lua
+Util\Anchors.lua
+Util\Frames.lua
+
+Data\Defaults.lua
+Data\Interrupts.lua
+Data\Schema.lua
+Data\Migration.lua
+Data\Export.lua
+Data\Import.lua
+
+Core\SavedVariables.lua
+Core\Registry.lua
+Core\CooldownManager.lua
+Core\InterruptTracker.lua
+Core\Debug.lua
+Core\Profiler.lua
+Core\ShareLinks.lua
+
+Engine\RuntimeStore.lua
+Engine\LoadEvaluator.lua
+Engine\ConditionEngine.lua
+Engine\TextResolver.lua
+
+Triggers\Base.lua
+Triggers\AuraProvider.lua
+Triggers\SpellCooldownProvider.lua
+Triggers\ItemCooldownProvider.lua
+Triggers\CastProvider.lua
+Triggers\SimpleProvider.lua
+Triggers\TimerProvider.lua
+
+Renderers\BaseRegion.lua
+Renderers\Layouts.lua
+Renderers\IconRegion.lua
+Renderers\BarRegion.lua
+Renderers\InterruptTrackerRegion.lua
+Renderers\GroupRegion.lua
+Renderers\DynamicGroupRegion.lua
+
+Engine\TriggerEngine.lua
+
+UI\AuraTree.lua
+UI\Toolbar.lua
+UI\CreateAuraDialog.lua
+UI\NewAuraPanel.lua
+UI\Panels\DisplayPanel.lua
+UI\Panels\TriggerPanel.lua
+UI\Panels\ConditionsPanel.lua
+UI\Panels\LoadPanel.lua
+UI\Panels\PositionPanel.lua
+UI\Panels\GroupPanel.lua
+UI\Panels\ImportExportPanel.lua
+UI\Panels\InterruptTrackerDisplayPanel.lua
+UI\MainWindow.lua
+
+Core\Events.lua
+Core\Slash.lua
+Core\Bootstrap.lua
