@@ -115,7 +115,9 @@ function Debug:CreateWindow()
   local frame = CreateFrame("Frame", "PopAurasDebugWindow", UIParent, "BackdropTemplate")
   frame:SetSize(700, 420)
   frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-  frame:SetFrameStrata("DIALOG")
+  frame:SetFrameStrata("TOOLTIP")
+  frame:SetFrameLevel(2000)
+  frame:SetToplevel(true)
   frame:SetBackdrop({
     bgFile = "Interface\\Buttons\\WHITE8x8",
     edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -124,6 +126,9 @@ function Debug:CreateWindow()
   frame:SetBackdropColor(0.06, 0.08, 0.12, 0.98)
   frame:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
   ns.util.Frames.MakeMovable(frame)
+  frame:SetScript("OnShow", function(self)
+    self:Raise()
+  end)
   frame:Hide()
 
   frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")

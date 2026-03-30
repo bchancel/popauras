@@ -9,6 +9,7 @@ local triggerTypes = {
   item_cooldown = "Item Cooldown",
   cast = "Cast / Channel",
   timer = "Internal Timer",
+  death_alert = "Death Alert",
 }
 
 local Panel = {}
@@ -30,6 +31,262 @@ local auraUnitValues = {
   { value = "group", label = "Party / Raid" },
   { value = "nameplate", label = "Nameplate" },
 }
+
+local function GetSoundDropdownValues()
+  local values = {
+    { value = "None", label = "None" },
+  }
+  if ns.Interrupts and ns.Interrupts.GetSoundOptions then
+    for _, entry in ipairs(ns.Interrupts:GetSoundOptions() or {}) do
+      local name = entry and entry.name
+      if name and name ~= "None" then
+        values[#values + 1] = { value = name, label = entry.label or name }
+      end
+    end
+  end
+  return values
+end
+
+local function GetDropdownOptionLabel(value, valuesProvider)
+  local label = tostring(value or "")
+  for _, option in ipairs(valuesProvider()) do
+    if option.value == value then
+      return option.label
+    end
+  end
+  return label
+end
+
+local function InitDropdownValues(dropdown, valuesProvider, onChanged)
+  UIDropDownMenu_Initialize(dropdown, function(self, level)
+    for _, option in ipairs(valuesProvider()) do
+      local info = UIDropDownMenu_CreateInfo()
+      info.text = option.label
+      info.value = option.value
+      info.func = function()
+        UIDropDownMenu_SetSelectedValue(dropdown, option.value)
+        UIDropDownMenu_SetText(dropdown, option.label)
+        if onChanged then
+          onChanged(option.value)
+        end
+      end
+      UIDropDownMenu_AddButton(info, level)
+    end
+  end)
+end
+
+local function SetDropdownValue(dropdown, value, valuesProvider)
+  UIDropDownMenu_SetSelectedValue(dropdown, value)
+  local label = tostring(value or "")
+  for _, option in ipairs(valuesProvider()) do
+    if option.value == value then
+      label = option.label
+      break
+    end
+  end
+  UIDropDownMenu_SetText(dropdown, label)
+end
+
+local function GetSelectedDropdownValue(dropdown, fallback)
+  return UIDropDownMenu_GetSelectedValue(dropdown) or fallback
+end
+
+local function PlayPreviewSound(dropdown)
+  local soundName = GetSelectedDropdownValue(dropdown, "None")
+  if ns.Interrupts and ns.Interrupts.PlaySound then
+    ns.Interrupts:PlaySound(soundName)
+  end
+end
+
+local function UpdateSoundPreviewButton(button, dropdown)
+  if not button then
+    return
+  end
+
+  local soundName = GetSelectedDropdownValue(dropdown, "None")
+  local enabled = soundName ~= nil and soundName ~= "" and soundName ~= "None"
+  button:SetAlpha(enabled and 1 or 0.45)
+  button.isEnabled = enabled
+end
+
+local function SetSoundPreviewTooltip(button, title)
+  if not button then
+    return
+  end
+
+  button:SetScript("OnEnter", function(selfButton)
+    if not GameTooltip then
+      return
+    end
+    GameTooltip:SetOwner(selfButton, "ANCHOR_RIGHT")
+    GameTooltip:SetText(title or "Preview Sound")
+    GameTooltip:AddLine("Play the currently selected sound.", 0.8, 0.8, 0.8, true)
+    GameTooltip:Show()
+  end)
+  button:SetScript("OnLeave", function()
+    if GameTooltip then
+      GameTooltip:Hide()
+    end
+  end)
+end
+
+local function EnsureSoundPicker(frame)
+  if frame.soundPicker then
+    return frame.soundPicker
+  end
+
+  local picker = CreateFrame("Frame", "PopAurasSoundPicker", UIParent, "BackdropTemplate")
+  picker:SetSize(280, 300)
+  picker:SetFrameStrata("FULLSCREEN_DIALOG")
+  picker:SetToplevel(true)
+  picker:SetClampedToScreen(true)
+  picker:EnableMouse(true)
+  picker:Hide()
+  picker:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+  })
+  picker:SetBackdropColor(0.05, 0.07, 0.10, 0.97)
+  picker:SetBackdropBorderColor(0.24, 0.30, 0.40, 1)
+  picker.rows = {}
+
+  picker.title = Frames.CreateLabel(picker, "Select Sound", "GameFontNormal")
+  picker.title:SetPoint("TOPLEFT", 12, -10)
+
+  picker.closeButton = Frames.CreateButton(picker, "X", 22, 20, function()
+    picker:Hide()
+  end)
+  picker.closeButton:SetPoint("TOPRIGHT", -8, -8)
+  Frames.StyleSecondaryButton(picker.closeButton)
+
+  picker.scroll = CreateFrame("ScrollFrame", nil, picker, "UIPanelScrollFrameTemplate")
+  picker.scroll:SetPoint("TOPLEFT", 12, -34)
+  picker.scroll:SetPoint("BOTTOMRIGHT", -28, 12)
+  picker.scroll:EnableMouseWheel(true)
+  picker.scroll:SetScript("OnMouseWheel", function(self, delta)
+    local current = self:GetVerticalScroll() or 0
+    local maxValue = self:GetVerticalScrollRange() or 0
+    self:SetVerticalScroll(math.max(0, math.min(maxValue, current - (delta * 24))))
+  end)
+
+  picker.content = CreateFrame("Frame", nil, picker.scroll)
+  picker.content:SetSize(240, 1)
+  picker.scroll:SetScrollChild(picker.content)
+
+  if UISpecialFrames then
+    local exists = false
+    for _, name in ipairs(UISpecialFrames) do
+      if name == picker:GetName() then
+        exists = true
+        break
+      end
+    end
+    if not exists then
+      table.insert(UISpecialFrames, picker:GetName())
+    end
+  end
+
+  frame.soundPicker = picker
+  return picker
+end
+
+local function RefreshSoundPicker(frame)
+  local picker = frame.soundPicker
+  if not picker or not picker.valuesProvider then
+    return
+  end
+
+  local options = picker.valuesProvider() or {}
+  local currentValue = picker.dropdown and UIDropDownMenu_GetSelectedValue(picker.dropdown) or nil
+  local rowHeight = 22
+
+  for index, option in ipairs(options) do
+    local row = picker.rows[index]
+    if not row then
+      row = CreateFrame("Button", nil, picker.content, "BackdropTemplate")
+      row:SetSize(232, rowHeight)
+      row:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+      })
+      row:SetBackdropBorderColor(0.19, 0.24, 0.33, 1)
+      row.Text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      row.Text:SetPoint("LEFT", 8, 0)
+      row.Text:SetPoint("RIGHT", -8, 0)
+      row.Text:SetJustifyH("LEFT")
+      row.Text:SetWordWrap(false)
+      row:SetScript("OnEnter", function(selfRow)
+        if selfRow.option and not selfRow.isSelected then
+          selfRow:SetBackdropColor(0.10, 0.13, 0.18, 0.98)
+        end
+      end)
+      row:SetScript("OnLeave", function(selfRow)
+        if selfRow.option and not selfRow.isSelected then
+          selfRow:SetBackdropColor(0.07, 0.09, 0.12, 0.94)
+        end
+      end)
+      row:SetScript("OnClick", function(selfRow)
+        local activePicker = frame.soundPicker
+        if not activePicker or not activePicker.dropdown or not selfRow.option then
+          return
+        end
+        UIDropDownMenu_SetSelectedValue(activePicker.dropdown, selfRow.option.value)
+        UIDropDownMenu_SetText(activePicker.dropdown, selfRow.option.label)
+        if activePicker.onChanged then
+          activePicker.onChanged(selfRow.option.value)
+        end
+        activePicker:Hide()
+      end)
+      picker.rows[index] = row
+    end
+
+    row.option = option
+    row.isSelected = option.value == currentValue
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", 0, -((index - 1) * rowHeight))
+    row.Text:SetText(option.label or tostring(option.value or ""))
+    if row.isSelected then
+      row:SetBackdropColor(0.09, 0.28, 0.48, 0.98)
+    else
+      row:SetBackdropColor(0.07, 0.09, 0.12, 0.94)
+    end
+    row:Show()
+  end
+
+  for index = #options + 1, #picker.rows do
+    picker.rows[index]:Hide()
+    picker.rows[index].option = nil
+  end
+
+  picker.content:SetHeight(math.max(1, #options * rowHeight))
+  picker.scroll:SetVerticalScroll(0)
+end
+
+local function ToggleSoundPicker(frame, anchor, dropdown, valuesProvider, title, onChanged)
+  local picker = EnsureSoundPicker(frame)
+  if picker:IsShown() and picker.dropdown == dropdown then
+    picker:Hide()
+    return
+  end
+
+  picker.dropdown = dropdown
+  picker.valuesProvider = valuesProvider
+  picker.onChanged = onChanged
+  picker.title:SetText(title or "Select Sound")
+
+  RefreshSoundPicker(frame)
+
+  picker:ClearAllPoints()
+  local anchorBottom = anchor and anchor.GetBottom and anchor:GetBottom() or nil
+  if type(anchorBottom) == "number" and anchorBottom < 330 then
+    picker:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 6)
+  else
+    picker:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -4)
+  end
+  picker:Show()
+end
 
 local function SplitEntries(input)
   local results = {}
@@ -156,6 +413,13 @@ function Panel:ApplyCurrent()
   trigger.aliveOnly = frame.auraAliveOnlyCheck:GetChecked() == true
   trigger.ignoreNPCs = frame.auraIgnoreNPCsCheck:GetChecked() == true
   trigger.debug = frame.debugCheck:GetChecked() == true
+  trigger.alertDuration = tonumber(frame.deathDurationInput:GetText()) or trigger.alertDuration or 2
+  trigger.showTank = frame.deathTankCheck:GetChecked() == true
+  trigger.showHealer = frame.deathHealerCheck:GetChecked() == true
+  trigger.showDPS = frame.deathDPSCheck:GetChecked() == true
+  trigger.soundTank = UIDropDownMenu_GetSelectedValue(frame.deathTankSoundDropDown) or trigger.soundTank or "None"
+  trigger.soundHealer = UIDropDownMenu_GetSelectedValue(frame.deathHealerSoundDropDown) or trigger.soundHealer or "None"
+  trigger.soundDPS = UIDropDownMenu_GetSelectedValue(frame.deathDPSSoundDropDown) or trigger.soundDPS or "None"
 
   local input = frame.argInput:GetText()
   if trigger.type == "spell_cooldown" or trigger.type == "aura" then
@@ -211,6 +475,12 @@ function Panel:ApplyCurrent()
       frame.resolvedLabel:SetText("|cffaaaaaaTracking any cast for selected unit.|r")
     end
     trigger.itemId = nil
+  elseif trigger.type == "death_alert" then
+    trigger.spellIDs = nil
+    trigger.spellNames = nil
+    trigger.spellId = nil
+    trigger.itemId = nil
+    frame.resolvedLabel:SetText("|cff88ff88Tracks party or raid member deaths only.|r")
   else
     trigger.spellIDs = nil
     trigger.spellNames = nil
@@ -291,6 +561,89 @@ function Panel:Create(parent)
 
   frame.resolvedLabel = Frames.CreateLabel(frame, "", "GameFontHighlightSmall")
   frame.resolvedLabel:SetPoint("TOPLEFT", frame.argInput, "BOTTOMLEFT", 0, -6)
+
+  frame.deathDurationLabel = Frames.CreateLabel(frame, "Alert Duration Seconds", "GameFontNormal")
+  frame.deathDurationLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
+  frame.deathDurationInput = Frames.CreateInput(frame, 120, 24)
+  frame.deathDurationInput:SetPoint("TOPLEFT", frame.deathDurationLabel, "BOTTOMLEFT", 0, -6)
+
+  frame.deathRolesLabel = Frames.CreateLabel(frame, "Show Roles", "GameFontNormal")
+  frame.deathRolesLabel:SetPoint("TOPLEFT", frame.deathDurationInput, "BOTTOMLEFT", 0, -12)
+  frame.deathTankCheck = Frames.CreateCheckbox(frame, "Tanks")
+  frame.deathTankCheck:SetPoint("TOPLEFT", frame.deathRolesLabel, "BOTTOMLEFT", 0, -6)
+  frame.deathHealerCheck = Frames.CreateCheckbox(frame, "Healers")
+  frame.deathHealerCheck:SetPoint("TOPLEFT", frame.deathTankCheck, "TOPRIGHT", 96, 0)
+  frame.deathDPSCheck = Frames.CreateCheckbox(frame, "DPS")
+  frame.deathDPSCheck:SetPoint("TOPLEFT", frame.deathHealerCheck, "TOPRIGHT", 96, 0)
+
+  frame.deathSoundsLabel = Frames.CreateLabel(frame, "Role Sounds", "GameFontNormal")
+  frame.deathSoundsLabel:SetPoint("TOPLEFT", frame.deathTankCheck, "BOTTOMLEFT", 0, -12)
+  frame.deathTankSoundLabel = Frames.CreateLabel(frame, "Tank", "GameFontNormalSmall")
+  frame.deathTankSoundLabel:SetPoint("TOPLEFT", frame.deathSoundsLabel, "BOTTOMLEFT", 0, -6)
+  frame.deathTankSoundDropDown = Frames.CreateDropdown(frame, 180)
+  frame.deathTankSoundDropDown:SetPoint("TOPLEFT", frame.deathTankSoundLabel, "BOTTOMLEFT", -14, -2)
+  frame.deathTankSoundButton = CreateFrame("Button", nil, frame.deathTankSoundDropDown)
+  frame.deathTankSoundButton:SetAllPoints(frame.deathTankSoundDropDown)
+  frame.deathTankSoundButton:SetFrameLevel(frame.deathTankSoundDropDown:GetFrameLevel() + 8)
+  frame.deathTankSoundButton:RegisterForClicks("LeftButtonUp")
+  frame.deathTankSoundButton:SetScript("OnClick", function()
+    ToggleSoundPicker(frame, frame.deathTankSoundButton, frame.deathTankSoundDropDown, GetSoundDropdownValues, "Select Tank Sound", function()
+      UpdateSoundPreviewButton(frame.deathTankSoundPreview, frame.deathTankSoundDropDown)
+      Panel:ApplyCurrent()
+    end)
+  end)
+  frame.deathTankSoundPreview = Frames.CreateButton(frame, "Test", 42, 20, function()
+    if frame.deathTankSoundPreview and frame.deathTankSoundPreview.isEnabled == false then
+      return
+    end
+    PlayPreviewSound(frame.deathTankSoundDropDown)
+  end)
+  frame.deathTankSoundPreview:SetPoint("LEFT", frame.deathTankSoundDropDown, "RIGHT", -6, 2)
+  Frames.StyleSecondaryButton(frame.deathTankSoundPreview)
+  frame.deathHealerSoundLabel = Frames.CreateLabel(frame, "Healer", "GameFontNormalSmall")
+  frame.deathHealerSoundLabel:SetPoint("TOPLEFT", frame.deathTankSoundDropDown, "BOTTOMLEFT", 14, -8)
+  frame.deathHealerSoundDropDown = Frames.CreateDropdown(frame, 180)
+  frame.deathHealerSoundDropDown:SetPoint("TOPLEFT", frame.deathHealerSoundLabel, "BOTTOMLEFT", -14, -2)
+  frame.deathHealerSoundButton = CreateFrame("Button", nil, frame.deathHealerSoundDropDown)
+  frame.deathHealerSoundButton:SetAllPoints(frame.deathHealerSoundDropDown)
+  frame.deathHealerSoundButton:SetFrameLevel(frame.deathHealerSoundDropDown:GetFrameLevel() + 8)
+  frame.deathHealerSoundButton:RegisterForClicks("LeftButtonUp")
+  frame.deathHealerSoundButton:SetScript("OnClick", function()
+    ToggleSoundPicker(frame, frame.deathHealerSoundButton, frame.deathHealerSoundDropDown, GetSoundDropdownValues, "Select Healer Sound", function()
+      UpdateSoundPreviewButton(frame.deathHealerSoundPreview, frame.deathHealerSoundDropDown)
+      Panel:ApplyCurrent()
+    end)
+  end)
+  frame.deathHealerSoundPreview = Frames.CreateButton(frame, "Test", 42, 20, function()
+    if frame.deathHealerSoundPreview and frame.deathHealerSoundPreview.isEnabled == false then
+      return
+    end
+    PlayPreviewSound(frame.deathHealerSoundDropDown)
+  end)
+  frame.deathHealerSoundPreview:SetPoint("LEFT", frame.deathHealerSoundDropDown, "RIGHT", -6, 2)
+  Frames.StyleSecondaryButton(frame.deathHealerSoundPreview)
+  frame.deathDPSSoundLabel = Frames.CreateLabel(frame, "DPS", "GameFontNormalSmall")
+  frame.deathDPSSoundLabel:SetPoint("TOPLEFT", frame.deathHealerSoundDropDown, "BOTTOMLEFT", 14, -8)
+  frame.deathDPSSoundDropDown = Frames.CreateDropdown(frame, 180)
+  frame.deathDPSSoundDropDown:SetPoint("TOPLEFT", frame.deathDPSSoundLabel, "BOTTOMLEFT", -14, -2)
+  frame.deathDPSSoundButton = CreateFrame("Button", nil, frame.deathDPSSoundDropDown)
+  frame.deathDPSSoundButton:SetAllPoints(frame.deathDPSSoundDropDown)
+  frame.deathDPSSoundButton:SetFrameLevel(frame.deathDPSSoundDropDown:GetFrameLevel() + 8)
+  frame.deathDPSSoundButton:RegisterForClicks("LeftButtonUp")
+  frame.deathDPSSoundButton:SetScript("OnClick", function()
+    ToggleSoundPicker(frame, frame.deathDPSSoundButton, frame.deathDPSSoundDropDown, GetSoundDropdownValues, "Select DPS Sound", function()
+      UpdateSoundPreviewButton(frame.deathDPSSoundPreview, frame.deathDPSSoundDropDown)
+      Panel:ApplyCurrent()
+    end)
+  end)
+  frame.deathDPSSoundPreview = Frames.CreateButton(frame, "Test", 42, 20, function()
+    if frame.deathDPSSoundPreview and frame.deathDPSSoundPreview.isEnabled == false then
+      return
+    end
+    PlayPreviewSound(frame.deathDPSSoundDropDown)
+  end)
+  frame.deathDPSSoundPreview:SetPoint("LEFT", frame.deathDPSSoundDropDown, "RIGHT", -6, 2)
+  Frames.StyleSecondaryButton(frame.deathDPSSoundPreview)
 
   frame.modeLabel = Frames.CreateLabel(frame, "Simple Mode", "GameFontNormal")
   frame.modeLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
@@ -477,13 +830,33 @@ function Panel:Create(parent)
       UIDropDownMenu_AddButton(info, level)
     end
   end)
+  InitDropdownValues(frame.deathTankSoundDropDown, GetSoundDropdownValues, function()
+    UpdateSoundPreviewButton(frame.deathTankSoundPreview, frame.deathTankSoundDropDown)
+    Panel:ApplyCurrent()
+  end)
+  InitDropdownValues(frame.deathHealerSoundDropDown, GetSoundDropdownValues, function()
+    UpdateSoundPreviewButton(frame.deathHealerSoundPreview, frame.deathHealerSoundDropDown)
+    Panel:ApplyCurrent()
+  end)
+  InitDropdownValues(frame.deathDPSSoundDropDown, GetSoundDropdownValues, function()
+    UpdateSoundPreviewButton(frame.deathDPSSoundPreview, frame.deathDPSSoundDropDown)
+    Panel:ApplyCurrent()
+  end)
+
+  SetSoundPreviewTooltip(frame.deathTankSoundPreview, "Preview Tank Sound")
+  SetSoundPreviewTooltip(frame.deathHealerSoundPreview, "Preview Healer Sound")
+  SetSoundPreviewTooltip(frame.deathDPSSoundPreview, "Preview DPS Sound")
 
   self:WireLiveInput(frame.argInput)
   self:WireLiveInput(frame.manualCooldownInput)
+  self:WireLiveInput(frame.deathDurationInput)
   frame.showAlwaysCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraAliveOnlyCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraIgnoreNPCsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.chargeCooldownCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.deathTankCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.deathHealerCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.deathDPSCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.debugCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
 
   return frame
@@ -533,6 +906,7 @@ function Panel:Refresh(aura)
   local isSimple = trigger.type == "simple"
   local isSpellCooldown = trigger.type == "spell_cooldown"
   local isAura = trigger.type == "aura"
+  local isDeathAlert = trigger.type == "death_alert"
   self.frame.modeLabel:SetShown(isSimple)
   self.frame.modeDropDown:SetShown(isSimple)
   self.frame.auraTypeLabel:SetShown(isAura)
@@ -543,6 +917,8 @@ function Panel:Refresh(aura)
   self.frame.auraUnitDropDown:SetShown(isAura)
   self.frame.auraAliveOnlyCheck:SetShown(isAura)
   self.frame.auraIgnoreNPCsCheck:SetShown(isAura and (trigger.unit or "player") == "group")
+  self.frame.argLabel:SetShown(not isDeathAlert)
+  self.frame.argInput:SetShown(not isDeathAlert)
   UIDropDownMenu_SetSelectedValue(self.frame.auraTypeDropDown, trigger.auraType or "buff")
   UIDropDownMenu_SetText(self.frame.auraTypeDropDown, (trigger.auraType or "buff"):gsub("^%l", string.upper))
   UIDropDownMenu_SetSelectedValue(self.frame.auraFilterDropDown, trigger.auraFilter or "present")
@@ -564,8 +940,47 @@ function Panel:Refresh(aura)
   self.frame.manualCooldownHint:SetShown(isSpellCooldown)
   self.frame.chargeCooldownCheck:SetShown(isSpellCooldown)
   self.frame.chargeCooldownCheck:SetChecked(trigger.showChargeCooldown ~= false)
+  self.frame.deathDurationLabel:SetShown(isDeathAlert)
+  self.frame.deathDurationInput:SetShown(isDeathAlert)
+  self.frame.deathRolesLabel:SetShown(isDeathAlert)
+  self.frame.deathTankCheck:SetShown(isDeathAlert)
+  self.frame.deathHealerCheck:SetShown(isDeathAlert)
+  self.frame.deathDPSCheck:SetShown(isDeathAlert)
+  self.frame.deathSoundsLabel:SetShown(isDeathAlert)
+  self.frame.deathTankSoundLabel:SetShown(isDeathAlert)
+  self.frame.deathTankSoundDropDown:SetShown(isDeathAlert)
+  self.frame.deathTankSoundButton:SetShown(isDeathAlert)
+  self.frame.deathTankSoundPreview:SetShown(isDeathAlert)
+  self.frame.deathHealerSoundLabel:SetShown(isDeathAlert)
+  self.frame.deathHealerSoundDropDown:SetShown(isDeathAlert)
+  self.frame.deathHealerSoundButton:SetShown(isDeathAlert)
+  self.frame.deathHealerSoundPreview:SetShown(isDeathAlert)
+  self.frame.deathDPSSoundLabel:SetShown(isDeathAlert)
+  self.frame.deathDPSSoundDropDown:SetShown(isDeathAlert)
+  self.frame.deathDPSSoundButton:SetShown(isDeathAlert)
+  self.frame.deathDPSSoundPreview:SetShown(isDeathAlert)
+  if self.frame.soundPicker and self.frame.soundPicker:IsShown() and not isDeathAlert then
+    self.frame.soundPicker:Hide()
+  end
+  self.frame.deathDurationInput:SetText(isDeathAlert and tostring(trigger.alertDuration or 2) or "")
+  self.frame.deathTankCheck:SetChecked(trigger.showTank ~= false)
+  self.frame.deathHealerCheck:SetChecked(trigger.showHealer ~= false)
+  self.frame.deathDPSCheck:SetChecked(trigger.showDPS ~= false)
+  SetDropdownValue(self.frame.deathTankSoundDropDown, trigger.soundTank or "None", GetSoundDropdownValues)
+  SetDropdownValue(self.frame.deathHealerSoundDropDown, trigger.soundHealer or "None", GetSoundDropdownValues)
+  SetDropdownValue(self.frame.deathDPSSoundDropDown, trigger.soundDPS or "None", GetSoundDropdownValues)
+  if self.frame.soundPicker and self.frame.soundPicker:IsShown() then
+    RefreshSoundPicker(self.frame)
+  end
+  UpdateSoundPreviewButton(self.frame.deathTankSoundPreview, self.frame.deathTankSoundDropDown)
+  UpdateSoundPreviewButton(self.frame.deathHealerSoundPreview, self.frame.deathHealerSoundDropDown)
+  UpdateSoundPreviewButton(self.frame.deathDPSSoundPreview, self.frame.deathDPSSoundDropDown)
   self.frame.debugCheck:SetShown(false)
   self.frame.manualCooldownInput:SetText(trigger.type == "spell_cooldown" and tostring(trigger.manualCooldown or 0) or "")
+
+  if isDeathAlert then
+    self.frame.resolvedLabel:SetText("|cff88ff88Tracks party or raid member deaths only.|r")
+  end
 
   if isSpellCooldown and ns.CooldownManager and ns.CooldownManager.FindCooldownIDForSpellID then
     local spellIDs = GetTriggerSpellIDs(trigger)

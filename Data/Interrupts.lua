@@ -169,6 +169,25 @@ local function GetLSM()
   return LibStub("LibSharedMedia-3.0", true)
 end
 
+local function NormalizeSoundLabel(name)
+  local label = tostring(name or "")
+  if label == "" then
+    return ""
+  end
+
+  label = label:gsub("|c%x%x%x%x%x%x%x%x", "")
+  label = label:gsub("|r", "")
+  label = label:gsub("|T.-|t", "")
+  label = label:gsub("%s+", " ")
+  label = label:gsub("^%s+", ""):gsub("%s+$", "")
+
+  if label == "" then
+    return tostring(name or "")
+  end
+
+  return label
+end
+
 local function SetDefault(tbl, key, value)
   if tbl[key] == nil then
     tbl[key] = value
@@ -252,12 +271,18 @@ function Interrupts:GetSoundOptions()
   if lsm and lsm.List and lsm.Fetch then
     local list = lsm:List("sound")
     if type(list) == "table" then
-      table.sort(list)
+      table.sort(list, function(a, b)
+        return NormalizeSoundLabel(a):lower() < NormalizeSoundLabel(b):lower()
+      end)
       for _, name in ipairs(list) do
         local file = lsm:Fetch("sound", name)
         if file and not seen[name] then
           seen[name] = true
-          out[#out + 1] = { name = name, file = file }
+          out[#out + 1] = {
+            name = name,
+            label = NormalizeSoundLabel(name),
+            file = file,
+          }
         end
       end
     end
@@ -266,7 +291,11 @@ function Interrupts:GetSoundOptions()
   for _, entry in ipairs(self.BUILTIN_SOUNDS) do
     if not seen[entry.name] then
       seen[entry.name] = true
-      out[#out + 1] = entry
+      out[#out + 1] = {
+        name = entry.name,
+        label = NormalizeSoundLabel(entry.name),
+        file = entry.file,
+      }
     end
   end
 

@@ -291,16 +291,18 @@ function ShareLinks:Initialize()
   end)
   self.frame = eventFrame
 
-  if not self.originalSetItemRef then
-    self.originalSetItemRef = SetItemRef
-    SetItemRef = function(link, text, button, chatFrame)
+  if not self.setItemRefHooked and hooksecurefunc then
+    hooksecurefunc("SetItemRef", function(link)
       local linkType, linkData = tostring(link or ""):match("^([^:]+):(.+)$")
-      if linkType == LINK_TYPE and ShareLinks:HandleLinkClick(linkData) then
+      if linkType ~= LINK_TYPE then
         return
       end
-      if ShareLinks.originalSetItemRef then
-        return ShareLinks.originalSetItemRef(link, text, button, chatFrame)
+
+      if ItemRefTooltip and ItemRefTooltip.Hide then
+        ItemRefTooltip:Hide()
       end
-    end
+      ShareLinks:HandleLinkClick(linkData)
+    end)
+    self.setItemRefHooked = true
   end
 end

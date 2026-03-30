@@ -42,11 +42,13 @@ Triggers\ItemCooldownProvider.lua
 Triggers\CastProvider.lua
 Triggers\SimpleProvider.lua
 Triggers\TimerProvider.lua
+Triggers\DeathAlertProvider.lua
 
 Renderers\BaseRegion.lua
 Renderers\Layouts.lua
 Renderers\IconRegion.lua
 Renderers\BarRegion.lua
+Renderers\TextRegion.lua
 Renderers\InterruptTrackerRegion.lua
 Renderers\GroupRegion.lua
 Renderers\DynamicGroupRegion.lua

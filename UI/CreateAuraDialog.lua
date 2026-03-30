@@ -17,6 +17,11 @@ local auraKinds = {
     defaultName = "New Bar",
     triggerType = "spell_cooldown",
   },
+  text = {
+    label = "Death Alert",
+    defaultName = "Death Alert",
+    triggerType = "death_alert",
+  },
   group = {
     label = "Group",
     defaultName = "New Group",

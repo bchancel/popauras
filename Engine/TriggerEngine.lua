@@ -100,6 +100,7 @@ end
 
 function TriggerEngine:BuildPreviewState(aura)
   local now = GetTime()
+  local warriorColor = RAID_CLASS_COLORS and RAID_CLASS_COLORS.WARRIOR or nil
   if aura.kind == "group" or aura.kind == "dynamic_group" or aura.kind == "interrupt_tracker" then
     return ns.Schema.NormalizeRuntimeState({
       show = true,
@@ -116,17 +117,23 @@ function TriggerEngine:BuildPreviewState(aura)
     show = true,
     active = true,
     icon = 134400,
-    name = aura.name,
+    name = aura.kind == "text" and "Kahyl" or aura.name,
     stacks = aura.kind == "icon" and 3 or 0,
-    duration = 12,
-    expirationTime = now + 12,
+    duration = aura.kind == "text" and 2 or 12,
+    expirationTime = now + (aura.kind == "text" and 2 or 12),
     progressType = "timed",
-    value = 12,
-    total = 12,
+    value = aura.kind == "text" and 2 or 12,
+    total = aura.kind == "text" and 2 or 12,
     isReady = false,
     isUsable = true,
     source = "preview",
-    statusText = aura.kind == "bar" and "Preview Bar" or "Preview Icon",
+    statusText = aura.kind == "text" and "dead" or (aura.kind == "bar" and "Preview Bar" or "Preview Icon"),
+    color = aura.kind == "text" and {
+      r = (warriorColor and warriorColor.r) or 0.78,
+      g = (warriorColor and warriorColor.g) or 0.61,
+      b = (warriorColor and warriorColor.b) or 0.43,
+      a = 1,
+    } or nil,
   })
 end
 
@@ -137,6 +144,8 @@ function ns.Render:CreateRegion(aura)
     return ns.renderers.IconRegion:New(aura)
   elseif aura.kind == "bar" then
     return ns.renderers.BarRegion:New(aura)
+  elseif aura.kind == "text" then
+    return ns.renderers.TextRegion:New(aura)
   elseif aura.kind == "interrupt_tracker" then
     return ns.renderers.InterruptTrackerRegion:New(aura)
   elseif aura.kind == "dynamic_group" then

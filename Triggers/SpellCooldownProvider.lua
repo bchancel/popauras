@@ -149,6 +149,10 @@ local function IsLikelyGCD(duration)
   return type(duration) == "number" and duration > 0 and duration <= 1.6
 end
 
+local function IsLearnedCastSource(source)
+  return source == "learned_cast" or source == "learned_cast_deferred"
+end
+
 local function GetBaseCooldownSeconds(spellId)
   if not spellId or spellId == 0 then
     return 0
@@ -193,6 +197,48 @@ local function ShouldProbeSpellCooldownDuration(cooldown)
   local duration = SafeNumber(cooldown.duration)
   local startTime = SafeNumber(cooldown.startTime)
   return (duration and duration > 0 and not IsLikelyGCD(duration)) or (startTime and startTime > 0) or false
+end
+
+local function CooldownLooksReady(cooldown, duration, expirationTime, durationObject, isOnGCD)
+  if type(cooldown) ~= "table" then
+    return false
+  end
+
+  if durationObject ~= nil then
+    return false
+  end
+
+  local explicitActive = SafeBoolean(cooldown.isActive)
+  local enabled = SafeBoolean(cooldown.isEnabled)
+  local startTime = SafeNumber(cooldown.startTime) or 0
+  local liveDuration = SafeNumber(cooldown.duration) or 0
+  local now = GetTime()
+
+  if explicitActive == true then
+    return false
+  end
+
+  if enabled == false then
+    return false
+  end
+
+  if expirationTime and expirationTime > now then
+    return false
+  end
+
+  if duration and duration > 0 and not IsLikelyGCD(duration) then
+    return false
+  end
+
+  if startTime > 0 and liveDuration > 0 and not IsLikelyGCD(liveDuration) then
+    return false
+  end
+
+  if isOnGCD == true then
+    return true
+  end
+
+  return explicitActive == false or startTime <= 0 or liveDuration <= 0
 end
 
 local function GetSpellCooldownTiming(spellId, cooldown)
@@ -323,6 +369,38 @@ local function ScoreCooldownQuery(cooldown, duration, expirationTime, durationOb
   return score
 end
 
+local function QueryLooksLikeBorrowedGCD(spellId, queryId, cooldown, duration, expirationTime, durationObject, isOnGCD)
+  spellId = tonumber(spellId or 0) or 0
+  queryId = tonumber(queryId or 0) or 0
+  if spellId <= 0 or queryId <= 0 or queryId == spellId then
+    return false
+  end
+
+  if isOnGCD == true then
+    return true
+  end
+
+  local liveDuration = SafeNumber(cooldown and cooldown.duration) or 0
+  local remaining = 0
+  if type(expirationTime) == "number" and expirationTime > GetTime() then
+    remaining = expirationTime - GetTime()
+  end
+
+  if liveDuration > 0 and IsLikelyGCD(liveDuration) then
+    return true
+  end
+
+  if type(duration) == "number" and duration > 0 and IsLikelyGCD(duration) then
+    return true
+  end
+
+  if durationObject ~= nil and remaining > 0 and IsLikelyGCD(remaining) then
+    return true
+  end
+
+  return false
+end
+
 local function SelectBestCooldownQuery(spellId, cache, cdmState)
   local best = nil
 
@@ -330,6 +408,12 @@ local function SelectBestCooldownQuery(spellId, cache, cdmState)
     local cooldown = GetSpellCooldownInfoForID(queryId)
     if cooldown then
       local duration, expirationTime, durationObject, isOnGCD = GetSpellCooldownTiming(queryId, cooldown)
+      if QueryLooksLikeBorrowedGCD(spellId, queryId, cooldown, duration, expirationTime, durationObject, isOnGCD) then
+        duration = 0
+        expirationTime = 0
+        durationObject = nil
+        isOnGCD = true
+      end
       local score = ScoreCooldownQuery(cooldown, duration, expirationTime, durationObject, isOnGCD)
 
       if not best
@@ -889,6 +973,8 @@ function provider:Evaluate(trigger)
 
     local cooldownQueryID, cooldown, cooldownDuration, cooldownExpirationTime, cooldownDurationObject, cooldownIsOnGCD =
       SelectBestCooldownQuery(spellId, cache, cdmState)
+    local lastCastAt = self.recentCasts and self.recentCasts[spellId] or nil
+    local learnedCastGraceElapsed = (not lastCastAt) or ((GetTime() - lastCastAt) > 0.45)
 
     if cdmState and cdmState.active then
       isReady = false
@@ -947,8 +1033,17 @@ function provider:Evaluate(trigger)
     local liveDuration = cooldown and SafeNumber(cooldown.duration)
     local cooldownActive = IsCooldownActive(cooldown)
     local expectedCooldown = cache.duration or sharedCache.duration or configuredCooldown or 0
+    local cooldownRemaining = (cooldownExpirationTime and cooldownExpirationTime > GetTime()) and (cooldownExpirationTime - GetTime()) or 0
+    local cooldownLooksLikeGCD = IsLikelyGCD(cooldownDuration)
+      or IsLikelyGCD(liveDuration)
+      or IsLikelyGCD(cooldownRemaining)
     if cooldownActive and liveDuration and IsLikelyGCD(liveDuration) and expectedCooldown > (liveDuration + 0.2) then
       cooldownActive = false
+    end
+    if (cooldownIsOnGCD == true or (expectedCooldown > 0 and cooldownLooksLikeGCD and expectedCooldown > ((cooldownDuration or 0) + 0.2))) then
+      cooldownDuration = 0
+      cooldownExpirationTime = 0
+      cooldownDurationObject = nil
     end
     if cooldownIsOnGCD == true and cooldownDurationObject == nil then
       cooldownActive = false
@@ -1088,6 +1183,32 @@ function provider:Evaluate(trigger)
       cache.deferredByActiveAura = nil
     end
 
+    local cooldownReadyNow = CooldownLooksReady(
+      cooldown,
+      cooldownDuration,
+      cooldownExpirationTime,
+      cooldownDurationObject,
+      cooldownIsOnGCD
+    )
+    local hasMissingChargeState = HasMissingCharges(cache.currentCharges, cache.maxCharges)
+      or HasMissingCharges(currentCharges, cache.maxCharges)
+      or HasMissingCharges(currentCharges, sharedMaxCharges)
+    local suppressStaleCachedCooldown = learnedCastGraceElapsed
+      and cooldownReadyNow
+      and not activeAuraOnly
+      and not (cdmState and cdmState.active)
+      and not hasMissingChargeState
+    if isReady
+      and suppressStaleCachedCooldown
+      and IsLearnedCastSource(cache.source) then
+      cache.expirationTime = 0
+      cache.active = false
+      cache.deferredByActiveAura = nil
+      if cache.isChargeSpell == true and SafeNumber(cache.maxCharges) and cache.maxCharges > 1 then
+        cache.currentCharges = cache.maxCharges
+      end
+    end
+
     if currentCharges == nil and ShouldShowChargeCount(cache.currentCharges, cache.maxCharges) then
       currentCharges = cache.currentCharges
     end
@@ -1105,6 +1226,12 @@ function provider:Evaluate(trigger)
 
     local cacheExpirationTime = cache.expirationTime or sharedCache.expirationTime
     local cacheDuration = cache.duration or sharedCache.duration
+    if suppressStaleCachedCooldown and cacheExpirationTime and cacheExpirationTime > GetTime() then
+      cache.expirationTime = 0
+      cache.active = false
+      cache.deferredByActiveAura = nil
+      cacheExpirationTime = 0
+    end
     if isReady and not activeAuraOnly and cacheExpirationTime and cacheExpirationTime > GetTime() then
       isReady = false
       duration = cacheDuration or GetConfiguredCooldown(trigger, spellId)
@@ -1176,6 +1303,10 @@ function provider:Evaluate(trigger)
         string.format("cdmText=%s", tostring(cdmCountText or "")),
         string.format("cdmAura=%s", tostring(cdmAuraActive)),
         string.format("isOnGCD=%s", tostring(cooldownIsOnGCD == true)),
+        string.format("gcdLike=%s", tostring(cooldownLooksLikeGCD == true)),
+        string.format("cooldownReady=%s", tostring(cooldownReadyNow == true)),
+        string.format("learnedGrace=%s", tostring(learnedCastGraceElapsed ~= true)),
+        string.format("staleCacheSuppressed=%s", tostring(suppressStaleCachedCooldown == true)),
         string.format("durObj=%s", tostring(hasCooldownDurationObject)),
         string.format("chargeObj=%s", tostring(chargeDurationObject ~= nil)),
         string.format("chargeCount=%s", tostring(currentCharges ~= nil and currentCharges or "")),

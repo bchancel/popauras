@@ -164,6 +164,7 @@ function Defaults:NewAura(kind, triggerType)
   local id = string.format("pa_%d_%d", time(), math.random(1000, 9999))
   local defaultName = kind == "bar" and "New Bar"
     or kind == "icon" and "New Icon"
+    or kind == "text" and "Death Alert"
     or kind == "dynamic_group" and "New Dynamic Group"
     or kind == "interrupt_tracker" and "New Interrupt Tracker"
     or "New Group"
@@ -203,6 +204,14 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].showAlways = true
     elseif triggerType == "cast" then
       aura.triggers[1].unit = "player"
+    elseif triggerType == "death_alert" then
+      aura.triggers[1].alertDuration = 2
+      aura.triggers[1].showTank = true
+      aura.triggers[1].showHealer = true
+      aura.triggers[1].showDPS = true
+      aura.triggers[1].soundTank = "None"
+      aura.triggers[1].soundHealer = "None"
+      aura.triggers[1].soundDPS = "None"
     end
   end
 
@@ -211,6 +220,24 @@ function Defaults:NewAura(kind, triggerType)
     aura.position.height = 56
     aura.display.width = 56
     aura.display.height = 56
+  elseif kind == "text" then
+    aura.display.icon = false
+    aura.display.showBackground = false
+    aura.display.showName = true
+    aura.display.showTimer = false
+    aura.display.showStacks = false
+    aura.display.width = 360
+    aura.display.height = 48
+    aura.display.nameAnchor = "CENTER"
+    aura.display.nameOffsetX = 0
+    aura.display.nameOffsetY = 0
+    aura.display.nameFontStyle = "FRIZQT_THICK"
+    aura.display.nameFontSize = 28
+    aura.position.width = 360
+    aura.position.height = 48
+    aura.position.x = 0
+    aura.position.y = 180
+    aura.text.label = "%n dead"
   elseif kind == "interrupt_tracker" then
     aura.triggers = {}
     aura.display.icon = true

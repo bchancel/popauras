@@ -140,7 +140,13 @@ function TextResolver:Resolve(template, state, aura)
   state = state or {}
   aura = aura or {}
   local text = aura.text or {}
+  if aura.kind == "text" and type(text.nameOverride) == "string" and text.nameOverride ~= "" then
+    template = text.nameOverride
+  end
   local resolvedName = text.nameOverride
+  if aura.kind == "text" then
+    resolvedName = state.name or ""
+  end
   if type(resolvedName) ~= "string" or resolvedName == "" then
     resolvedName = state.name or ""
   end

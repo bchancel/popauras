@@ -55,7 +55,7 @@ function GroupRegion:Update(aura, state)
   local backgroundColor = (aura.display and aura.display.backgroundColor) or { r = 0.08, g = 0.45, b = 0.9, a = 0.12 }
   local borderAlpha = math.min(1, (backgroundColor.a or 0.3) + 0.16)
   local showPlaceholder = editorOpen and not visible
-  local showBackground = hasBackground and (visible or not editorOpen)
+  local showBackground = hasBackground and visible
   BaseRegion:ApplyCommonAppearance(aura, self.frame, { show = visible or state.show or showPlaceholder or showBackground })
   Layouts.ApplyGroupLayout(aura, self.frame, children)
   self.placeholder:SetVertexColor(backgroundColor.r or 0, backgroundColor.g or 0, backgroundColor.b or 0, backgroundColor.a or 0)

@@ -14,16 +14,22 @@ Bootstrap:SetScript("OnEvent", function(_, event, addonName)
   end
 
   ns.SavedVariables:Initialize()
+  ns.Events:Initialize()
   if ns.CooldownManager and ns.CooldownManager.Initialize then
     ns.CooldownManager:Initialize()
   end
   if ns.InterruptTracker and ns.InterruptTracker.Initialize then
     ns.InterruptTracker:Initialize()
   end
-  if ns.ShareLinks and ns.ShareLinks.Initialize then
-    ns.ShareLinks:Initialize()
-  end
-  ns.Events:Initialize()
   ns.Slash:Initialize()
   ns.runtime:RefreshAll()
+  if ns.ShareLinks and ns.ShareLinks.Initialize then
+    if C_Timer and C_Timer.After then
+      C_Timer.After(0, function()
+        ns.ShareLinks:Initialize()
+      end)
+    else
+      ns.ShareLinks:Initialize()
+    end
+  end
 end)

@@ -44,7 +44,38 @@ local function ProfileFinish(bucket, startedAt)
   end
 end
 
-function Events:Initialize()
+local function BuildProvidersByEvent()
+  local providersByEvent = {}
+  for _, provider in pairs(ns.providers or EMPTY) do
+    for _, event in ipairs(provider.events or EMPTY) do
+      providersByEvent[event] = providersByEvent[event] or {}
+      providersByEvent[event][#providersByEvent[event] + 1] = provider
+    end
+  end
+  return providersByEvent
+end
+
+local function RegisterTrackedEvent(frame, event)
+  if type(event) ~= "string" or event == "" then
+    return
+  end
+
+  -- `UNIT_AURA` and `UNIT_FLAGS` need to support party / raid member updates.
+  -- Register them generically and let providers filter units in their handlers.
+  if event == "UNIT_AURA" or event == "UNIT_FLAGS" then
+    frame:RegisterEvent(event)
+    return
+  end
+
+  if event:find("^UNIT_SPELLCAST") then
+    frame:RegisterUnitEvent(event, "player", "target")
+    return
+  end
+
+  frame:RegisterEvent(event)
+end
+
+function Events:InitializeEventFrame()
   if self.frame then
     return
   end
@@ -52,28 +83,12 @@ function Events:Initialize()
   local frame = CreateFrame("Frame")
   self.frame = frame
 
-  self.providersByEvent = {}
-  for _, provider in pairs(ns.providers) do
-    for _, event in ipairs(provider.events or {}) do
-      self.providersByEvent[event] = self.providersByEvent[event] or {}
-      self.providersByEvent[event][#self.providersByEvent[event] + 1] = provider
-    end
-  end
-
-  for event in pairs(self.providersByEvent) do
-    if event == "UNIT_AURA" then
-      frame:RegisterUnitEvent("UNIT_AURA", "player", "target", "party", "raid")
-    elseif event == "UNIT_FLAGS" then
-      frame:RegisterUnitEvent("UNIT_FLAGS", "player", "target", "party", "raid")
-    elseif event:find("^UNIT_SPELLCAST") then
-      frame:RegisterUnitEvent(event, "player", "target")
-    else
-      frame:RegisterEvent(event)
-    end
+  for event in pairs(self.providersByEvent or EMPTY) do
+    RegisterTrackedEvent(frame, event)
   end
 
   for event in pairs(GLOBAL_REFRESH_EVENTS) do
-    frame:RegisterEvent(event)
+    RegisterTrackedEvent(frame, event)
   end
 
   frame:SetScript("OnEvent", function(_, event, ...)
@@ -143,4 +158,13 @@ function Events:Initialize()
     end
     ProfileFinish(eventBucket, eventProfile)
   end)
+end
+
+function Events:Initialize()
+  if self.frame then
+    return
+  end
+
+  self.providersByEvent = BuildProvidersByEvent()
+  self:InitializeEventFrame()
 end

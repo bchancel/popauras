@@ -9,6 +9,7 @@ ns.Constants = {
     dynamic_group = true,
     icon = true,
     bar = true,
+    text = true,
     interrupt_tracker = true,
   },
   TRIGGER_OPS = {

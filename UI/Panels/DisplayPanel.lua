@@ -488,6 +488,8 @@ function Panel:UpdateControlStates()
 
   local frame = self.frame
   local isGroup = frame.groupSection:IsShown()
+  local aura = self:GetSelectedAura()
+  local isText = aura and aura.kind == "text"
   local showIcon = frame.showIconCheck:GetChecked() == true
   local matchBarSize = frame.iconMatchSizeCheck and frame.iconMatchSizeCheck:GetChecked() == true
   local showName = frame.nameControls.showCheck:GetChecked() == true
@@ -495,7 +497,6 @@ function Panel:UpdateControlStates()
   local showStacks = frame.stacksControls.showCheck:GetChecked() == true
   local showBackground = frame.showBackgroundCheck:GetChecked() == true
   local readyLook = frame.readyLookCheck:GetChecked() == true
-  local aura = self:GetSelectedAura()
   local trigger = aura and aura.triggers and aura.triggers[1] or {}
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura")
 
@@ -506,10 +507,10 @@ function Panel:UpdateControlStates()
     frame.showAlwaysReadyCheck,
     frame.readyColorWrap.button, frame.readyColorWrap.label,
     frame.barTextureWrap.dropdown, frame.barTextureWrap.label,
-  }, not isGroup)
+  }, not isGroup and not isText)
   SetControlGroupEnabled({ frame.showBackgroundCheck }, true)
-  SetControlGroupEnabled({ frame.readyColorWrap.button, frame.readyColorWrap.label }, not isGroup and readyLook)
-  SetControlGroupEnabled({ frame.showAlwaysReadyCheck }, not isGroup and supportsShowAlways)
+  SetControlGroupEnabled({ frame.readyColorWrap.button, frame.readyColorWrap.label }, not isGroup and not isText and readyLook)
+  SetControlGroupEnabled({ frame.showAlwaysReadyCheck }, not isGroup and not isText and supportsShowAlways)
   SetControlGroupEnabled({ frame.backgroundColorWrap.button, frame.backgroundColorWrap.label }, showBackground)
 
   SetControlGroupEnabled({
@@ -520,8 +521,8 @@ function Panel:UpdateControlStates()
     frame.iconXWrap.input, frame.iconXWrap.label,
     frame.iconYWrap.input, frame.iconYWrap.label,
     frame.iconHint,
-  }, not isGroup)
-  SetControlGroupEnabled({ frame.iconSizeWrap.input, frame.iconSizeWrap.label }, showIcon and not isGroup and not matchBarSize)
+  }, not isGroup and not isText)
+  SetControlGroupEnabled({ frame.iconSizeWrap.input, frame.iconSizeWrap.label }, showIcon and not isGroup and not isText and not matchBarSize)
 
   SetControlGroupEnabled({
     frame.nameControls.fontWrap.dropdown, frame.nameControls.fontWrap.label,
@@ -544,7 +545,7 @@ function Panel:UpdateControlStates()
     frame.timerControls.colorWrap.button, frame.timerControls.colorWrap.label,
     frame.timerControls.decimalsWrap.dropdown, frame.timerControls.decimalsWrap.label,
     frame.timerControls.hideReadyCheck,
-  }, showTimer and not isGroup)
+  }, showTimer and not isGroup and not isText)
 
   SetControlGroupEnabled({
     frame.stacksControls.fontWrap.dropdown, frame.stacksControls.fontWrap.label,
@@ -554,7 +555,7 @@ function Panel:UpdateControlStates()
     frame.stacksControls.xWrap.input, frame.stacksControls.xWrap.label,
     frame.stacksControls.yWrap.input, frame.stacksControls.yWrap.label,
     frame.stacksControls.colorWrap.button, frame.stacksControls.colorWrap.label,
-  }, showStacks and not isGroup)
+  }, showStacks and not isGroup and not isText)
 end
 
 function Panel:ApplyCurrent()
@@ -658,6 +659,14 @@ function Panel:ApplyCurrent()
   aura.display.stacksOffsetX = CommitNumeric(frame.stacksControls.xWrap.input, aura.display.stacksOffsetX or 0)
   aura.display.stacksOffsetY = CommitNumeric(frame.stacksControls.yWrap.input, aura.display.stacksOffsetY or 0)
   aura.display.stacksColor = Colors.Copy(frame.stacksControls.colorWrap.color or aura.display.stacksColor)
+
+  if aura.kind == "text" then
+    aura.display.icon = false
+    aura.display.showTimer = false
+    aura.display.showStacks = false
+    aura.display.reverse = false
+    aura.display.nameAnchor = UIDropDownMenu_GetSelectedValue(frame.nameControls.anchorWrap.dropdown) or aura.display.nameAnchor or "CENTER"
+  end
 
   local region = ns.runtime:GetRegionByAuraId(aura.id)
   if region and region.frame then
@@ -1160,6 +1169,7 @@ end
 function Panel:Refresh(aura)
   self.suppressUpdates = true
   local isGroup = aura.kind == "group" or aura.kind == "dynamic_group"
+  local isText = aura.kind == "text"
   local trigger = aura.triggers and aura.triggers[1] or {}
   local supportsShowAlways = trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura"
   local summaryText = aura.kind:gsub("_", " ")
@@ -1169,6 +1179,8 @@ function Panel:Refresh(aura)
   self.frame.summary:SetText(summaryText .. " Display")
   if isGroup then
     self.frame.hint:SetText("Dock this group to the screen, CDM, unit frames, or another group, then tune spacing below.")
+  elseif isText then
+    self.frame.hint:SetText("Text-only alert aura. Use the trigger tab for death filters, sounds, and alert duration.")
   else
     self.frame.hint:SetText("Placement and appearance for the selected aura.")
   end
@@ -1244,6 +1256,7 @@ function Panel:Refresh(aura)
 
   self.frame.nameControls.showCheck:SetChecked(aura.display.showName == true)
   self.frame.nameControls.altNameWrap.input:SetText((aura.text and aura.text.nameOverride) or "")
+  self.frame.nameControls.altNameWrap.label:SetText(isText and "Text Template" or "Alternative Name")
   SetDropdown(self.frame.nameControls.fontWrap.dropdown, aura.display.nameFontStyle or "FRIZQT_OUTLINE")
   self.frame.nameControls.sizeWrap.input:SetText(tostring(aura.display.nameFontSize or 12))
   SetDropdown(self.frame.nameControls.rotationWrap.dropdown, tostring(aura.display.nameRotation or 0))
@@ -1273,10 +1286,10 @@ function Panel:Refresh(aura)
   SetColorSwatch(self.frame.stacksControls.colorWrap, aura.display.stacksColor or { r = 1, g = 1, b = 1, a = 1 })
 
   self.frame.groupSection:SetShown(isGroup)
-  self.frame.iconSection:SetShown(not isGroup)
+  self.frame.iconSection:SetShown(not isGroup and not isText)
   self.frame.nameSection:SetShown(not isGroup)
-  self.frame.timerSection:SetShown(not isGroup)
-  self.frame.stacksSection:SetShown(not isGroup)
+  self.frame.timerSection:SetShown(not isGroup and not isText)
+  self.frame.stacksSection:SetShown(not isGroup and not isText)
 
   self.frame.canvasSection.expandedHeight = isGroup and self.frame.canvasSection.expandedHeightGroup or self.frame.canvasSection.expandedHeightAura
 
@@ -1287,23 +1300,23 @@ function Panel:Refresh(aura)
   SetSectionCollapsed(self.frame.timerSection, self.frame.collapsedSections.timer)
   SetSectionCollapsed(self.frame.stacksSection, self.frame.collapsedSections.stacks)
 
-  self.frame.orientationWrap.label:SetShown(not isGroup)
-  self.frame.orientationWrap.dropdown:SetShown(not isGroup)
+  self.frame.orientationWrap.label:SetShown(not isGroup and not isText)
+  self.frame.orientationWrap.dropdown:SetShown(not isGroup and not isText)
   self.frame.strataWrap.label:SetShown(true)
   self.frame.strataWrap.dropdown:SetShown(true)
   self.frame.levelWrap.label:SetShown(true)
   self.frame.levelWrap.input:SetShown(true)
-  self.frame.barColorWrap.label:SetShown(not isGroup)
-  self.frame.barColorWrap.button:SetShown(not isGroup)
-  self.frame.barColorWrap.valueText:SetShown(not isGroup)
-  self.frame.readyLookCheck:SetShown(not isGroup)
-  self.frame.glowWhenActiveCheck:SetShown(not isGroup)
-  self.frame.showAlwaysReadyCheck:SetShown(not isGroup and supportsShowAlways)
-  self.frame.readyColorWrap.label:SetShown(not isGroup)
-  self.frame.readyColorWrap.button:SetShown(not isGroup)
-  self.frame.readyColorWrap.valueText:SetShown(not isGroup)
-  self.frame.barTextureWrap.label:SetShown(not isGroup)
-  self.frame.barTextureWrap.dropdown:SetShown(not isGroup)
+  self.frame.barColorWrap.label:SetShown(not isGroup and not isText)
+  self.frame.barColorWrap.button:SetShown(not isGroup and not isText)
+  self.frame.barColorWrap.valueText:SetShown(not isGroup and not isText)
+  self.frame.readyLookCheck:SetShown(not isGroup and not isText)
+  self.frame.glowWhenActiveCheck:SetShown(not isGroup and not isText)
+  self.frame.showAlwaysReadyCheck:SetShown(not isGroup and not isText and supportsShowAlways)
+  self.frame.readyColorWrap.label:SetShown(not isGroup and not isText)
+  self.frame.readyColorWrap.button:SetShown(not isGroup and not isText)
+  self.frame.readyColorWrap.valueText:SetShown(not isGroup and not isText)
+  self.frame.barTextureWrap.label:SetShown(not isGroup and not isText)
+  self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText)
   self.frame.showBackgroundCheck:SetShown(true)
   self.frame.backgroundColorWrap.label:SetShown(true)
   self.frame.backgroundColorWrap.button:SetShown(true)

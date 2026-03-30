@@ -41,13 +41,24 @@ function Panel:Create(parent)
   frame.scroll:SetPoint("TOPLEFT", 8, -8)
   frame.scroll:SetPoint("BOTTOMRIGHT", -30, 8)
 
-  frame.box = CreateFrame("EditBox", nil, frame.scroll, "InputBoxTemplate")
+  frame.box = CreateFrame("EditBox", nil, frame.scroll)
   frame.box:SetMultiLine(true)
   frame.box:SetWidth(714)
   frame.box:SetPoint("TOPLEFT", 0, 0)
   frame.box:SetAutoFocus(false)
+  frame.box:EnableMouse(true)
+  frame.box:EnableKeyboard(true)
+  frame.box:SetMaxLetters(0)
   frame.box:SetTextInsets(8, 8, 8, 8)
   frame.box:SetFontObject(ChatFontNormal)
+  frame.box:SetJustifyH("LEFT")
+  frame.box:SetJustifyV("TOP")
+  frame.box:SetScript("OnMouseUp", function(selfBox)
+    selfBox:SetFocus()
+  end)
+  frame.box:SetScript("OnEditFocusGained", function(selfBox)
+    selfBox:HighlightText(0, 0)
+  end)
   frame.boxMeasure = frame:CreateFontString(nil, "ARTWORK", "ChatFontNormal")
   frame.boxMeasure:SetWidth(698)
   frame.boxMeasure:SetJustifyH("LEFT")
@@ -122,9 +133,13 @@ function Panel:SetImportText(text, selectAll)
     return
   end
   self.frame.box:SetText(text or "")
+  self.frame.box:EnableMouse(true)
+  self.frame.box:EnableKeyboard(true)
   self.frame.box:SetFocus()
   if selectAll ~= false then
     self.frame.box:HighlightText()
+  else
+    self.frame.box:SetCursorPosition(strlen(text or ""))
   end
 end
 
