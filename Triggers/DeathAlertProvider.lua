@@ -1,5 +1,7 @@
 local _, ns = ...
 
+local MAX_ALERTS_PER_COMBAT = 7
+
 local provider = ns.TriggerBase:CreateProvider("death_alert", {
   events = {
     "UNIT_FLAGS",
@@ -7,11 +9,17 @@ local provider = ns.TriggerBase:CreateProvider("death_alert", {
     "GROUP_ROSTER_UPDATE",
     "PLAYER_ROLES_ASSIGNED",
     "PLAYER_ENTERING_WORLD",
+    "PLAYER_REGEN_DISABLED",
+    "PLAYER_REGEN_ENABLED",
   },
   alerts = {},
   recentDeaths = {},
   observedDeathState = {},
+  combatAlertCounts = {},
+  inCombat = false,
 })
+
+local Strings = ns.util.Strings
 
 local function NormalizeRole(role)
   if role == "TANK" or role == "HEALER" then
@@ -56,12 +64,12 @@ local function BuildGroupRosterByGUID()
     if UnitExists(unit) and UnitIsPlayer(unit) then
       local guid = UnitGUID(unit)
       if guid then
-        local name = GetUnitName(unit, false) or UnitName(unit) or UNKNOWNOBJECT
+        local name = Strings and Strings.GetSafeUnitDisplayName and Strings.GetSafeUnitDisplayName(unit, false) or nil
         local _, classToken = UnitClass(unit)
         members[guid] = {
           unit = unit,
           guid = guid,
-          name = Ambiguate and Ambiguate(name, "short") or name,
+          name = name or UNKNOWNOBJECT,
           classToken = classToken,
           role = NormalizeRole(UnitGroupRolesAssigned(unit)),
         }
@@ -150,7 +158,21 @@ function provider:HandleEvent(event, ...)
     wipe(self.alerts)
     wipe(self.recentDeaths)
     wipe(self.observedDeathState)
+    wipe(self.combatAlertCounts)
+    self.inCombat = InCombatLockdown and InCombatLockdown() == true or false
     self:SyncObservedDeathState()
+    return self:GetDeathAlertAuraIds()
+  end
+
+  if event == "PLAYER_REGEN_DISABLED" then
+    self.inCombat = true
+    wipe(self.combatAlertCounts)
+    return self:GetDeathAlertAuraIds()
+  end
+
+  if event == "PLAYER_REGEN_ENABLED" then
+    self.inCombat = false
+    wipe(self.combatAlertCounts)
     return self:GetDeathAlertAuraIds()
   end
 
@@ -209,25 +231,32 @@ function provider:HandleEvent(event, ...)
     local aura = ns.Registry:GetAura(auraId)
     local trigger = aura and aura.triggers and aura.triggers[1] or nil
     if trigger and TriggerMatchesRole(trigger, member.role) then
-      local duration = tonumber(trigger.alertDuration or 2) or 2
-      duration = math.max(0.1, duration)
-      self.alerts[auraId] = {
-        guid = member.guid,
-        name = member.name,
-        classToken = member.classToken,
-        role = member.role,
-        color = GetClassColor(member.classToken),
-        startedAt = now,
-        duration = duration,
-        expirationTime = now + duration,
-      }
+      local alertsThisCombat = tonumber(self.combatAlertCounts[auraId] or 0) or 0
+      if not self.inCombat or alertsThisCombat < MAX_ALERTS_PER_COMBAT then
+        local duration = tonumber(trigger.alertDuration or 2) or 2
+        duration = math.max(0.1, duration)
+        self.alerts[auraId] = {
+          guid = member.guid,
+          name = member.name,
+          classToken = member.classToken,
+          role = member.role,
+          color = GetClassColor(member.classToken),
+          startedAt = now,
+          duration = duration,
+          expirationTime = now + duration,
+        }
 
-      local soundName = GetRoleSound(trigger, member.role)
-      if ns.Interrupts and ns.Interrupts.PlaySound then
-        ns.Interrupts:PlaySound(soundName)
+        local soundName = GetRoleSound(trigger, member.role)
+        if ns.Interrupts and ns.Interrupts.PlaySound then
+          ns.Interrupts:PlaySound(soundName)
+        end
+
+        if self.inCombat then
+          self.combatAlertCounts[auraId] = alertsThisCombat + 1
+        end
+
+        affectedAuraIds[#affectedAuraIds + 1] = auraId
       end
-
-      affectedAuraIds[#affectedAuraIds + 1] = auraId
     end
   end
 

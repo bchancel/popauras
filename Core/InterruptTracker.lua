@@ -3,6 +3,8 @@ local _, ns = ...
 local Tracker = {}
 ns.InterruptTracker = Tracker
 
+local Strings = ns.util.Strings
+
 local PREFIX = "BliZziIT"
 local HEADER = "B1"
 local SEPARATOR = ";"
@@ -11,11 +13,55 @@ Tracker.members = {}
 Tracker.revision = 0
 
 local function SafeShortName(name)
-  if not name or name == "" then
+  if Strings and Strings.GetSafeShortPlayerName then
+    return Strings.GetSafeShortPlayerName(name)
+  end
+  if issecretvalue and issecretvalue(name) then
+    return nil
+  end
+  if type(name) ~= "string" then
+    return nil
+  end
+  if name == "" then
     return nil
   end
   if Ambiguate then
-    return Ambiguate(name, "short")
+    local shortName = Ambiguate(name, "short")
+    if issecretvalue and issecretvalue(shortName) then
+      return nil
+    end
+    if type(shortName) ~= "string" or shortName == "" then
+      return nil
+    end
+    return shortName
+  end
+  return name
+end
+
+local function GetSafeUnitShortName(unit)
+  if Strings and Strings.GetSafeUnitDisplayName then
+    return Strings.GetSafeUnitDisplayName(unit, false)
+  end
+  return SafeShortName(UnitName(unit))
+end
+
+local function GetSafeWhisperTarget(unit)
+  if Strings and Strings.GetSafeUnitDisplayName then
+    return Strings.GetSafeUnitDisplayName(unit, true)
+  end
+
+  local name, realm = UnitFullName and UnitFullName(unit)
+  if issecretvalue and (issecretvalue(name) or issecretvalue(realm)) then
+    return nil
+  end
+  if type(name) ~= "string" then
+    return nil
+  end
+  if name == "" then
+    return nil
+  end
+  if type(realm) == "string" and realm ~= "" then
+    return name .. "-" .. realm
   end
   return name
 end
@@ -86,7 +132,7 @@ function Tracker:RemoveMember(name)
 end
 
 function Tracker:RefreshLocalPlayer()
-  local name = SafeShortName(UnitName("player"))
+  local name = GetSafeUnitShortName("player")
   local info = ns.Interrupts and ns.Interrupts.GetPlayerInterrupt and ns.Interrupts:GetPlayerInterrupt() or nil
   local _, classToken = UnitClass("player")
   self.playerName = name
@@ -122,7 +168,7 @@ function Tracker:RefreshGroupRoster()
   for index = 1, 4 do
     local unit = "party" .. index
     if UnitExists(unit) then
-      local name = SafeShortName(UnitName(unit))
+      local name = GetSafeUnitShortName(unit)
       if name then
         keep[name] = true
         local _, classToken = UnitClass(unit)
@@ -164,9 +210,8 @@ function Tracker:Transmit(payload)
   for index = 1, 4 do
     local unit = "party" .. index
     if UnitExists(unit) and UnitIsPlayer(unit) then
-      local name, realm = UnitFullName(unit)
-      if name then
-        local target = realm and realm ~= "" and (name .. "-" .. realm) or name
+      local target = GetSafeWhisperTarget(unit)
+      if target then
         pcall(C_ChatInfo.SendAddonMessage, PREFIX, payload, "WHISPER", target)
       end
     end

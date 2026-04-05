@@ -5,6 +5,10 @@ ns.util.Strings = Strings
 
 local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
+local function IsSafeStringValue(value)
+  return type(value) == "string" and not (issecretvalue and issecretvalue(value))
+end
+
 function Strings.StartsWith(text, prefix)
   return type(text) == "string" and type(prefix) == "string" and text:sub(1, #prefix) == prefix
 end
@@ -16,12 +20,72 @@ function Strings.Trim(text)
   return (text:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
+function Strings.IsSafeString(value)
+  return IsSafeStringValue(value)
+end
+
 function Strings.SafeName(text, fallback)
+  if not IsSafeStringValue(text) then
+    return fallback or "Aura"
+  end
   text = Strings.Trim(text or "")
   if text == "" then
     return fallback or "Aura"
   end
   return text
+end
+
+function Strings.GetSafeShortPlayerName(name)
+  if not IsSafeStringValue(name) then
+    return nil
+  end
+  local shortName = name
+  if Ambiguate then
+    shortName = Ambiguate(name, "short")
+  end
+  if not IsSafeStringValue(shortName) or shortName == "" then
+    return nil
+  end
+  return shortName
+end
+
+function Strings.GetSafeUnitNameParts(unit)
+  if type(unit) ~= "string" or unit == "" then
+    return nil, nil
+  end
+
+  if UnitFullName then
+    local fullName, fullRealm = UnitFullName(unit)
+    if IsSafeStringValue(fullName) and fullName ~= "" then
+      if IsSafeStringValue(fullRealm) and fullRealm ~= "" then
+        return fullName, fullRealm
+      end
+      return fullName, nil
+    end
+  end
+
+  if UnitName then
+    local unitName, unitRealm = UnitName(unit)
+    if IsSafeStringValue(unitName) and unitName ~= "" then
+      if IsSafeStringValue(unitRealm) and unitRealm ~= "" then
+        return unitName, unitRealm
+      end
+      return unitName, nil
+    end
+  end
+
+  return nil, nil
+end
+
+function Strings.GetSafeUnitDisplayName(unit, includeRealm)
+  local name, realm = Strings.GetSafeUnitNameParts(unit)
+  if not name then
+    return nil
+  end
+  if includeRealm and realm then
+    return string.format("%s-%s", name, realm)
+  end
+  return name
 end
 
 function Strings.Base64Encode(data)

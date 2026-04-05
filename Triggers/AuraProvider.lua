@@ -12,6 +12,8 @@ local provider = ns.TriggerBase:CreateProvider("aura", {
   },
 })
 
+local Strings = ns.util.Strings
+
 provider.pendingTargetAuras = provider.pendingTargetAuras or {}
 provider.cachedTargetAuras = provider.cachedTargetAuras or {}
 provider.learnedTargetDurations = provider.learnedTargetDurations or {}
@@ -548,8 +550,118 @@ local function UnitPassesNPCFilter(unit, trigger)
   return true
 end
 
+local function NormalizeRangeResult(value)
+  if value == nil then
+    return nil
+  end
+  if issecretvalue and issecretvalue(value) then
+    return nil
+  end
+
+  local valueType = type(value)
+  if valueType == "boolean" then
+    return value
+  end
+  if valueType == "number" then
+    if value == 1 then
+      return true
+    end
+    if value == 0 then
+      return false
+    end
+  end
+  return nil
+end
+
+local function UnitPassesInstanceFilter(unit, trigger)
+  if not trigger or trigger.unit ~= "group" then
+    return true
+  end
+  if unit == "player" then
+    return true
+  end
+  if not IsGroupUnitToken(unit) then
+    return true
+  end
+  if UnitExists and not UnitExists(unit) then
+    return false
+  end
+  if UnitIsConnected and UnitIsConnected(unit) == false then
+    return false
+  end
+
+  local playerX, playerY, playerZ, playerInstance = UnitPosition and UnitPosition("player")
+  local unitX, unitY, unitZ, unitInstance = UnitPosition and UnitPosition(unit)
+  if playerInstance and unitInstance then
+    return playerInstance == unitInstance
+  end
+
+  if UnitInRange then
+    local inRange = NormalizeRangeResult(UnitInRange(unit))
+    if inRange ~= nil then
+      return inRange
+    end
+  end
+
+  return true
+end
+
+local function IsUnitInConfiguredSpellRange(unit, trigger)
+  if not trigger or trigger.unit ~= "group" or not C_Spell or not C_Spell.IsSpellInRange then
+    return nil
+  end
+
+  for _, spellId in ipairs(GetSpellIDs(trigger)) do
+    local ok, inRange = pcall(C_Spell.IsSpellInRange, spellId, unit)
+    if ok then
+      inRange = NormalizeRangeResult(inRange)
+      if inRange ~= nil then
+        return inRange
+      end
+    end
+  end
+
+  return nil
+end
+
+local function UnitPassesRangeFilter(unit, trigger)
+  if not trigger or trigger.unit ~= "group" then
+    return true
+  end
+  if unit == "player" then
+    return true
+  end
+  if not IsGroupUnitToken(unit) then
+    return true
+  end
+
+  local rangeMode = trigger.groupRange or "any"
+  if rangeMode == "any" then
+    return true
+  end
+
+  if rangeMode == "spell" then
+    local spellInRange = IsUnitInConfiguredSpellRange(unit, trigger)
+    if spellInRange ~= nil then
+      return spellInRange
+    end
+  end
+
+  if UnitInRange then
+    local inRange = NormalizeRangeResult(UnitInRange(unit))
+    if inRange ~= nil then
+      return inRange
+    end
+  end
+
+  return rangeMode ~= "nearby"
+end
+
 local function UnitPassesAuraFilters(unit, trigger, aliveOnly)
-  return UnitPassesAliveFilter(unit, aliveOnly) and UnitPassesNPCFilter(unit, trigger)
+  return UnitPassesAliveFilter(unit, aliveOnly)
+    and UnitPassesNPCFilter(unit, trigger)
+    and UnitPassesInstanceFilter(unit, trigger)
+    and UnitPassesRangeFilter(unit, trigger)
 end
 
 local function TriggerMatchesSpell(trigger, spellID)
@@ -647,17 +759,10 @@ local function GetPreferredAuraIcon(trigger)
 end
 
 local function GetSafeUnitDisplayName(unit)
-  if not unit then
+  if not unit or not (Strings and Strings.GetSafeUnitDisplayName) then
     return nil
   end
-  local name = GetUnitName and GetUnitName(unit, true) or (UnitName and UnitName(unit))
-  if issecretvalue and issecretvalue(name) then
-    return nil
-  end
-  if type(name) == "string" and name ~= "" then
-    return name
-  end
-  return nil
+  return Strings.GetSafeUnitDisplayName(unit, false)
 end
 
 local function GetSafeAuraIcon(auraData, trigger)
@@ -1460,12 +1565,13 @@ function provider:Evaluate(trigger, auraConfig)
         state = BuildSatisfiedState(trigger, auraConfig, helpful, unit, matchedUnit)
       end
       if ns.Debug and ns.Debug.LogTrigger and trigger.debug == true then
-        local details = string.format("checked=%s eligible=%s ignored=%s missingCount=%d firstMissing=%s names=%s ids=%s",
+        local details = string.format("checked=%s eligible=%s ignored=%s missingCount=%d firstMissing=%s range=%s names=%s ids=%s",
           table.concat(checkedUnits, "/"),
           table.concat(eligibleUnits, "/"),
           table.concat(ignoredUnits, "/"),
           missingCount,
           tostring(firstMissingUnit or ""),
+          tostring(trigger.groupRange or "any"),
           table.concat(spellNames or {}, ","),
           table.concat(spellIDs or {}, ","))
         ns.Debug:LogTrigger(nil, trigger, state, details)
@@ -1598,9 +1704,10 @@ function provider:Evaluate(trigger, auraConfig)
       })
     end
     if ns.Debug and ns.Debug.LogTrigger and trigger.debug == true then
-      local details = string.format("checked=%s ignored=%s names=%s ids=%s",
+      local details = string.format("checked=%s ignored=%s range=%s names=%s ids=%s",
         table.concat(checkedUnits, "/"),
         table.concat(ignoredUnits, "/"),
+        tostring(trigger.groupRange or "any"),
         table.concat(spellNames or {}, ","),
         table.concat(spellIDs or {}, ","))
       if unit == "target" then

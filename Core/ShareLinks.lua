@@ -3,6 +3,8 @@ local _, ns = ...
 local ShareLinks = {}
 ns.ShareLinks = ShareLinks
 
+local Strings = ns.util.Strings
+
 local LINK_TYPE = "popauras"
 local ADDON_PREFIX = "PopAurasShare"
 local CHUNK_SIZE = 180
@@ -21,18 +23,24 @@ local function WriteChatLine(message)
 end
 
 local function GetPlayerFullName()
-  local name, realm = UnitFullName and UnitFullName("player")
-  if not name or name == "" then
-    name = UnitName and UnitName("player") or "Unknown"
+  local name, realm = nil, nil
+  if Strings and Strings.GetSafeUnitNameParts then
+    name, realm = Strings.GetSafeUnitNameParts("player")
   end
-  realm = tostring(realm or ""):gsub("%s+", "")
+  if not name then
+    return "Unknown"
+  end
+  realm = type(realm) == "string" and realm:gsub("%s+", "") or ""
   if realm ~= "" then
     return string.format("%s-%s", name, realm)
   end
-  return tostring(name)
+  return name
 end
 
 local function NormalizePlayerName(value)
+  if value ~= nil and Strings and Strings.IsSafeString and not Strings.IsSafeString(value) then
+    return ""
+  end
   local playerRealm = tostring(GetRealmName and GetRealmName() or ""):gsub("%s+", "")
   local name, realm = tostring(value or ""):match("^([^%-]+)%-(.+)$")
   if name and realm then

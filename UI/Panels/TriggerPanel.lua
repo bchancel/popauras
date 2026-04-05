@@ -32,6 +32,12 @@ local auraUnitValues = {
   { value = "nameplate", label = "Nameplate" },
 }
 
+local auraGroupRangeValues = {
+  { value = "any", label = "Any Range" },
+  { value = "nearby", label = "Nearby (~40y)" },
+  { value = "spell", label = "Spell Range" },
+}
+
 local function GetSoundDropdownValues()
   local values = {
     { value = "None", label = "None" },
@@ -299,6 +305,24 @@ local function SplitEntries(input)
   return results
 end
 
+local function UpdatePrimaryTriggerLayout(frame, aura)
+  if not frame then
+    return
+  end
+
+  local triggerCount = aura and aura.triggers and #aura.triggers or 0
+  local showTriggerLogic = triggerCount > 1
+  frame.opLabel:SetShown(showTriggerLogic)
+  frame.opDropDown:SetShown(showTriggerLogic)
+
+  frame.argLabel:ClearAllPoints()
+  if showTriggerLogic then
+    frame.argLabel:SetPoint("TOPLEFT", frame.opDropDown, "BOTTOMLEFT", 14, -16)
+  else
+    frame.argLabel:SetPoint("TOPLEFT", frame.typeDropDown, "BOTTOMLEFT", 14, -16)
+  end
+end
+
 local function ResolveSpellId(input)
   input = tostring(input or ""):gsub("^%s+", ""):gsub("%s+$", "")
   if input == "" then
@@ -410,6 +434,7 @@ function Panel:ApplyCurrent()
   trigger.auraType = UIDropDownMenu_GetSelectedValue(frame.auraTypeDropDown) or trigger.auraType or "buff"
   trigger.auraFilter = UIDropDownMenu_GetSelectedValue(frame.auraFilterDropDown) or trigger.auraFilter or "present"
   trigger.unit = UIDropDownMenu_GetSelectedValue(frame.auraUnitDropDown) or trigger.unit or "player"
+  trigger.groupRange = UIDropDownMenu_GetSelectedValue(frame.auraRangeDropDown) or trigger.groupRange or "any"
   trigger.aliveOnly = frame.auraAliveOnlyCheck:GetChecked() == true
   trigger.ignoreNPCs = frame.auraIgnoreNPCsCheck:GetChecked() == true
   trigger.debug = frame.debugCheck:GetChecked() == true
@@ -493,6 +518,7 @@ function Panel:ApplyCurrent()
     trigger.unit = "player"
     trigger.auraType = "buff"
     trigger.auraFilter = "present"
+    trigger.groupRange = "any"
     trigger.aliveOnly = false
     trigger.ignoreNPCs = false
   elseif trigger.type == "cast" and not trigger.unit then
@@ -714,8 +740,24 @@ function Panel:Create(parent)
   end)
   frame.auraUnitDropDown:SetPoint("TOPLEFT", frame.auraUnitLabel, "BOTTOMLEFT", -14, -4)
 
+  frame.auraRangeLabel = Frames.CreateLabel(frame, "Group Range", "GameFontNormal")
+  frame.auraRangeLabel:SetPoint("TOPLEFT", frame.auraUnitDropDown, "BOTTOMLEFT", 14, -10)
+  frame.auraRangeDropDown = Frames.CreateDropdown(frame, 160, function(self, level)
+    for _, option in ipairs(auraGroupRangeValues) do
+      local info = UIDropDownMenu_CreateInfo()
+      info.text = option.label
+      info.value = option.value
+      info.func = function()
+        UIDropDownMenu_SetSelectedValue(frame.auraRangeDropDown, option.value)
+        UIDropDownMenu_SetText(frame.auraRangeDropDown, option.label)
+      end
+      UIDropDownMenu_AddButton(info, level)
+    end
+  end)
+  frame.auraRangeDropDown:SetPoint("TOPLEFT", frame.auraRangeLabel, "BOTTOMLEFT", -14, -4)
+
   frame.auraAliveOnlyCheck = Frames.CreateCheckbox(frame, "Alive Only")
-  frame.auraAliveOnlyCheck:SetPoint("TOPLEFT", frame.auraUnitDropDown, "BOTTOMLEFT", 14, -10)
+  frame.auraAliveOnlyCheck:SetPoint("TOPLEFT", frame.auraRangeDropDown, "BOTTOMLEFT", 14, -10)
 
   frame.auraIgnoreNPCsCheck = Frames.CreateCheckbox(frame, "Ignore NPCs")
   frame.auraIgnoreNPCsCheck:SetPoint("TOPLEFT", frame.auraAliveOnlyCheck, "BOTTOMLEFT", 0, -6)
@@ -830,6 +872,19 @@ function Panel:Create(parent)
       UIDropDownMenu_AddButton(info, level)
     end
   end)
+  UIDropDownMenu_Initialize(frame.auraRangeDropDown, function(self, level)
+    for _, option in ipairs(auraGroupRangeValues) do
+      local info = UIDropDownMenu_CreateInfo()
+      info.text = option.label
+      info.value = option.value
+      info.func = function()
+        UIDropDownMenu_SetSelectedValue(frame.auraRangeDropDown, option.value)
+        UIDropDownMenu_SetText(frame.auraRangeDropDown, option.label)
+        Panel:ApplyCurrent()
+      end
+      UIDropDownMenu_AddButton(info, level)
+    end
+  end)
   InitDropdownValues(frame.deathTankSoundDropDown, GetSoundDropdownValues, function()
     UpdateSoundPreviewButton(frame.deathTankSoundPreview, frame.deathTankSoundDropDown)
     Panel:ApplyCurrent()
@@ -865,6 +920,7 @@ end
 function Panel:Refresh(aura)
   self.suppressUpdates = true
   local trigger = aura.triggers and aura.triggers[1] or {}
+  UpdatePrimaryTriggerLayout(self.frame, aura)
   UIDropDownMenu_SetSelectedValue(self.frame.typeDropDown, trigger.type or "simple")
   UIDropDownMenu_SetText(self.frame.typeDropDown, triggerTypes[trigger.type or "simple"] or "Simple")
   UIDropDownMenu_SetSelectedValue(self.frame.opDropDown, aura.triggerOp or "AND")
@@ -915,6 +971,8 @@ function Panel:Refresh(aura)
   self.frame.auraFilterDropDown:SetShown(isAura)
   self.frame.auraUnitLabel:SetShown(isAura)
   self.frame.auraUnitDropDown:SetShown(isAura)
+  self.frame.auraRangeLabel:SetShown(isAura and (trigger.unit or "player") == "group")
+  self.frame.auraRangeDropDown:SetShown(isAura and (trigger.unit or "player") == "group")
   self.frame.auraAliveOnlyCheck:SetShown(isAura)
   self.frame.auraIgnoreNPCsCheck:SetShown(isAura and (trigger.unit or "player") == "group")
   self.frame.argLabel:SetShown(not isDeathAlert)
@@ -933,6 +991,10 @@ function Panel:Refresh(aura)
     group = "Party / Raid",
     nameplate = "Nameplate",
   })[trigger.unit or "player"] or "Player")
+  UIDropDownMenu_SetSelectedValue(self.frame.auraRangeDropDown, trigger.groupRange or "any")
+  UIDropDownMenu_SetText(self.frame.auraRangeDropDown, GetDropdownOptionLabel(trigger.groupRange or "any", function()
+    return auraGroupRangeValues
+  end))
   self.frame.auraAliveOnlyCheck:SetChecked(trigger.aliveOnly == true)
   self.frame.auraIgnoreNPCsCheck:SetChecked(trigger.ignoreNPCs == true)
   self.frame.manualCooldownLabel:SetShown(isSpellCooldown)

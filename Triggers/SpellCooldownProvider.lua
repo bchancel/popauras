@@ -179,6 +179,31 @@ local function GetConfiguredCooldown(trigger, spellId)
   return GetBaseCooldownSeconds(spellId)
 end
 
+local function IsUsableCooldownDuration(duration, expirationTime, isOnGCD)
+  duration = SafeNumber(duration) or 0
+  expirationTime = SafeNumber(expirationTime) or 0
+
+  if duration <= 0 or IsLikelyGCD(duration) or isOnGCD == true then
+    return false
+  end
+
+  return expirationTime <= 0 or expirationTime > GetTime()
+end
+
+local function PreferShorterCooldownDuration(currentDuration, candidateDuration)
+  currentDuration = SafeNumber(currentDuration)
+  candidateDuration = SafeNumber(candidateDuration)
+
+  if not candidateDuration or candidateDuration <= 0 or IsLikelyGCD(candidateDuration) then
+    return currentDuration
+  end
+  if not currentDuration or currentDuration <= 0 or IsLikelyGCD(currentDuration) then
+    return candidateDuration
+  end
+
+  return math.min(currentDuration, candidateDuration)
+end
+
 local function ShouldProbeSpellCooldownDuration(cooldown)
   if type(cooldown) ~= "table" then
     return false
@@ -851,27 +876,46 @@ function provider:HandleEvent(event, ...)
       local aura = ns.Registry:GetAura(auraId)
       local trigger = aura and aura.triggers and aura.triggers[1]
       if trigger and trigger.type == "spell_cooldown" then
-        local baseCooldown = GetConfiguredCooldown(trigger, spellId)
+        local baseCooldown = nil
         local triggerSpellIDs = GetSpellIDs(trigger)
+
+        for _, linkedSpellID in ipairs(triggerSpellIDs) do
+          local cache = self.cache[linkedSpellID]
+          local cdmState = GetCDMState(linkedSpellID)
+
+          local _, _, cooldownDuration, cooldownExpirationTime, _, cooldownIsOnGCD =
+            SelectBestCooldownQuery(linkedSpellID, cache, cdmState)
+          if IsUsableCooldownDuration(cooldownDuration, cooldownExpirationTime, cooldownIsOnGCD) then
+            baseCooldown = PreferShorterCooldownDuration(baseCooldown, cooldownDuration)
+          end
+
+          if cdmState and cdmState.active and IsUsableCooldownDuration(cdmState.duration, cdmState.expirationTime, false) then
+            baseCooldown = PreferShorterCooldownDuration(baseCooldown, cdmState.duration)
+          end
+
+          if C_Spell and C_Spell.GetSpellCharges then
+            local chargeInfo = C_Spell.GetSpellCharges(linkedSpellID)
+            local chargeDuration, chargeExpirationTime = GetSpellChargeTiming(linkedSpellID, chargeInfo)
+            if IsUsableCooldownDuration(chargeDuration, chargeExpirationTime, false) then
+              baseCooldown = PreferShorterCooldownDuration(baseCooldown, chargeDuration)
+            end
+          end
+
+          if cache and IsUsableCooldownDuration(cache.duration, cache.expirationTime, false) then
+            baseCooldown = PreferShorterCooldownDuration(baseCooldown, cache.duration)
+          end
+
+          if (not baseCooldown or baseCooldown <= 0) and cdmState and cdmState.maxDuration and cdmState.maxDuration > 0 then
+            baseCooldown = cdmState.maxDuration
+          end
+        end
+
         if not baseCooldown or baseCooldown <= 0 then
           for _, linkedSpellID in ipairs(triggerSpellIDs) do
-            local cache = self.cache[linkedSpellID]
-            if cache and cache.duration and cache.duration > 0 then
-              baseCooldown = cache.duration
+            local configuredCooldown = GetConfiguredCooldown(trigger, linkedSpellID)
+            if configuredCooldown and configuredCooldown > 0 and not IsLikelyGCD(configuredCooldown) then
+              baseCooldown = configuredCooldown
               break
-            end
-            local cdmState = GetCDMState(linkedSpellID)
-            if cdmState and cdmState.maxDuration and cdmState.maxDuration > 0 then
-              baseCooldown = cdmState.maxDuration
-              break
-            end
-            if C_Spell and C_Spell.GetSpellCharges then
-              local chargeInfo = C_Spell.GetSpellCharges(linkedSpellID)
-              local chargeDuration = select(1, GetSpellChargeTiming(linkedSpellID, chargeInfo))
-              if chargeDuration and chargeDuration > 0 then
-                baseCooldown = chargeDuration
-                break
-              end
             end
           end
         end
@@ -966,9 +1010,9 @@ function provider:Evaluate(trigger)
 
     local cdmState = GetCDMState(spellId)
     if cdmState and cdmState.maxDuration and cdmState.maxDuration > 0 then
-      cache.duration = cdmState.maxDuration
+      cache.duration = PreferShorterCooldownDuration(cache.duration, cdmState.maxDuration)
       cache.cooldownID = cdmState.cooldownID
-      cache.source = "cdm"
+      cache.source = cache.source or "cdm"
     end
 
     local cooldownQueryID, cooldown, cooldownDuration, cooldownExpirationTime, cooldownDurationObject, cooldownIsOnGCD =

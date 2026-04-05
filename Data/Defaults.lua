@@ -191,6 +191,7 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].unit = "player"
       aura.triggers[1].auraType = "buff"
       aura.triggers[1].auraFilter = "present"
+      aura.triggers[1].groupRange = "any"
       aura.triggers[1].aliveOnly = false
       aura.triggers[1].ignoreNPCs = false
       aura.triggers[1].spellId = 0

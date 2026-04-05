@@ -87,12 +87,12 @@ You can also use:
 
 ## How To Install It
 
-If you are on WoW Retail, put the `PopaAuras` folder in your `AddOns` folder.
+If you are on WoW Retail, put the `PopAuras` folder in your `AddOns` folder.
 
 The normal path looks like this:
 
 ```text
-World of Warcraft\_retail_\Interface\AddOns\PopaAuras
+World of Warcraft\_retail_\Interface\AddOns\PopAuras
 ```
 
 Do not put it in the `WTF` folder.
@@ -106,20 +106,20 @@ The addon files go in `Interface\AddOns`.
 3. Open `_retail_`.
 4. Open `Interface`.
 5. Open `AddOns`.
-6. Put the `PopaAuras` folder inside `AddOns`.
+6. Put the `PopAuras` folder inside `AddOns`.
 7. Start WoW again.
 8. At the character screen, make sure the addon is turned on.
 
 When you are done, this folder should exist:
 
 ```text
-World of Warcraft\_retail_\Interface\AddOns\PopaAuras
+World of Warcraft\_retail_\Interface\AddOns\PopAuras
 ```
 
 And inside that folder, you should see files like:
 
 ```text
-PopaAuras.toc
+PopAuras.toc
 PopAuras.lua
 Core\
 Data\
