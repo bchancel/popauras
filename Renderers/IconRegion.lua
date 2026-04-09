@@ -10,6 +10,7 @@ ns.renderers.IconRegion = IconRegion
 local DEFAULT_ICON_COLOR = { r = 1, g = 1, b = 1, a = 1 }
 local DESATURATED_ICON_COLOR = { r = 0.5, g = 0.5, b = 0.5, a = 1 }
 local DEFAULT_TEXT_COLOR = { r = 1, g = 1, b = 1, a = 1 }
+local DEFAULT_SWIPE_COLOR = { r = 0, g = 0, b = 0, a = 0.60 }
 
 function IconRegion:New(aura)
   local instance = setmetatable({}, { __index = self })
@@ -129,6 +130,36 @@ local function ResolveDisplayIcon(aura, state)
   return state.icon or 134400
 end
 
+local function ApplyCooldownAppearance(cooldown, aura)
+  if not cooldown then
+    return
+  end
+
+  local display = aura and aura.display or {}
+  local swipeColor = display.iconSwipeColor or DEFAULT_SWIPE_COLOR
+
+  if cooldown.SetDrawBling then
+    cooldown:SetDrawBling(display.iconCooldownBling == true)
+  end
+  if cooldown.SetDrawEdge then
+    cooldown:SetDrawEdge(display.iconCooldownEdge == true)
+  end
+  if cooldown.SetDrawSwipe then
+    cooldown:SetDrawSwipe(display.swipe == true)
+  end
+  if cooldown.SetReverse then
+    cooldown:SetReverse(display.reverse == true)
+  end
+  if cooldown.SetSwipeColor then
+    cooldown:SetSwipeColor(
+      swipeColor.r or 0,
+      swipeColor.g or 0,
+      swipeColor.b or 0,
+      swipeColor.a == nil and 1 or swipeColor.a
+    )
+  end
+end
+
 function IconRegion:OnTimerUpdate(now)
   local aura = self.currentAura
   local state = self.currentState
@@ -180,16 +211,7 @@ function IconRegion:Update(aura, state)
   local useNativeCooldownText = ShouldUseNativeCooldownText(aura, state, remainingFromObject)
   Colors.Apply(self.icon, iconColor)
   self.icon:SetDesaturated(state.desaturate == true)
-
-  if self.cooldown.SetDrawBling then
-    self.cooldown:SetDrawBling(false)
-  end
-  if self.cooldown.SetDrawEdge then
-    self.cooldown:SetDrawEdge(false)
-  end
-  if self.cooldown.SetDrawSwipe then
-    self.cooldown:SetDrawSwipe(aura.display.swipe == true)
-  end
+  ApplyCooldownAppearance(self.cooldown, aura)
 
   if aura.display.swipe or useNativeCooldownText then
     if state.durationObject and self.cooldown.SetCooldownFromDurationObject then

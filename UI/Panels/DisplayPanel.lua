@@ -325,6 +325,17 @@ local function SetControlGroupEnabled(group, enabled)
   end
 end
 
+local function SetControlGroupShown(group, shown)
+  if not group then
+    return
+  end
+  for _, widget in ipairs(group) do
+    if widget and widget.SetShown then
+      widget:SetShown(shown == true)
+    end
+  end
+end
+
 local function SetColorSwatch(widget, color)
   color = Colors.Copy(color)
   widget.swatch:SetVertexColor(color.r, color.g, color.b, color.a)
@@ -490,6 +501,7 @@ function Panel:UpdateControlStates()
   local isGroup = frame.groupSection:IsShown()
   local aura = self:GetSelectedAura()
   local isText = aura and aura.kind == "text"
+  local isIconAura = aura and aura.kind == "icon"
   local showIcon = frame.showIconCheck:GetChecked() == true
   local matchBarSize = frame.iconMatchSizeCheck and frame.iconMatchSizeCheck:GetChecked() == true
   local showName = frame.nameControls.showCheck:GetChecked() == true
@@ -499,6 +511,7 @@ function Panel:UpdateControlStates()
   local readyLook = frame.readyLookCheck:GetChecked() == true
   local trigger = aura and aura.triggers and aura.triggers[1] or {}
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura")
+  local showIconCooldownControls = not isGroup and not isText and isIconAura and frame.iconSection.collapsed ~= true
 
   SetControlGroupEnabled({
     frame.barColorWrap.button, frame.barColorWrap.label,
@@ -523,6 +536,16 @@ function Panel:UpdateControlStates()
     frame.iconHint,
   }, not isGroup and not isText)
   SetControlGroupEnabled({ frame.iconSizeWrap.input, frame.iconSizeWrap.label }, showIcon and not isGroup and not isText and not matchBarSize)
+  SetControlGroupShown({
+    frame.iconEdgeCheck,
+    frame.iconFinishFlashCheck,
+    frame.iconSwipeColorWrap.button, frame.iconSwipeColorWrap.label, frame.iconSwipeColorWrap.valueText,
+  }, showIconCooldownControls)
+  SetControlGroupEnabled({
+    frame.iconEdgeCheck,
+    frame.iconFinishFlashCheck,
+    frame.iconSwipeColorWrap.button, frame.iconSwipeColorWrap.label,
+  }, not isGroup and not isText and isIconAura)
 
   SetControlGroupEnabled({
     frame.nameControls.fontWrap.dropdown, frame.nameControls.fontWrap.label,
@@ -617,6 +640,9 @@ function Panel:ApplyCurrent()
   aura.display.icon = frame.showIconCheck:GetChecked() == true
   aura.display.reverse = frame.reverseCheck:GetChecked() == true
   aura.display.iconMatchBarSize = frame.iconMatchSizeCheck:GetChecked() == true
+  aura.display.iconCooldownEdge = frame.iconEdgeCheck:GetChecked() == true
+  aura.display.iconCooldownBling = frame.iconFinishFlashCheck:GetChecked() == true
+  aura.display.iconSwipeColor = Colors.Copy(frame.iconSwipeColorWrap.color or aura.display.iconSwipeColor or { r = 0, g = 0, b = 0, a = 0.60 })
   aura.display.iconOverrideId = CommitInteger(frame.altIconIdWrap.input, aura.display.iconOverrideId or 0)
   aura.display.iconSize = CommitNumeric(frame.iconSizeWrap.input, aura.display.iconSize or 32)
   aura.display.iconAnchor = UIDropDownMenu_GetSelectedValue(frame.iconAnchorWrap.dropdown) or aura.display.iconAnchor
@@ -729,6 +755,7 @@ function Panel:Create(parent)
       frame.collapsedSections[key] = not frame.collapsedSections[key]
       SetSectionCollapsed(section, frame.collapsedSections[key])
       Panel:LayoutSections()
+      Panel:UpdateControlStates()
     end)
   end
 
@@ -876,6 +903,10 @@ function Panel:Create(parent)
   frame.showIconCheck:SetPoint("TOPLEFT", 12, -34)
   frame.reverseCheck = Frames.CreateCheckbox(frame.iconSection, "Drain / Reverse Fill")
   frame.reverseCheck:SetPoint("TOPLEFT", 160, -34)
+  frame.iconEdgeCheck = Frames.CreateCheckbox(frame.iconSection, "Bright Cooldown Edge")
+  frame.iconEdgeCheck:SetPoint("TOPLEFT", 330, -34)
+  frame.iconFinishFlashCheck = Frames.CreateCheckbox(frame.iconSection, "Finish Flash")
+  frame.iconFinishFlashCheck:SetPoint("TOPLEFT", 540, -34)
   frame.iconMatchSizeCheck = Frames.CreateCheckbox(frame.iconSection, "Match Bar Size")
   frame.iconMatchSizeCheck:SetPoint("TOPLEFT", 12, -58)
   frame.iconSizeWrap = CreateLabeledInput(frame.iconSection, "Icon Size", 12, -72, 54)
@@ -883,6 +914,7 @@ function Panel:Create(parent)
   frame.altIconIdWrap = CreateLabeledInput(frame.iconSection, "Alternate Icon ID", 12, -146, 110)
   frame.iconXWrap = CreateLabeledInput(frame.iconSection, "Icon X", 140, -146, 72)
   frame.iconYWrap = CreateLabeledInput(frame.iconSection, "Icon Y", 230, -146, 72)
+  frame.iconSwipeColorWrap = CreateColorSwatch(frame.iconSection, "Cooldown Shade", 330, -146)
   frame.iconHint = Frames.CreateLabel(frame.iconSection, "Alternate Icon ID accepts a spell ID or a raw texture file ID. Use X/Y offsets for fine positioning.", "GameFontDisableSmall")
   frame.iconHint:SetPoint("TOPLEFT", 12, -198)
   frame.iconHint:SetWidth(780)
@@ -924,12 +956,13 @@ function Panel:Create(parent)
     frame.groupHint
   )
   RegisterSectionWidgets(frame.iconSection,
-    frame.showIconCheck, frame.reverseCheck, frame.iconMatchSizeCheck,
+    frame.showIconCheck, frame.reverseCheck, frame.iconEdgeCheck, frame.iconFinishFlashCheck, frame.iconMatchSizeCheck,
     frame.iconSizeWrap.label, frame.iconSizeWrap.input,
     frame.iconAnchorWrap.label, frame.iconAnchorWrap.dropdown,
     frame.altIconIdWrap.label, frame.altIconIdWrap.input,
     frame.iconXWrap.label, frame.iconXWrap.input,
     frame.iconYWrap.label, frame.iconYWrap.input,
+    frame.iconSwipeColorWrap.label, frame.iconSwipeColorWrap.button, frame.iconSwipeColorWrap.valueText,
     frame.iconHint
   )
   RegisterSectionWidgets(frame.nameSection,
@@ -1026,6 +1059,8 @@ function Panel:Create(parent)
 
   self:WireLiveCheckbox(frame.showIconCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.reverseCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.iconEdgeCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.iconFinishFlashCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.iconMatchSizeCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupShowBackgroundCheck, function() Panel:ApplyCurrent() end)
@@ -1089,6 +1124,7 @@ function Panel:Create(parent)
   WireColor(frame.nameControls.colorWrap, { r = 1, g = 1, b = 1, a = 1 })
   WireColor(frame.timerControls.colorWrap, { r = 1, g = 1, b = 1, a = 1 })
   WireColor(frame.stacksControls.colorWrap, { r = 1, g = 1, b = 1, a = 1 })
+  WireColor(frame.iconSwipeColorWrap, { r = 0, g = 0, b = 0, a = 0.60 })
   WireColor(frame.groupBackgroundColorWrap, { r = 0, g = 0, b = 0, a = 0.45 })
 
   return frame
@@ -1170,6 +1206,7 @@ function Panel:Refresh(aura)
   self.suppressUpdates = true
   local isGroup = aura.kind == "group" or aura.kind == "dynamic_group"
   local isText = aura.kind == "text"
+  local isIconAura = aura.kind == "icon"
   local trigger = aura.triggers and aura.triggers[1] or {}
   local supportsShowAlways = trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura"
   local summaryText = aura.kind:gsub("_", " ")
@@ -1241,11 +1278,14 @@ function Panel:Refresh(aura)
   self.frame.groupMaintainOrderCheck:SetChecked(aura.display.maintainAuraOrder == true)
   self.frame.showIconCheck:SetChecked(aura.display.icon == true)
   self.frame.reverseCheck:SetChecked(aura.display.reverse == true)
+  self.frame.iconEdgeCheck:SetChecked(aura.display.iconCooldownEdge == true)
+  self.frame.iconFinishFlashCheck:SetChecked(aura.display.iconCooldownBling == true)
   self.frame.iconMatchSizeCheck:SetChecked(aura.display.iconMatchBarSize == true)
   self.frame.altIconIdWrap.input:SetText(tostring(aura.display.iconOverrideId or 0))
   self.frame.iconSizeWrap.input:SetText(tostring(aura.display.iconSize or 32))
   self.frame.iconXWrap.input:SetText(tostring(aura.display.iconOffsetX or 0))
   self.frame.iconYWrap.input:SetText(tostring(aura.display.iconOffsetY or 0))
+  SetColorSwatch(self.frame.iconSwipeColorWrap, aura.display.iconSwipeColor or { r = 0, g = 0, b = 0, a = 0.60 })
 
   SetDropdown(self.frame.orientationWrap.dropdown, aura.display.orientation or "HORIZONTAL")
   SetDropdown(self.frame.anchorWrap.dropdown, aura.position.relativeTo or "UIParent")
@@ -1321,6 +1361,11 @@ function Panel:Refresh(aura)
   self.frame.backgroundColorWrap.label:SetShown(true)
   self.frame.backgroundColorWrap.button:SetShown(true)
   self.frame.backgroundColorWrap.valueText:SetShown(true)
+  self.frame.iconEdgeCheck:SetShown(isIconAura)
+  self.frame.iconFinishFlashCheck:SetShown(isIconAura)
+  self.frame.iconSwipeColorWrap.label:SetShown(isIconAura)
+  self.frame.iconSwipeColorWrap.button:SetShown(isIconAura)
+  self.frame.iconSwipeColorWrap.valueText:SetShown(isIconAura)
   self.frame.groupShowBackgroundCheck:SetShown(false)
   self.frame.groupBackgroundColorWrap.label:SetShown(false)
   self.frame.groupBackgroundColorWrap.button:SetShown(false)

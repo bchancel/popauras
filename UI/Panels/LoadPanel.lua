@@ -28,12 +28,23 @@ local CLASS_ORDER = {
 
 local VISIBILITY_OPTIONS = {
   { key = "dungeon", label = "Dungeons" },
+  { key = "delve", label = "Delves" },
   { key = "raid", label = "Raids" },
   { key = "open_world", label = "Open World" },
   { key = "solo", label = "Solo" },
   { key = "arena", label = "Arena" },
   { key = "battleground", label = "Battlegrounds" },
 }
+
+local function IsVisibilityEnabled(visibility, key)
+  if type(visibility) ~= "table" then
+    return true
+  end
+  if key == "solo" or key == "delve" then
+    return visibility[key] ~= false
+  end
+  return visibility[key] == true
+end
 
 local function CombatModeLabel(current)
   if current == "in" then
@@ -52,18 +63,10 @@ local function EnsureMap(tbl)
 end
 
 local function GetVisibilitySelection(load)
-  local hasStoredVisibility = type(load and load.visibility) == "table"
+  local visibility = type(load and load.visibility) == "table" and load.visibility or nil
   local values = {}
   for _, entry in ipairs(VISIBILITY_OPTIONS) do
-    if hasStoredVisibility then
-      if entry.key == "solo" and load.visibility[entry.key] == nil then
-        values[entry.key] = true
-      else
-        values[entry.key] = load.visibility[entry.key] == true
-      end
-    else
-      values[entry.key] = true
-    end
+    values[entry.key] = IsVisibilityEnabled(visibility, entry.key)
   end
   return values
 end
@@ -758,7 +761,7 @@ function Panel:Create(parent)
 
   frame.visibilityHeader = Frames.CreateLabel(frame.content, "Visibility", "GameFontNormal")
   frame.visibilitySection = CreateFrame("Frame", nil, frame.content)
-  frame.visibilitySection:SetSize(560, 56)
+  frame.visibilitySection:SetSize(560, 80)
   frame.visibilityChecks = {}
   for _, entry in ipairs(VISIBILITY_OPTIONS) do
     local check = Frames.CreateCheckbox(frame.visibilitySection, entry.label)

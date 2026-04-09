@@ -573,6 +573,23 @@ local function NormalizeRangeResult(value)
   return nil
 end
 
+local function QueryUnitInRange(unit)
+  if not UnitInRange then
+    return nil
+  end
+
+  local inRange, checkedRange = UnitInRange(unit)
+  if issecretvalue and (issecretvalue(inRange) or issecretvalue(checkedRange)) then
+    return nil
+  end
+
+  if checkedRange == false then
+    return nil
+  end
+
+  return NormalizeRangeResult(inRange)
+end
+
 local function UnitPassesInstanceFilter(unit, trigger)
   if not trigger or trigger.unit ~= "group" then
     return true
@@ -596,24 +613,27 @@ local function UnitPassesInstanceFilter(unit, trigger)
     return playerInstance == unitInstance
   end
 
-  if UnitInRange then
-    local inRange = NormalizeRangeResult(UnitInRange(unit))
-    if inRange ~= nil then
-      return inRange
-    end
-  end
-
   return true
 end
 
-local function IsUnitInConfiguredSpellRange(unit, trigger)
+local function NormalizeAuraRangeMode(rangeMode)
+  if rangeMode == "nearby" or rangeMode == "spell" then
+    return "in_range"
+  end
+  if rangeMode == "in_range" then
+    return "in_range"
+  end
+  return "any"
+end
+
+local function QueryConfiguredSpellRange(unit, trigger)
   if not trigger or trigger.unit ~= "group" or not C_Spell or not C_Spell.IsSpellInRange then
     return nil
   end
 
   for _, spellId in ipairs(GetSpellIDs(trigger)) do
     local ok, inRange = pcall(C_Spell.IsSpellInRange, spellId, unit)
-    if ok then
+    if ok and not (issecretvalue and issecretvalue(inRange)) then
       inRange = NormalizeRangeResult(inRange)
       if inRange ~= nil then
         return inRange
@@ -622,6 +642,51 @@ local function IsUnitInConfiguredSpellRange(unit, trigger)
   end
 
   return nil
+end
+
+local function QueryInteractRange(unit)
+  if not CheckInteractDistance or (InCombatLockdown and InCombatLockdown()) then
+    return nil
+  end
+
+  local ok, inRange = pcall(CheckInteractDistance, unit, 4)
+  if not ok or (issecretvalue and issecretvalue(inRange)) then
+    return nil
+  end
+  if inRange == true then
+    return true
+  end
+  return nil
+end
+
+local function IsUnitWithinRange(unit, trigger, maxDistance)
+  local unitInRange = QueryUnitInRange(unit)
+  if unitInRange == true then
+    return true
+  end
+
+  local spellRange = QueryConfiguredSpellRange(unit, trigger)
+  if spellRange ~= nil then
+    return spellRange
+  end
+
+  local interactRange = QueryInteractRange(unit)
+  if interactRange ~= nil then
+    return interactRange
+  end
+
+  maxDistance = tonumber(maxDistance or 0) or 0
+  if maxDistance > 0 and UnitPosition then
+    local playerX, playerY, _, playerInstance = UnitPosition("player")
+    local unitX, unitY, _, unitInstance = UnitPosition(unit)
+    if playerX and playerY and unitX and unitY and playerInstance and unitInstance and playerInstance == unitInstance then
+      local deltaX = playerX - unitX
+      local deltaY = playerY - unitY
+      return ((deltaX * deltaX) + (deltaY * deltaY)) <= (maxDistance * maxDistance)
+    end
+  end
+
+  return unitInRange
 end
 
 local function UnitPassesRangeFilter(unit, trigger)
@@ -635,26 +700,17 @@ local function UnitPassesRangeFilter(unit, trigger)
     return true
   end
 
-  local rangeMode = trigger.groupRange or "any"
+  local rangeMode = NormalizeAuraRangeMode(trigger.groupRange or "any")
   if rangeMode == "any" then
     return true
   end
 
-  if rangeMode == "spell" then
-    local spellInRange = IsUnitInConfiguredSpellRange(unit, trigger)
-    if spellInRange ~= nil then
-      return spellInRange
-    end
+  local inRange = IsUnitWithinRange(unit, trigger, 40)
+  if inRange ~= nil then
+    return inRange
   end
 
-  if UnitInRange then
-    local inRange = NormalizeRangeResult(UnitInRange(unit))
-    if inRange ~= nil then
-      return inRange
-    end
-  end
-
-  return rangeMode ~= "nearby"
+  return rangeMode ~= "in_range"
 end
 
 local function UnitPassesAuraFilters(unit, trigger, aliveOnly)
@@ -662,6 +718,70 @@ local function UnitPassesAuraFilters(unit, trigger, aliveOnly)
     and UnitPassesNPCFilter(unit, trigger)
     and UnitPassesInstanceFilter(unit, trigger)
     and UnitPassesRangeFilter(unit, trigger)
+end
+
+local function BuildAuraFilterTrace(unit, trigger, aliveOnly)
+  local trace = {}
+
+  local alivePass = UnitPassesAliveFilter(unit, aliveOnly)
+  trace[#trace + 1] = string.format("alive=%s", tostring(alivePass))
+  if not alivePass then
+    return table.concat(trace, ",")
+  end
+
+  local npcPass = UnitPassesNPCFilter(unit, trigger)
+  trace[#trace + 1] = string.format("npc=%s", tostring(npcPass))
+  if not npcPass then
+    return table.concat(trace, ",")
+  end
+
+  local instancePass = UnitPassesInstanceFilter(unit, trigger)
+  trace[#trace + 1] = string.format("instance=%s", tostring(instancePass))
+  if not instancePass then
+    return table.concat(trace, ",")
+  end
+
+  local rangePass = UnitPassesRangeFilter(unit, trigger)
+  trace[#trace + 1] = string.format("range=%s", tostring(rangePass))
+  if not rangePass then
+    if UnitInRange then
+      local inRange, checkedRange = nil, nil
+      inRange, checkedRange = UnitInRange(unit)
+      if issecretvalue and (issecretvalue(inRange) or issecretvalue(checkedRange)) then
+        trace[#trace + 1] = "unitInRange=secret"
+      else
+        trace[#trace + 1] = string.format("unitInRange=%s/%s", tostring(inRange), tostring(checkedRange))
+      end
+    end
+    local spellRange = QueryConfiguredSpellRange(unit, trigger)
+    trace[#trace + 1] = string.format("spellRange=%s", tostring(spellRange))
+    local interactRange = QueryInteractRange(unit)
+    trace[#trace + 1] = string.format("interactRange=%s", tostring(interactRange))
+    if UnitPosition then
+      local playerX, playerY, _, playerInstance = UnitPosition("player")
+      local unitX, unitY, _, unitInstance = UnitPosition(unit)
+      playerX = SafeAuraNumber(playerX, nil)
+      playerY = SafeAuraNumber(playerY, nil)
+      unitX = SafeAuraNumber(unitX, nil)
+      unitY = SafeAuraNumber(unitY, nil)
+      if issecretvalue and issecretvalue(playerInstance) then
+        playerInstance = nil
+      end
+      if issecretvalue and issecretvalue(unitInstance) then
+        unitInstance = nil
+      end
+      if playerX and playerY and unitX and unitY and playerInstance and unitInstance and playerInstance == unitInstance then
+        local deltaX = playerX - unitX
+        local deltaY = playerY - unitY
+        local distance = math.sqrt((deltaX * deltaX) + (deltaY * deltaY))
+        trace[#trace + 1] = string.format("distance=%.2f", distance)
+      else
+        trace[#trace + 1] = "distance=?"
+      end
+    end
+  end
+
+  return table.concat(trace, ",")
 end
 
 local function TriggerMatchesSpell(trigger, spellID)
@@ -731,6 +851,13 @@ local function GetPreferredAuraName(trigger, auraConfig)
     for _, spellId in ipairs(GetSpellIDs(trigger)) do
       local spellName = C_Spell.GetSpellName(spellId)
       if spellName and spellName ~= "" then
+        return spellName
+      end
+    end
+  end
+  if type(trigger and trigger.spellNames) == "table" then
+    for _, spellName in ipairs(trigger.spellNames) do
+      if type(spellName) == "string" and spellName ~= "" then
         return spellName
       end
     end
@@ -1530,6 +1657,7 @@ function provider:Evaluate(trigger, auraConfig)
     local checkedUnits = {}
     local eligibleUnits = {}
     local ignoredUnits = {}
+    local ignoredReasons = {}
     local firstMissingUnit = nil
     local missingCount = 0
 
@@ -1552,6 +1680,9 @@ function provider:Evaluate(trigger, auraConfig)
         end
       else
         ignoredUnits[#ignoredUnits + 1] = candidateUnit
+        if ns.Debug and ns.Debug.LogTrigger and trigger.debug == true then
+          ignoredReasons[#ignoredReasons + 1] = string.format("%s{%s}", tostring(candidateUnit), BuildAuraFilterTrace(candidateUnit, trigger, aliveOnly))
+        end
       end
     end
 
@@ -1571,9 +1702,12 @@ function provider:Evaluate(trigger, auraConfig)
           table.concat(ignoredUnits, "/"),
           missingCount,
           tostring(firstMissingUnit or ""),
-          tostring(trigger.groupRange or "any"),
+          tostring(NormalizeAuraRangeMode(trigger.groupRange or "any")),
           table.concat(spellNames or {}, ","),
           table.concat(spellIDs or {}, ","))
+        if #ignoredReasons > 0 then
+          details = string.format("%s ignoredWhy=%s", details, table.concat(ignoredReasons, ";"))
+        end
         ns.Debug:LogTrigger(nil, trigger, state, details)
       end
       return state
@@ -1665,6 +1799,7 @@ function provider:Evaluate(trigger, auraConfig)
 
   local checkedUnits = {}
   local ignoredUnits = {}
+  local ignoredReasons = {}
   local hasEligibleUnit = false
   for _, candidateUnit in ipairs(IterateUnits(unit)) do
     checkedUnits[#checkedUnits + 1] = candidateUnit
@@ -1677,6 +1812,9 @@ function provider:Evaluate(trigger, auraConfig)
       end
     else
       ignoredUnits[#ignoredUnits + 1] = candidateUnit
+      if ns.Debug and ns.Debug.LogTrigger and trigger.debug == true then
+        ignoredReasons[#ignoredReasons + 1] = string.format("%s{%s}", tostring(candidateUnit), BuildAuraFilterTrace(candidateUnit, trigger, aliveOnly))
+      end
     end
   end
   if not aura then
@@ -1707,9 +1845,12 @@ function provider:Evaluate(trigger, auraConfig)
       local details = string.format("checked=%s ignored=%s range=%s names=%s ids=%s",
         table.concat(checkedUnits, "/"),
         table.concat(ignoredUnits, "/"),
-        tostring(trigger.groupRange or "any"),
+        tostring(NormalizeAuraRangeMode(trigger.groupRange or "any")),
         table.concat(spellNames or {}, ","),
         table.concat(spellIDs or {}, ","))
+      if #ignoredReasons > 0 then
+        details = string.format("%s ignoredWhy=%s", details, table.concat(ignoredReasons, ";"))
+      end
       if unit == "target" then
         details = string.format("%s | %s", details, BuildAuraSummary("target", helpful))
       end

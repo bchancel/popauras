@@ -60,6 +60,9 @@ Defaults.display = {
   iconOffsetX = 0,
   iconOffsetY = 0,
   swipe = true,
+  iconSwipeColor = { r = 0, g = 0, b = 0, a = 0.60 },
+  iconCooldownEdge = false,
+  iconCooldownBling = false,
   desaturate = false,
   glow = false,
   glowWhenActive = false,
@@ -116,11 +119,12 @@ Defaults.load = {
   encounterId = 0,
   visibility = {
     dungeon = true,
-    raid = false,
+    delve = true,
+    raid = true,
     open_world = true,
     solo = true,
-    arena = false,
-    battleground = false,
+    arena = true,
+    battleground = true,
   },
 }
 
@@ -207,6 +211,7 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].unit = "player"
     elseif triggerType == "death_alert" then
       aura.triggers[1].alertDuration = 2
+      aura.triggers[1].maxAlertsPerCombat = 7
       aura.triggers[1].showTank = true
       aura.triggers[1].showHealer = true
       aura.triggers[1].showDPS = true

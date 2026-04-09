@@ -78,6 +78,28 @@ local function TableHasAnyEnabled(map)
   return false
 end
 
+local function IsVisibilityEnabled(visibility, key)
+  if type(visibility) ~= "table" then
+    return true
+  end
+  if key == "solo" or key == "delve" then
+    return visibility[key] ~= false
+  end
+  return visibility[key] == true
+end
+
+local function VisibilityHasAnyEnabled(visibility)
+  if type(visibility) ~= "table" then
+    return true
+  end
+  for _, key in ipairs({ "dungeon", "delve", "raid", "open_world", "solo", "arena", "battleground" }) do
+    if IsVisibilityEnabled(visibility, key) then
+      return true
+    end
+  end
+  return false
+end
+
 local function IsItemEquippedByID(itemId)
   itemId = tonumber(itemId or 0) or 0
   if itemId <= 0 then
@@ -100,11 +122,11 @@ local function MatchesVisibility(load)
     return true
   end
 
-  if not TableHasAnyEnabled(load.visibility) then
+  if not VisibilityHasAnyEnabled(load.visibility) then
     return false
   end
 
-  local soloAllowed = load.visibility.solo ~= false
+  local soloAllowed = IsVisibilityEnabled(load.visibility, "solo")
   local inGroup = false
   if IsInGroup then
     inGroup = IsInGroup() == true
@@ -118,20 +140,22 @@ local function MatchesVisibility(load)
 
   local inInstance, instanceType = IsInInstance()
   if not inInstance then
-    return load.visibility.open_world == true
+    return IsVisibilityEnabled(load.visibility, "open_world")
   end
 
-  if instanceType == "party" then
-    return load.visibility.dungeon == true
+  if instanceType == "scenario" then
+    return IsVisibilityEnabled(load.visibility, "delve")
+  elseif instanceType == "party" then
+    return IsVisibilityEnabled(load.visibility, "dungeon")
   elseif instanceType == "raid" then
-    return load.visibility.raid == true
+    return IsVisibilityEnabled(load.visibility, "raid")
   elseif instanceType == "arena" then
-    return load.visibility.arena == true
+    return IsVisibilityEnabled(load.visibility, "arena")
   elseif instanceType == "pvp" then
-    return load.visibility.battleground == true
+    return IsVisibilityEnabled(load.visibility, "battleground")
   end
 
-  return load.visibility.open_world == true
+  return IsVisibilityEnabled(load.visibility, "open_world")
 end
 
 function LoadEvaluator:Matches(aura)

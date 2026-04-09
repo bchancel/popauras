@@ -34,8 +34,7 @@ local auraUnitValues = {
 
 local auraGroupRangeValues = {
   { value = "any", label = "Any Range" },
-  { value = "nearby", label = "Nearby (~40y)" },
-  { value = "spell", label = "Spell Range" },
+  { value = "in_range", label = "In Range" },
 }
 
 local function GetSoundDropdownValues()
@@ -323,6 +322,25 @@ local function UpdatePrimaryTriggerLayout(frame, aura)
   end
 end
 
+local function NormalizeAuraGroupRange(value)
+  if value == "nearby" or value == "spell" then
+    return "in_range"
+  end
+  if value == "in_range" then
+    return "in_range"
+  end
+  return "any"
+end
+
+local function NormalizeDeathAlertCap(value)
+  value = tonumber(value)
+  if value == nil then
+    return 7
+  end
+  value = math.floor(value)
+  return math.max(0, math.min(20, value))
+end
+
 local function ResolveSpellId(input)
   input = tostring(input or ""):gsub("^%s+", ""):gsub("%s+$", "")
   if input == "" then
@@ -332,7 +350,7 @@ local function ResolveSpellId(input)
   local numeric = tonumber(input)
   if numeric then
     local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(numeric)
-    return numeric, spellName or ("Spell " .. tostring(numeric))
+    return numeric, spellName or ("Spell " .. tostring(numeric)), spellName
   end
 
   local needle = input:lower()
@@ -349,7 +367,7 @@ local function ResolveSpellId(input)
           if spellId and C_Spell and C_Spell.GetSpellName then
             local spellName = C_Spell.GetSpellName(spellId)
             if spellName and spellName:lower() == needle then
-              return spellId, spellName
+              return spellId, spellName, spellName
             end
           end
         end
@@ -378,22 +396,69 @@ local function ResolveSpellList(input)
   local spellIDs = {}
   local labels = {}
   local names = {}
-  local seen = {}
+  local seenIDs = {}
+  local seenNames = {}
 
   for _, entry in ipairs(entries) do
-    local spellId, result = ResolveSpellId(entry)
+    local spellId, result, resolvedName = ResolveSpellId(entry)
     if not spellId then
       return nil, result
     end
-    if not seen[spellId] then
-      seen[spellId] = true
+    if not seenIDs[spellId] then
+      seenIDs[spellId] = true
       spellIDs[#spellIDs + 1] = spellId
-      labels[#labels + 1] = string.format("%s (%d)", result, spellId)
-      names[#names + 1] = tostring(result or entry):lower()
+      labels[#labels + 1] = resolvedName and string.format("%s (%d)", resolvedName, spellId) or string.format("Spell ID %d", spellId)
+    end
+    if resolvedName then
+      local nameKey = resolvedName:lower()
+      if not seenNames[nameKey] then
+        seenNames[nameKey] = true
+        names[#names + 1] = resolvedName
+      end
     end
   end
 
-  return spellIDs, table.concat(labels, ", "), names
+  return spellIDs, table.concat(labels, ", "), #names > 0 and names or nil
+end
+
+local function ResolveAuraList(input)
+  local entries = SplitEntries(input)
+  if #entries == 0 then
+    return nil, nil, nil, "Enter one or more aura names or spell IDs."
+  end
+
+  local spellIDs = {}
+  local labels = {}
+  local names = {}
+  local seenIDs = {}
+  local seenNames = {}
+
+  for _, entry in ipairs(entries) do
+    local spellId, _, resolvedName = ResolveSpellId(entry)
+    if spellId then
+      if not seenIDs[spellId] then
+        seenIDs[spellId] = true
+        spellIDs[#spellIDs + 1] = spellId
+        labels[#labels + 1] = resolvedName and string.format("%s (%d)", resolvedName, spellId) or string.format("Spell ID %d", spellId)
+      end
+      if resolvedName then
+        local resolvedKey = resolvedName:lower()
+        if not seenNames[resolvedKey] then
+          seenNames[resolvedKey] = true
+          names[#names + 1] = resolvedName
+        end
+      end
+    else
+      local nameKey = entry:lower()
+      if not seenNames[nameKey] then
+        seenNames[nameKey] = true
+        names[#names + 1] = entry
+        labels[#labels + 1] = string.format("%s (name match)", entry)
+      end
+    end
+  end
+
+  return #spellIDs > 0 and spellIDs or nil, table.concat(labels, ", "), #names > 0 and names or nil, nil
 end
 
 local function GetTriggerSpellIDs(trigger)
@@ -415,6 +480,66 @@ local function GetTriggerSpellIDs(trigger)
   return ids
 end
 
+local function GetTriggerSpellNames(trigger)
+  local names = {}
+  local seen = {}
+  if type(trigger and trigger.spellNames) == "table" then
+    for _, value in ipairs(trigger.spellNames) do
+      local spellName = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+      local key = spellName:lower()
+      if key ~= "" and not seen[key] then
+        seen[key] = true
+        names[#names + 1] = spellName
+      end
+    end
+  end
+  return names
+end
+
+local function BuildAuraInputTokens(trigger)
+  local inputTokens = {}
+  local resolvedNameKeys = {}
+
+  for _, spellId in ipairs(GetTriggerSpellIDs(trigger)) do
+    inputTokens[#inputTokens + 1] = tostring(spellId)
+    local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellId)
+    if spellName and spellName ~= "" then
+      resolvedNameKeys[spellName:lower()] = true
+    end
+  end
+
+  for _, spellName in ipairs(GetTriggerSpellNames(trigger)) do
+    if not resolvedNameKeys[spellName:lower()] then
+      inputTokens[#inputTokens + 1] = spellName
+    end
+  end
+
+  return inputTokens
+end
+
+local function BuildAuraResolvedTokens(trigger)
+  local resolvedTokens = {}
+  local resolvedNameKeys = {}
+
+  for _, spellId in ipairs(GetTriggerSpellIDs(trigger)) do
+    local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellId)
+    if spellName and spellName ~= "" then
+      resolvedNameKeys[spellName:lower()] = true
+      resolvedTokens[#resolvedTokens + 1] = string.format("%s (%d)", spellName, spellId)
+    else
+      resolvedTokens[#resolvedTokens + 1] = string.format("Spell ID %d", spellId)
+    end
+  end
+
+  for _, spellName in ipairs(GetTriggerSpellNames(trigger)) do
+    if not resolvedNameKeys[spellName:lower()] then
+      resolvedTokens[#resolvedTokens + 1] = string.format("%s (name match)", spellName)
+    end
+  end
+
+  return resolvedTokens
+end
+
 function Panel:ApplyCurrent()
   if self.suppressUpdates then
     return
@@ -434,11 +559,12 @@ function Panel:ApplyCurrent()
   trigger.auraType = UIDropDownMenu_GetSelectedValue(frame.auraTypeDropDown) or trigger.auraType or "buff"
   trigger.auraFilter = UIDropDownMenu_GetSelectedValue(frame.auraFilterDropDown) or trigger.auraFilter or "present"
   trigger.unit = UIDropDownMenu_GetSelectedValue(frame.auraUnitDropDown) or trigger.unit or "player"
-  trigger.groupRange = UIDropDownMenu_GetSelectedValue(frame.auraRangeDropDown) or trigger.groupRange or "any"
+  trigger.groupRange = NormalizeAuraGroupRange(UIDropDownMenu_GetSelectedValue(frame.auraRangeDropDown) or trigger.groupRange or "any")
   trigger.aliveOnly = frame.auraAliveOnlyCheck:GetChecked() == true
   trigger.ignoreNPCs = frame.auraIgnoreNPCsCheck:GetChecked() == true
   trigger.debug = frame.debugCheck:GetChecked() == true
   trigger.alertDuration = tonumber(frame.deathDurationInput:GetText()) or trigger.alertDuration or 2
+  trigger.maxAlertsPerCombat = NormalizeDeathAlertCap(frame.deathMaxAlertsInput:GetText() ~= "" and frame.deathMaxAlertsInput:GetText() or trigger.maxAlertsPerCombat)
   trigger.showTank = frame.deathTankCheck:GetChecked() == true
   trigger.showHealer = frame.deathHealerCheck:GetChecked() == true
   trigger.showDPS = frame.deathDPSCheck:GetChecked() == true
@@ -447,7 +573,7 @@ function Panel:ApplyCurrent()
   trigger.soundDPS = UIDropDownMenu_GetSelectedValue(frame.deathDPSSoundDropDown) or trigger.soundDPS or "None"
 
   local input = frame.argInput:GetText()
-  if trigger.type == "spell_cooldown" or trigger.type == "aura" then
+  if trigger.type == "spell_cooldown" then
     local spellIDs, result, names = ResolveSpellList(input)
     if not spellIDs then
       frame.resolvedLabel:SetText("|cffff4444" .. result .. "|r")
@@ -477,6 +603,17 @@ function Panel:ApplyCurrent()
       end
     end
     frame.resolvedLabel:SetText(resolved)
+  elseif trigger.type == "aura" then
+    local spellIDs, result, names, errorMessage = ResolveAuraList(input)
+    if errorMessage then
+      frame.resolvedLabel:SetText("|cffff4444" .. errorMessage .. "|r")
+      return
+    end
+    trigger.spellIDs = spellIDs
+    trigger.spellNames = names
+    trigger.spellId = spellIDs and spellIDs[1] or nil
+    trigger.itemId = nil
+    frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s", result))
   elseif trigger.type == "item_cooldown" then
     local itemId, result = ResolveItemId(input)
     if not itemId then
@@ -593,8 +730,13 @@ function Panel:Create(parent)
   frame.deathDurationInput = Frames.CreateInput(frame, 120, 24)
   frame.deathDurationInput:SetPoint("TOPLEFT", frame.deathDurationLabel, "BOTTOMLEFT", 0, -6)
 
+  frame.deathMaxAlertsLabel = Frames.CreateLabel(frame, "Max Alerts / Combat (0-20, 0 = unlimited)", "GameFontNormal")
+  frame.deathMaxAlertsLabel:SetPoint("TOPLEFT", frame.deathDurationInput, "BOTTOMLEFT", 0, -12)
+  frame.deathMaxAlertsInput = Frames.CreateInput(frame, 120, 24)
+  frame.deathMaxAlertsInput:SetPoint("TOPLEFT", frame.deathMaxAlertsLabel, "BOTTOMLEFT", 0, -6)
+
   frame.deathRolesLabel = Frames.CreateLabel(frame, "Show Roles", "GameFontNormal")
-  frame.deathRolesLabel:SetPoint("TOPLEFT", frame.deathDurationInput, "BOTTOMLEFT", 0, -12)
+  frame.deathRolesLabel:SetPoint("TOPLEFT", frame.deathMaxAlertsInput, "BOTTOMLEFT", 0, -12)
   frame.deathTankCheck = Frames.CreateCheckbox(frame, "Tanks")
   frame.deathTankCheck:SetPoint("TOPLEFT", frame.deathRolesLabel, "BOTTOMLEFT", 0, -6)
   frame.deathHealerCheck = Frames.CreateCheckbox(frame, "Healers")
@@ -905,6 +1047,7 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.argInput)
   self:WireLiveInput(frame.manualCooldownInput)
   self:WireLiveInput(frame.deathDurationInput)
+  self:WireLiveInput(frame.deathMaxAlertsInput)
   frame.showAlwaysCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraAliveOnlyCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraIgnoreNPCsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
@@ -927,7 +1070,16 @@ function Panel:Refresh(aura)
   UIDropDownMenu_SetText(self.frame.opDropDown, aura.triggerOp or "AND")
   UIDropDownMenu_SetSelectedValue(self.frame.modeDropDown, trigger.mode or "always")
   UIDropDownMenu_SetText(self.frame.modeDropDown, trigger.mode or "always")
-  if trigger.type == "spell_cooldown" or trigger.type == "aura" or trigger.type == "cast" then
+  if trigger.type == "aura" then
+    local inputTokens = BuildAuraInputTokens(trigger)
+    local resolvedTokens = BuildAuraResolvedTokens(trigger)
+    self.frame.argInput:SetText(table.concat(inputTokens, ", "))
+    if #resolvedTokens > 0 then
+      self.frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s", table.concat(resolvedTokens, ", ")))
+    else
+      self.frame.resolvedLabel:SetText("|cffaaaaaaEnter aura names or spell IDs separated by commas.|r")
+    end
+  elseif trigger.type == "spell_cooldown" or trigger.type == "cast" then
     local spellIDs = GetTriggerSpellIDs(trigger)
     local idTokens = {}
     for _, spellId in ipairs(spellIDs) do
@@ -991,8 +1143,9 @@ function Panel:Refresh(aura)
     group = "Party / Raid",
     nameplate = "Nameplate",
   })[trigger.unit or "player"] or "Player")
-  UIDropDownMenu_SetSelectedValue(self.frame.auraRangeDropDown, trigger.groupRange or "any")
-  UIDropDownMenu_SetText(self.frame.auraRangeDropDown, GetDropdownOptionLabel(trigger.groupRange or "any", function()
+  local normalizedGroupRange = NormalizeAuraGroupRange(trigger.groupRange or "any")
+  UIDropDownMenu_SetSelectedValue(self.frame.auraRangeDropDown, normalizedGroupRange)
+  UIDropDownMenu_SetText(self.frame.auraRangeDropDown, GetDropdownOptionLabel(normalizedGroupRange, function()
     return auraGroupRangeValues
   end))
   self.frame.auraAliveOnlyCheck:SetChecked(trigger.aliveOnly == true)
@@ -1004,6 +1157,8 @@ function Panel:Refresh(aura)
   self.frame.chargeCooldownCheck:SetChecked(trigger.showChargeCooldown ~= false)
   self.frame.deathDurationLabel:SetShown(isDeathAlert)
   self.frame.deathDurationInput:SetShown(isDeathAlert)
+  self.frame.deathMaxAlertsLabel:SetShown(isDeathAlert)
+  self.frame.deathMaxAlertsInput:SetShown(isDeathAlert)
   self.frame.deathRolesLabel:SetShown(isDeathAlert)
   self.frame.deathTankCheck:SetShown(isDeathAlert)
   self.frame.deathHealerCheck:SetShown(isDeathAlert)
@@ -1025,6 +1180,7 @@ function Panel:Refresh(aura)
     self.frame.soundPicker:Hide()
   end
   self.frame.deathDurationInput:SetText(isDeathAlert and tostring(trigger.alertDuration or 2) or "")
+  self.frame.deathMaxAlertsInput:SetText(isDeathAlert and tostring(NormalizeDeathAlertCap(trigger.maxAlertsPerCombat)) or "")
   self.frame.deathTankCheck:SetChecked(trigger.showTank ~= false)
   self.frame.deathHealerCheck:SetChecked(trigger.showHealer ~= false)
   self.frame.deathDPSCheck:SetChecked(trigger.showDPS ~= false)

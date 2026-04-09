@@ -517,6 +517,14 @@ local function GetCDMState(spellId)
   return ns.CooldownManager:GetCooldownStateForSpell(spellId)
 end
 
+local function IsUsableCDMCooldownState(cdmState)
+  if type(cdmState) ~= "table" or cdmState.active ~= true then
+    return false
+  end
+
+  return IsUsableCooldownDuration(cdmState.duration, cdmState.expirationTime, false)
+end
+
 local function GetCDMAuraState(spellId)
   if not ns.CooldownManager or not ns.CooldownManager.GetAuraStateForSpell then
     return nil
@@ -653,7 +661,7 @@ local function GetSafeAuraString(value)
   return nil
 end
 
-local function GetCDMAuraDetails(cdmAuraState)
+local function GetCDMAuraDetails(cdmAuraState, expectedSpellId)
   if type(cdmAuraState) ~= "table" or type(cdmAuraState.auraData) ~= "table" then
     return nil
   end
@@ -663,20 +671,26 @@ local function GetCDMAuraDetails(cdmAuraState)
   local auraInstanceID = cdmAuraState.auraInstanceID
   local duration, expirationTime, durationObject = GetSecretSafeAuraTiming(unit, auraInstanceID, auraData)
   local stacks, stackText, stackDisplayValue, hasStackDisplayValue = GetSecretSafeAuraStacks(unit, auraInstanceID, auraData)
+  local auraSpellId = SafeNumber(auraData.spellId) or SafeNumber(auraData.spellID)
+  local safeExpectedSpellId = tonumber(expectedSpellId or 0) or 0
+  local spellMatches = safeExpectedSpellId <= 0 or auraSpellId == nil or auraSpellId == safeExpectedSpellId
+  local auraActive = spellMatches and auraInstanceID ~= nil and (stacks > 0 or duration > 0 or expirationTime > GetTime() or auraData ~= nil)
 
   return {
-    active = auraInstanceID ~= nil and (stacks > 0 or duration > 0 or expirationTime > GetTime() or auraData ~= nil),
-    duration = duration,
-    expirationTime = expirationTime,
-    durationObject = durationObject,
-    stacks = stacks,
-    stackText = stackText,
-    stackDisplayValue = stackDisplayValue,
-    hasStackDisplayValue = hasStackDisplayValue,
-    icon = SafeNumber(auraData.icon),
-    name = GetSafeAuraString(auraData.name),
+    active = auraActive,
+    duration = auraActive and duration or 0,
+    expirationTime = auraActive and expirationTime or 0,
+    durationObject = auraActive and durationObject or nil,
+    stacks = auraActive and stacks or 0,
+    stackText = auraActive and stackText or nil,
+    stackDisplayValue = auraActive and stackDisplayValue or nil,
+    hasStackDisplayValue = auraActive and hasStackDisplayValue or false,
+    icon = auraActive and SafeNumber(auraData.icon) or nil,
+    name = auraActive and GetSafeAuraString(auraData.name) or nil,
     auraInstanceID = auraInstanceID,
     unit = unit,
+    spellId = auraSpellId,
+    spellMatches = spellMatches,
   }
 end
 
@@ -1009,6 +1023,7 @@ function provider:Evaluate(trigger)
     local activeAuraOnly = false
 
     local cdmState = GetCDMState(spellId)
+    local cdmStateActive = IsUsableCDMCooldownState(cdmState)
     if cdmState and cdmState.maxDuration and cdmState.maxDuration > 0 then
       cache.duration = PreferShorterCooldownDuration(cache.duration, cdmState.maxDuration)
       cache.cooldownID = cdmState.cooldownID
@@ -1020,7 +1035,7 @@ function provider:Evaluate(trigger)
     local lastCastAt = self.recentCasts and self.recentCasts[spellId] or nil
     local learnedCastGraceElapsed = (not lastCastAt) or ((GetTime() - lastCastAt) > 0.45)
 
-    if cdmState and cdmState.active then
+    if cdmStateActive then
       isReady = false
       duration = cdmState.duration or 0
       expirationTime = cdmState.expirationTime or 0
@@ -1048,7 +1063,7 @@ function provider:Evaluate(trigger)
     end
 
     local cdmAuraState = GetCDMAuraState(spellId)
-    local cdmAuraDetails = GetCDMAuraDetails(cdmAuraState)
+    local cdmAuraDetails = GetCDMAuraDetails(cdmAuraState, spellId)
     local cdmAuraData = cdmAuraState and cdmAuraState.auraData or nil
     local cdmAuraStacks = cdmAuraDetails and cdmAuraDetails.stacks or 0
     local cdmAuraDuration = cdmAuraDetails and cdmAuraDetails.duration or 0
@@ -1073,23 +1088,20 @@ function provider:Evaluate(trigger)
       end
     end
 
-    local startTime = cooldown and SafeNumber(cooldown.startTime)
     local liveDuration = cooldown and SafeNumber(cooldown.duration)
     local cooldownActive = IsCooldownActive(cooldown)
-    local expectedCooldown = cache.duration or sharedCache.duration or configuredCooldown or 0
     local cooldownRemaining = (cooldownExpirationTime and cooldownExpirationTime > GetTime()) and (cooldownExpirationTime - GetTime()) or 0
     local cooldownLooksLikeGCD = IsLikelyGCD(cooldownDuration)
       or IsLikelyGCD(liveDuration)
       or IsLikelyGCD(cooldownRemaining)
-    if cooldownActive and liveDuration and IsLikelyGCD(liveDuration) and expectedCooldown > (liveDuration + 0.2) then
-      cooldownActive = false
-    end
-    if (cooldownIsOnGCD == true or (expectedCooldown > 0 and cooldownLooksLikeGCD and expectedCooldown > ((cooldownDuration or 0) + 0.2))) then
+
+    -- Some direct spell cooldown queries still expose the active GCD as a short
+    -- duration object. Drop that timing before the duration-object path can mark
+    -- the spell cooldown aura active.
+    if cooldownLooksLikeGCD or cooldownIsOnGCD == true then
       cooldownDuration = 0
       cooldownExpirationTime = 0
       cooldownDurationObject = nil
-    end
-    if cooldownIsOnGCD == true and cooldownDurationObject == nil then
       cooldownActive = false
     end
 
@@ -1202,7 +1214,7 @@ function provider:Evaluate(trigger)
     end
 
     activeAuraOnly = cdmAuraActive
-      and not (cdmState and cdmState.active)
+      and not cdmStateActive
       and not hasCooldownDurationObject
       and not cooldownActive
       and activeDurationObject == nil
@@ -1240,7 +1252,7 @@ function provider:Evaluate(trigger)
     local suppressStaleCachedCooldown = learnedCastGraceElapsed
       and cooldownReadyNow
       and not activeAuraOnly
-      and not (cdmState and cdmState.active)
+      and not cdmStateActive
       and not hasMissingChargeState
     if isReady
       and suppressStaleCachedCooldown
@@ -1342,10 +1354,14 @@ function provider:Evaluate(trigger)
         string.format("spellIDs=%s", table.concat(spellIDs, ",")),
         string.format("cdmID=%s", tostring(cdmState and cdmState.cooldownID or cache.cooldownID or "")),
         string.format("cooldownQueryID=%s", tostring(cooldownQueryID or "")),
-        string.format("cdmActive=%s", tostring(cdmState and cdmState.active or false)),
+        string.format("cdmActive=%s", tostring(cdmStateActive == true)),
+        string.format("cdmActiveRaw=%s", tostring(cdmState and cdmState.active or false)),
+        string.format("cdmDur=%s", tostring(cdmState and cdmState.duration or "")),
         string.format("cdmCount=%s", tostring(cdmCount ~= nil and cdmCount or "")),
         string.format("cdmText=%s", tostring(cdmCountText or "")),
         string.format("cdmAura=%s", tostring(cdmAuraActive)),
+        string.format("cdmAuraSpell=%s", tostring(cdmAuraDetails and cdmAuraDetails.spellId or "")),
+        string.format("cdmAuraMatch=%s", tostring(cdmAuraDetails and cdmAuraDetails.spellMatches ~= false or false)),
         string.format("isOnGCD=%s", tostring(cooldownIsOnGCD == true)),
         string.format("gcdLike=%s", tostring(cooldownLooksLikeGCD == true)),
         string.format("cooldownReady=%s", tostring(cooldownReadyNow == true)),

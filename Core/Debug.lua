@@ -135,13 +135,15 @@ function Debug:CreateWindow()
   frame.title:SetPoint("TOPLEFT", 12, -10)
   frame.title:SetText("PopAuras Debug")
 
-  frame.close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-  frame.close:SetPoint("TOPRIGHT", 0, 0)
+  frame.close = ns.util.Frames.CreateButton(frame, "Close", 90, 24, function()
+    frame:Hide()
+  end)
+  frame.close:SetPoint("TOPRIGHT", -12, -8)
 
   frame.clear = ns.util.Frames.CreateButton(frame, "Clear", 90, 24, function()
     Debug:Clear()
   end)
-  frame.clear:SetPoint("TOPRIGHT", -36, -8)
+  frame.clear:SetPoint("RIGHT", frame.close, "LEFT", -8, 0)
 
   frame.copy = ns.util.Frames.CreateButton(frame, "Copy Log", 90, 24, function()
     Debug:CopyAll()

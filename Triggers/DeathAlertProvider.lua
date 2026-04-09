@@ -1,6 +1,6 @@
 local _, ns = ...
 
-local MAX_ALERTS_PER_COMBAT = 7
+local DEFAULT_MAX_ALERTS_PER_COMBAT = 7
 
 local provider = ns.TriggerBase:CreateProvider("death_alert", {
   events = {
@@ -97,6 +97,15 @@ local function GetRoleSound(trigger, role)
     return trigger.soundHealer or "None"
   end
   return trigger.soundDPS or "None"
+end
+
+local function GetAlertCap(trigger)
+  local cap = tonumber(trigger and trigger.maxAlertsPerCombat)
+  if cap == nil then
+    cap = DEFAULT_MAX_ALERTS_PER_COMBAT
+  end
+  cap = math.floor(cap)
+  return math.max(0, math.min(20, cap))
 end
 
 function provider:GetDeathAlertAuraIds()
@@ -232,7 +241,8 @@ function provider:HandleEvent(event, ...)
     local trigger = aura and aura.triggers and aura.triggers[1] or nil
     if trigger and TriggerMatchesRole(trigger, member.role) then
       local alertsThisCombat = tonumber(self.combatAlertCounts[auraId] or 0) or 0
-      if not self.inCombat or alertsThisCombat < MAX_ALERTS_PER_COMBAT then
+      local alertCap = GetAlertCap(trigger)
+      if not self.inCombat or alertCap == 0 or alertsThisCombat < alertCap then
         local duration = tonumber(trigger.alertDuration or 2) or 2
         duration = math.max(0.1, duration)
         self.alerts[auraId] = {
