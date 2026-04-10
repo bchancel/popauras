@@ -158,6 +158,14 @@ Defaults.interruptTracker = {
   disabledSpells = {},
 }
 
+Defaults.baseAction = {
+  type = "glow_unit_frame",
+  event = "on_activate",
+  enabled = true,
+  unit = "%n",
+  duration = 4,
+}
+
 Defaults.baseTrigger = {
   type = "simple",
   enabled = true,
@@ -245,6 +253,7 @@ function Defaults:ApplyAuraDefaults(aura)
   aura.position = Tables.MergeDefaults(type(aura.position) == "table" and aura.position or {}, self.position)
   aura.text = Tables.MergeDefaults(type(aura.text) == "table" and aura.text or {}, self.text)
   aura.conditions = type(aura.conditions) == "table" and aura.conditions or {}
+  aura.actions = type(aura.actions) == "table" and aura.actions or {}
   aura.children = type(aura.children) == "table" and aura.children or {}
   aura.enabled = aura.enabled ~= false
 

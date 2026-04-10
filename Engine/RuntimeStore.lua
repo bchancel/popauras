@@ -253,6 +253,18 @@ function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
   end
 
   PlayAuraActivationSound(aura, previousState, state)
+
+  if ns.ActionEngine then
+    local becameShown = state.show and (not previousState or not previousState.show)
+    local becameHidden = not state.show and previousState and previousState.show
+    if becameShown then
+      ns.ActionEngine:Fire(aura, "on_activate", state)
+    elseif becameHidden then
+      ns.ActionEngine:Fire(aura, "on_deactivate", state)
+      ns.ActionEngine:CancelForAura(auraId)
+    end
+  end
+
   self:SetState(auraId, state)
   self:SetPresentation(auraId, state)
   local renderProfile = ProfileStart("runtime:render_aura")

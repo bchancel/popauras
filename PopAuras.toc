@@ -35,6 +35,8 @@ Core\ShareLinks.lua
 Engine\RuntimeStore.lua
 Engine\LoadEvaluator.lua
 Engine\ConditionEngine.lua
+Engine\ActionEngine.lua
+Engine\UnitFrameGlow.lua
 Engine\TextResolver.lua
 
 Triggers\Base.lua
@@ -65,6 +67,7 @@ UI\NewAuraPanel.lua
 UI\Panels\DisplayPanel.lua
 UI\Panels\TriggerPanel.lua
 UI\Panels\ConditionsPanel.lua
+UI\Panels\ActionsPanel.lua
 UI\Panels\LoadPanel.lua
 UI\Panels\PositionPanel.lua
 UI\Panels\GroupPanel.lua

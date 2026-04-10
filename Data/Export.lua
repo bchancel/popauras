@@ -236,6 +236,16 @@ local function CompactAura(auraId, aura)
     compact.conditions = conditions
   end
 
+  if type(aura.actions) == "table" and #aura.actions > 0 then
+    compact.actions = {}
+    for index, action in ipairs(aura.actions) do
+      local actionDefaults = ns.util.Tables.DeepCopy(ns.Defaults.baseAction)
+      actionDefaults.type = action.type or actionDefaults.type
+      compact.actions[index] = PruneAgainstDefaults(action, actionDefaults) or {}
+      compact.actions[index].type = action.type or "glow_unit_frame"
+    end
+  end
+
   if aura.triggerOp and aura.triggerOp ~= (defaults.triggerOp or "AND") then
     compact.triggerOp = aura.triggerOp
   end

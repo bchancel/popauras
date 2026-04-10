@@ -8,6 +8,7 @@ ns.ui.MainWindow = MainWindow
 
 local panelMap = {
   trigger = "TriggerPanel",
+  actions = "ActionsPanel",
   load = "LoadPanel",
   group = "GroupPanel",
   import_export = "ImportExportPanel",
@@ -16,6 +17,7 @@ local panelMap = {
 local tabLabels = {
   display = "Display",
   trigger = "Trigger",
+  actions = "Actions",
   load = "Load",
   group = "Group",
   import_export = "Import/Export",
@@ -40,7 +42,7 @@ local function ShouldShowTab(aura, key)
   local isGroup = aura.kind == "group" or aura.kind == "dynamic_group"
   local isInterruptTracker = aura.kind == "interrupt_tracker"
   if isGroup or isInterruptTracker then
-    if key == "trigger" or key == "group" then
+    if key == "trigger" or key == "actions" or key == "group" then
       return false
     end
     return true
@@ -330,6 +332,7 @@ function MainWindow:HideAllPanels()
   HidePanel(ns.panels.DisplayPanel)
   HidePanel(ns.panels.InterruptTrackerDisplayPanel)
   HidePanel(ns.panels.TriggerPanel)
+  HidePanel(ns.panels.ActionsPanel)
   HidePanel(ns.panels.LoadPanel)
   HidePanel(ns.panels.GroupPanel)
   HidePanel(ns.panels.ImportExportPanel)

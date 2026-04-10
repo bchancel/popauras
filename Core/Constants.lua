@@ -19,6 +19,7 @@ ns.Constants = {
   TAB_KEYS = {
     "display",
     "trigger",
+    "actions",
     "load",
     "group",
     "import_export",
