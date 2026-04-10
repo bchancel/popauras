@@ -14,8 +14,7 @@ function provider:GetAffectedAuras(event)
   end
 
   return ns.Registry:CollectAuraIds(function(aura)
-    local trigger = aura and aura.triggers and aura.triggers[1]
-    return trigger and trigger.type == "item_cooldown"
+    return ns.TriggerBase:AnyTriggerMatches(aura, "item_cooldown")
   end)
 end
 
@@ -56,7 +55,18 @@ local function GetItemCooldownInfo(itemId)
   }
 end
 
-function provider:Evaluate(trigger)
+local function GetCooldownMatchMode(trigger)
+  return trigger and trigger.cooldownMatch == "ready" and "ready" or "cooldown"
+end
+
+local function ShouldPersistDisplay(trigger, aura)
+  if not trigger or trigger.showAlways == false then
+    return false
+  end
+  return not (aura and type(aura.triggers) == "table" and #aura.triggers > 1)
+end
+
+function provider:Evaluate(trigger, aura)
   local itemId = tonumber(trigger.itemId or 0)
   if itemId == 0 then
     return ns.Schema.NormalizeRuntimeState({ show = false, active = false, source = "item_cooldown" })
@@ -79,8 +89,12 @@ function provider:Evaluate(trigger)
     isReady = false
   end
 
+  local matchMode = GetCooldownMatchMode(trigger)
+  local matched = (matchMode == "ready") and isReady or not isReady
+
   return ns.Schema.NormalizeRuntimeState({
-    show = trigger.showAlways ~= false or not isReady,
+    show = ShouldPersistDisplay(trigger, aura) or matched,
+    matched = matched,
     active = not isReady,
     icon = icon,
     name = name,

@@ -9,10 +9,12 @@ local LINK_TYPE = "popauras"
 local ADDON_PREFIX = "PopAurasShare"
 local CHUNK_SIZE = 180
 local CACHE_TTL = 600
+local OFFER_POPUP_KEY = "POPAURAS_SHARE_OFFER"
 
 ShareLinks.outgoing = ShareLinks.outgoing or {}
 ShareLinks.incoming = ShareLinks.incoming or {}
 ShareLinks.pending = ShareLinks.pending or {}
+ShareLinks.offers = ShareLinks.offers or {}
 
 local function WriteChatLine(message)
   if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
@@ -76,6 +78,14 @@ local function BuildReceiveKey(owner, shareKey)
   return string.format("%s:%s", NormalizePlayerName(owner), tostring(shareKey or ""))
 end
 
+local function SendAddonWhisper(target, message)
+  if not (C_ChatInfo and C_ChatInfo.SendAddonMessage) then
+    return false
+  end
+  local ok, result = pcall(C_ChatInfo.SendAddonMessage, ADDON_PREFIX, message, "WHISPER", target)
+  return ok == true and result == 0
+end
+
 local function PruneCacheTable(cache)
   local now = GetTime()
   for key, entry in pairs(cache or {}) do
@@ -115,17 +125,142 @@ local function ShowImportString(encoded, owner)
 end
 
 local function SendChunkedExport(target, shareKey, encoded)
-  if not (C_ChatInfo and C_ChatInfo.SendAddonMessage) then
-    return false
-  end
-
   local totalParts = math.max(1, math.ceil(#encoded / CHUNK_SIZE))
   for index = 1, totalParts do
     local chunk = encoded:sub(((index - 1) * CHUNK_SIZE) + 1, index * CHUNK_SIZE)
     local message = string.format("DAT\t%s\t%d\t%d\t%s", tostring(shareKey), index, totalParts, chunk)
-    C_ChatInfo.SendAddonMessage(ADDON_PREFIX, message, "WHISPER", target)
+    if not SendAddonWhisper(target, message) then
+      return false
+    end
   end
   return true
+end
+
+local function GetWhisperTargets(scope)
+  scope = tostring(scope or "")
+  local upper = scope:upper()
+  local targets = {}
+  local seen = {}
+
+  local function addTarget(unit)
+    local target = unit and NormalizePlayerName(Strings and Strings.GetSafeUnitDisplayName and Strings.GetSafeUnitDisplayName(unit, true) or "")
+    if target ~= "" and target ~= NormalizePlayerName(GetPlayerFullName()) and not seen[target] then
+      seen[target] = true
+      targets[#targets + 1] = target
+    end
+  end
+
+  if upper == "PARTY" then
+    for index = 1, 4 do
+      if UnitExists("party" .. index) and UnitIsPlayer("party" .. index) then
+        addTarget("party" .. index)
+      end
+    end
+    return targets
+  end
+
+  if upper == "RAID" then
+    for index = 1, 40 do
+      local unit = "raid" .. index
+      if UnitExists(unit) and UnitIsPlayer(unit) then
+        addTarget(unit)
+      end
+    end
+    return targets
+  end
+
+  local normalized = NormalizePlayerName(scope)
+  if normalized ~= "" then
+    targets[1] = normalized
+  end
+  return targets
+end
+
+function ShareLinks:SendSelection(targetText)
+  if InCombatLockdown and InCombatLockdown() then
+    return false, "Aura sharing is only available out of combat."
+  end
+
+  local selectedAuraId = ns.db.ui.selectedAuraId
+  if not selectedAuraId then
+    return false, "No aura selected."
+  end
+
+  local aura = ns.Registry and ns.Registry.GetAura and ns.Registry:GetAura(selectedAuraId) or nil
+  if not aura then
+    return false, "Selected aura was not found."
+  end
+
+  local targets = GetWhisperTargets(targetText)
+  if #targets == 0 then
+    return false, "Enter a player name, or use PARTY / RAID."
+  end
+
+  local encoded = ns.Export and ns.Export.Encode and ns.Export:Encode({ selectedAuraId }) or nil
+  if type(encoded) ~= "string" or encoded == "" then
+    return false, "Failed to build the export string."
+  end
+
+  PruneCacheTable(self.outgoing)
+  local shareKey = BuildShareKey()
+  self.outgoing[shareKey] = {
+    encoded = encoded,
+    auraName = aura.name,
+    expiresAt = GetTime() + CACHE_TTL,
+  }
+
+  local sentCount = 0
+  for _, target in ipairs(targets) do
+    local message = string.format("OFFER\t%s\t%s", tostring(shareKey), SanitizeLinkLabel(aura.name))
+    if SendAddonWhisper(target, message) then
+      sentCount = sentCount + 1
+    end
+  end
+
+  if sentCount == 0 then
+    return false, "Unable to send the aura offer."
+  end
+
+  WriteChatLine(string.format("|cff66ccffPopAuras:|r Sent %s to %d recipient%s. They will receive an accept popup.",
+    tostring(aura.name or "Aura"),
+    sentCount,
+    sentCount == 1 and "" or "s"))
+  return true
+end
+
+function ShareLinks:ShowOfferPrompt(sender, shareKey, auraName)
+  local offerKey = BuildReceiveKey(sender, shareKey)
+  self.offers[offerKey] = {
+    sender = sender,
+    shareKey = shareKey,
+    auraName = auraName,
+    expiresAt = GetTime() + CACHE_TTL,
+  }
+
+  if not StaticPopupDialogs then
+    WriteChatLine(string.format("|cff66ccffPopAuras:|r %s wants to send you %s. Open the Import/Export tab if the transfer arrives.",
+      tostring(sender or "Someone"),
+      tostring(auraName or "an aura")))
+    return
+  end
+
+  StaticPopup_Show(OFFER_POPUP_KEY, tostring(sender or "Someone"), tostring(auraName or "Aura"), offerKey)
+end
+
+function ShareLinks:AcceptOffer(offerKey)
+  local offer = offerKey and self.offers and self.offers[offerKey] or nil
+  if not offer then
+    return
+  end
+  if InCombatLockdown and InCombatLockdown() then
+    WriteChatLine("|cffff4444PopAuras:|r Accept aura sharing out of combat.")
+    return
+  end
+  if offer.sender and offer.shareKey then
+    SendAddonWhisper(offer.sender, string.format("ACCEPT\t%s", tostring(offer.shareKey)))
+    WriteChatLine(string.format("|cff66ccffPopAuras:|r Accepting shared aura from %s...", tostring(offer.sender)))
+  end
+  self.offers[offerKey] = nil
 end
 
 function ShareLinks:CreateLinkForSelection()
@@ -227,6 +362,23 @@ function ShareLinks:HandleAddonMessage(message, sender)
   sender = NormalizePlayerName(sender)
 
   local command, payload = message:match("^([^\t]+)\t?(.*)$")
+  if command == "OFFER" then
+    local shareKey, auraName = payload:match("^([^\t]+)\t?(.*)$")
+    if shareKey and shareKey ~= "" and sender and sender ~= "" then
+      self:ShowOfferPrompt(sender, shareKey, auraName)
+    end
+    return
+  end
+
+  if command == "ACCEPT" then
+    local shareKey = payload
+    local outgoing = shareKey and self.outgoing[shareKey] or nil
+    if outgoing and outgoing.encoded and sender and sender ~= "" then
+      SendChunkedExport(sender, shareKey, outgoing.encoded)
+    end
+    return
+  end
+
   if command == "REQ" then
     local shareKey = payload
     local outgoing = shareKey and self.outgoing[shareKey] or nil
@@ -298,6 +450,21 @@ function ShareLinks:Initialize()
     ShareLinks:HandleAddonMessage(message, sender)
   end)
   self.frame = eventFrame
+
+  if StaticPopupDialogs and not StaticPopupDialogs[OFFER_POPUP_KEY] then
+    StaticPopupDialogs[OFFER_POPUP_KEY] = {
+      text = "%s wants to send you a PopAuras aura:\n%s\n\nAccept the transfer?",
+      button1 = ACCEPT,
+      button2 = CANCEL,
+      OnAccept = function(popup)
+        ShareLinks:AcceptOffer(popup and popup.data)
+      end,
+      timeout = 0,
+      whileDead = true,
+      hideOnEscape = true,
+      preferredIndex = 3,
+    }
+  end
 
   if not self.setItemRefHooked and hooksecurefunc then
     hooksecurefunc("SetItemRef", function(link)

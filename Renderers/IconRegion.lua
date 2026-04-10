@@ -3,6 +3,7 @@ local _, ns = ...
 local BaseRegion = ns.renderers.BaseRegion
 local Colors = ns.util.Colors
 local Fonts = ns.util.Fonts
+local Spells = ns.util.Spells
 
 local IconRegion = {}
 ns.renderers.IconRegion = IconRegion
@@ -116,20 +117,6 @@ local function ApplyStackText(fontString, state)
   fontString:SetText(state and (state.stackText or (state.stacks and state.stacks > 0 and tostring(state.stacks) or "")) or "")
 end
 
-local function ResolveDisplayIcon(aura, state)
-  local overrideId = aura and aura.display and tonumber(aura.display.iconOverrideId or 0) or 0
-  if overrideId > 0 then
-    if C_Spell and C_Spell.GetSpellTexture then
-      local texture = C_Spell.GetSpellTexture(overrideId)
-      if texture then
-        return texture
-      end
-    end
-    return overrideId
-  end
-  return state.icon or 134400
-end
-
 local function ApplyCooldownAppearance(cooldown, aura)
   if not cooldown then
     return
@@ -200,7 +187,7 @@ function IconRegion:Update(aura, state)
   BaseRegion:ApplyAnchor(aura, self.frame)
   BaseRegion:ApplyFrameLayer(aura, self.frame, self.overlay)
   BaseRegion:ApplyCommonAppearance(aura, self.frame, state)
-  self.icon:SetTexture(ResolveDisplayIcon(aura, state))
+  self.icon:SetTexture(Spells:ResolveDisplayIcon(aura, state))
   local remainingFromObject = ns.TextResolver:GetDurationObjectRemaining(state)
   local readyLookActive = aura.display.readyLook == true and ns.TextResolver:IsReadyState(state, remainingFromObject)
   local iconColor = readyLookActive and (aura.display.readyColor or aura.display.color) or DEFAULT_ICON_COLOR

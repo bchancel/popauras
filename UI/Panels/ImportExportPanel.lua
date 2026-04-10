@@ -20,7 +20,7 @@ function Panel:Create(parent)
     end
   end
 
-  frame.desc = Frames.CreateLabel(frame, "Paste a PopAuras import string here. Export actions use the copy window or a share link. Exporting a selected group includes its child auras.", "GameFontHighlight")
+  frame.desc = Frames.CreateLabel(frame, "Paste a PopAuras import string here. Export actions use the copy window or Send Aura. Exporting a selected group includes its child auras.", "GameFontHighlight")
   frame.desc:SetPoint("TOPLEFT", 16, -20)
 
   frame.boxHolder = CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -93,17 +93,23 @@ function Panel:Create(parent)
   frame.exportClipboardButton:SetPoint("TOPLEFT", frame.boxHolder, "BOTTOMLEFT", 0, -12)
   StylePanelButton(frame.exportClipboardButton)
 
-  frame.createLinkButton = Frames.CreateButton(frame, "Create Link", 120, 22, function()
-    if not (ns.ShareLinks and ns.ShareLinks.CreateLinkForSelection) then
-      print("|cffff4444PopAuras:|r Share links are not available.")
+  frame.sendTargetInput = Frames.CreateInput(frame, 170, 22)
+  frame.sendTargetInput:SetPoint("LEFT", frame.exportClipboardButton, "RIGHT", 12, 0)
+  frame.sendTargetInput:SetAutoFocus(false)
+  frame.sendTargetLabel = Frames.CreateLabel(frame, "Send To", "GameFontNormalSmall")
+  frame.sendTargetLabel:SetPoint("BOTTOMLEFT", frame.sendTargetInput, "TOPLEFT", 0, 4)
+
+  frame.createLinkButton = Frames.CreateButton(frame, "Send Aura", 100, 22, function()
+    if not (ns.ShareLinks and ns.ShareLinks.SendSelection) then
+      print("|cffff4444PopAuras:|r Aura sharing is not available.")
       return
     end
-    local ok, err = ns.ShareLinks:CreateLinkForSelection()
+    local ok, err = ns.ShareLinks:SendSelection(frame.sendTargetInput:GetText())
     if not ok and err then
       print("|cffff4444PopAuras:|r " .. tostring(err))
     end
   end)
-  frame.createLinkButton:SetPoint("LEFT", frame.exportClipboardButton, "RIGHT", 8, 0)
+  frame.createLinkButton:SetPoint("LEFT", frame.sendTargetInput, "RIGHT", 8, 0)
   StylePanelButton(frame.createLinkButton, true)
 
   frame.importButton = Frames.CreateButton(frame, "Import Add", 100, 22, function()
@@ -125,6 +131,16 @@ function Panel:Create(parent)
   StylePanelButton(frame.replaceButton)
 
   self.frame = frame
+
+  frame.sendTargetInput:SetScript("OnEnterPressed", function(selfInput)
+    selfInput:ClearFocus()
+    if frame.createLinkButton and frame.createLinkButton.Click then
+      frame.createLinkButton:Click()
+    end
+  end)
+  frame.sendTargetInput:SetScript("OnEscapePressed", function(selfInput)
+    selfInput:ClearFocus()
+  end)
   return frame
 end
 

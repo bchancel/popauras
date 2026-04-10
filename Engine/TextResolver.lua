@@ -152,6 +152,7 @@ function TextResolver:Resolve(template, state, aura)
   end
   template = template:gsub("%%n", resolvedName)
   template = template:gsub("%%s", state.statusText or "")
+  template = template:gsub("%%m", state.message or "")
   template = template:gsub("%%p", self:GetTimerText(state, aura))
   return template
 end

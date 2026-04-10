@@ -7,6 +7,11 @@ function Schema.NormalizeRuntimeState(state)
   state = state or {}
 
   local show = state.show == true
+  local matched = state.matched
+  if matched == nil then
+    matched = show
+  end
+  matched = matched == true
   local active = state.active == true
   local icon = state.icon
   local name = state.name or ""
@@ -29,12 +34,14 @@ function Schema.NormalizeRuntimeState(state)
   local itemId = state.itemId
   local source = state.source or ""
   local statusText = state.statusText or ""
+  local message = state.message or ""
   local debugExtra = state.debugExtra
   local color = state.color
   local desaturate = state.desaturate == true
   local glow = state.glow == true
 
   state.show = show
+  state.matched = matched
   state.active = active
   state.icon = icon
   state.name = name
@@ -57,6 +64,7 @@ function Schema.NormalizeRuntimeState(state)
   state.itemId = itemId
   state.source = source
   state.statusText = statusText
+  state.message = message
   state.debugExtra = debugExtra
   state.color = color
   state.desaturate = desaturate

@@ -9,8 +9,9 @@ local provider = ns.TriggerBase:CreateProvider("timer", {
 
 function provider:GetAffectedAurasForTimer(timerId)
   return ns.Registry:CollectAuraIds(function(aura)
-    local trigger = aura and aura.triggers and aura.triggers[1]
-    return trigger and trigger.type == "timer" and trigger.timerId == timerId
+    return ns.TriggerBase:AnyTriggerMatches(aura, "timer", function(trigger)
+      return trigger.timerId == timerId
+    end)
   end)
 end
 

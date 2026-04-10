@@ -847,6 +847,47 @@ function CooldownManager:ApplyHiddenFrame(record)
   end
 end
 
+function CooldownManager:RestoreHiddenRecord(record)
+  local frame = record and record.frame
+  if not frame then
+    return
+  end
+
+  if frame.ClearAllPoints then
+    pcall(frame.ClearAllPoints, frame)
+  end
+  if frame.SetParent and record.parent then
+    pcall(frame.SetParent, frame, record.parent)
+  end
+  if record.points and #record.points > 0 and frame.SetPoint then
+    for _, pointData in ipairs(record.points) do
+      pcall(frame.SetPoint, frame, pointData[1], pointData[2], pointData[3], pointData[4], pointData[5])
+    end
+  end
+  if frame.SetSize and record.width and record.height then
+    pcall(frame.SetSize, frame, record.width, record.height)
+  end
+  for node, entry in pairs(record.nodes or {}) do
+    if node.SetAlpha and entry.alpha ~= nil then
+      pcall(node.SetAlpha, node, entry.alpha)
+    end
+    if node.EnableMouse and entry.mouseEnabled ~= nil then
+      pcall(node.EnableMouse, node, entry.mouseEnabled)
+    end
+    if node.SetMouseMotionEnabled then
+      pcall(node.SetMouseMotionEnabled, node, entry.mouseEnabled == true)
+    end
+    if node.SetScript then
+      pcall(node.SetScript, node, "OnEnter", entry.onEnter)
+      pcall(node.SetScript, node, "OnLeave", entry.onLeave)
+      pcall(node.SetScript, node, "OnMouseMotion", entry.onMotion)
+    end
+    if entry.wasShown and node.Show then
+      pcall(node.Show, node)
+    end
+  end
+end
+
 function CooldownManager:RestoreHiddenFrames(cooldownID)
   local records = self.hiddenFrames[cooldownID]
   if not records then
@@ -854,42 +895,7 @@ function CooldownManager:RestoreHiddenFrames(cooldownID)
   end
 
   for _, record in ipairs(records) do
-    local frame = record.frame
-    if frame then
-      if frame.ClearAllPoints then
-        pcall(frame.ClearAllPoints, frame)
-      end
-      if frame.SetParent and record.parent then
-        pcall(frame.SetParent, frame, record.parent)
-      end
-      if record.points and #record.points > 0 and frame.SetPoint then
-        for _, pointData in ipairs(record.points) do
-          pcall(frame.SetPoint, frame, pointData[1], pointData[2], pointData[3], pointData[4], pointData[5])
-        end
-      end
-      if frame.SetSize and record.width and record.height then
-        pcall(frame.SetSize, frame, record.width, record.height)
-      end
-      for node, entry in pairs(record.nodes or {}) do
-        if node.SetAlpha and entry.alpha ~= nil then
-          pcall(node.SetAlpha, node, entry.alpha)
-        end
-        if node.EnableMouse and entry.mouseEnabled ~= nil then
-          pcall(node.EnableMouse, node, entry.mouseEnabled)
-        end
-        if node.SetMouseMotionEnabled then
-          pcall(node.SetMouseMotionEnabled, node, entry.mouseEnabled == true)
-        end
-        if node.SetScript then
-          pcall(node.SetScript, node, "OnEnter", entry.onEnter)
-          pcall(node.SetScript, node, "OnLeave", entry.onLeave)
-          pcall(node.SetScript, node, "OnMouseMotion", entry.onMotion)
-        end
-        if entry.wasShown and node.Show then
-          pcall(node.Show, node)
-        end
-      end
-    end
+    self:RestoreHiddenRecord(record)
   end
 
   self.hiddenFrames[cooldownID] = nil
@@ -901,6 +907,88 @@ function CooldownManager:RestoreAllHiddenFrames()
   end
 end
 
+local function AddHiddenCooldownID(hiddenCooldownIDs, cooldownID)
+  cooldownID = tonumber(cooldownID or 0) or 0
+  if cooldownID > 0 then
+    hiddenCooldownIDs[cooldownID] = true
+  end
+end
+
+function CooldownManager:GetHiddenCooldownIDsForAura(aura)
+  if not aura or not aura.display or aura.display.hideCDMIcon ~= true then
+    return nil
+  end
+  if not ns.runtime or not ns.runtime.GetState then
+    return nil
+  end
+
+  local state = ns.runtime:GetState(aura.id)
+  if not state or state.show ~= true then
+    return nil
+  end
+
+  local hiddenCooldownIDs = {}
+  for trigger in ns.TriggerBase:IterateTriggers(aura) do
+    local spellID = 0
+    if trigger.type == "spell_cooldown" or trigger.type == "aura" then
+      spellID = tonumber(trigger.spellId or 0) or 0
+    end
+
+    if spellID > 0 then
+      for _, cooldownID in ipairs(self:GetCooldownIDsForSpellID(spellID)) do
+        AddHiddenCooldownID(hiddenCooldownIDs, cooldownID)
+      end
+    end
+  end
+
+  return next(hiddenCooldownIDs) and hiddenCooldownIDs or nil
+end
+
 function CooldownManager:ApplyVisibilityOverrides()
-  self:RestoreAllHiddenFrames()
+  local desiredByCooldownID = {}
+
+  if ns.Registry and ns.Registry.GetFlatOrder then
+    for _, auraId in ipairs(ns.Registry:GetFlatOrder()) do
+      local aura = ns.Registry:GetAura(auraId)
+      local hiddenCooldownIDs = self:GetHiddenCooldownIDsForAura(aura)
+      if hiddenCooldownIDs then
+        for cooldownID in pairs(hiddenCooldownIDs) do
+          desiredByCooldownID[cooldownID] = true
+        end
+      end
+    end
+  end
+
+  for cooldownID in pairs(self.hiddenFrames) do
+    if not desiredByCooldownID[cooldownID] then
+      self:RestoreHiddenFrames(cooldownID)
+    end
+  end
+
+  for cooldownID in pairs(desiredByCooldownID) do
+    local existingRecords = self.hiddenFrames[cooldownID] or {}
+    local existingByFrame = {}
+    for _, record in ipairs(existingRecords) do
+      if record and record.frame then
+        existingByFrame[record.frame] = record
+      end
+    end
+
+    local updatedRecords = {}
+    for _, frame in ipairs(self:FindFramesByCooldownID(cooldownID)) do
+      local record = existingByFrame[frame]
+      if not record then
+        record = { frame = frame }
+        self:ApplyHiddenFrame(record)
+      end
+      updatedRecords[#updatedRecords + 1] = record
+      existingByFrame[frame] = nil
+    end
+
+    for _, record in pairs(existingByFrame) do
+      self:RestoreHiddenRecord(record)
+    end
+
+    self.hiddenFrames[cooldownID] = #updatedRecords > 0 and updatedRecords or nil
+  end
 end

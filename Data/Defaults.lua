@@ -11,6 +11,7 @@ Defaults.database = {
   order = {},
   ui = {
     selectedAuraId = nil,
+    selectedTriggerIndex = 1,
     activeTab = "display",
     editorMode = "config",
     collapsedGroups = {},
@@ -54,6 +55,7 @@ Defaults.display = {
   showBackground = true,
   icon = true,
   iconOverrideId = 0,
+  iconOverrideName = "",
   iconSize = 32,
   iconMatchBarSize = true,
   iconAnchor = "LEFT",
@@ -63,6 +65,10 @@ Defaults.display = {
   iconSwipeColor = { r = 0, g = 0, b = 0, a = 0.60 },
   iconCooldownEdge = false,
   iconCooldownBling = false,
+  hideCDMIcon = false,
+  soundEnabled = false,
+  soundFile = "None",
+  soundChannel = "Master",
   desaturate = false,
   glow = false,
   glowWhenActive = false,
@@ -115,6 +121,8 @@ Defaults.load = {
   level = 0,
   combat = "any",
   equippedItemId = 0,
+  equippedItemName = "",
+  instanceId = 0,
   instanceType = "",
   encounterId = 0,
   visibility = {
@@ -155,6 +163,121 @@ Defaults.baseTrigger = {
   enabled = true,
   mode = "always",
 }
+
+local function ApplyTriggerTypeDefaults(trigger)
+  if type(trigger) ~= "table" then
+    return
+  end
+
+  local triggerType = trigger.type or "simple"
+  if triggerType == "aura" then
+    trigger.unit = trigger.unit or "player"
+    trigger.auraType = trigger.auraType or "buff"
+    trigger.auraFilter = trigger.auraFilter or "present"
+    trigger.groupRange = trigger.groupRange or "any"
+    if trigger.aliveOnly == nil then
+      trigger.aliveOnly = false
+    end
+    if trigger.ignoreNPCs == nil then
+      trigger.ignoreNPCs = false
+    end
+    trigger.spellId = tonumber(trigger.spellId or 0) or 0
+  elseif triggerType == "spell_cooldown" then
+    trigger.spellId = tonumber(trigger.spellId or 0) or 0
+    trigger.cooldownMatch = trigger.cooldownMatch or "cooldown"
+    if trigger.showAlways == nil then
+      trigger.showAlways = true
+    end
+    trigger.manualCooldown = tonumber(trigger.manualCooldown or 0) or 0
+    if trigger.showChargeCooldown == nil then
+      trigger.showChargeCooldown = true
+    end
+  elseif triggerType == "item_cooldown" then
+    trigger.itemId = tonumber(trigger.itemId or 0) or 0
+    trigger.cooldownMatch = trigger.cooldownMatch or "cooldown"
+    if trigger.showAlways == nil then
+      trigger.showAlways = true
+    end
+  elseif triggerType == "cast" then
+    trigger.unit = trigger.unit or "player"
+  elseif triggerType == "death_alert" then
+    trigger.alertDuration = tonumber(trigger.alertDuration or 2) or 2
+    trigger.maxAlertsPerCombat = tonumber(trigger.maxAlertsPerCombat or 7) or 7
+    if trigger.showTank == nil then
+      trigger.showTank = true
+    end
+    if trigger.showHealer == nil then
+      trigger.showHealer = true
+    end
+    if trigger.showDPS == nil then
+      trigger.showDPS = true
+    end
+    trigger.soundTank = trigger.soundTank or "None"
+    trigger.soundHealer = trigger.soundHealer or "None"
+    trigger.soundDPS = trigger.soundDPS or "None"
+  elseif triggerType == "chat" then
+    trigger.chatChannel = trigger.chatChannel or "WHISPER"
+    trigger.chatMessage = trigger.chatMessage or ""
+    trigger.chatSource = trigger.chatSource or ""
+    trigger.chatDuration = tonumber(trigger.chatDuration or 4) or 4
+    if trigger.chatExact == nil then
+      trigger.chatExact = false
+    end
+  end
+end
+
+function Defaults:ApplyTriggerDefaults(trigger)
+  if type(trigger) ~= "table" then
+    return trigger
+  end
+  Tables.MergeDefaults(trigger, self.baseTrigger)
+  ApplyTriggerTypeDefaults(trigger)
+  return trigger
+end
+
+function Defaults:ApplyAuraDefaults(aura)
+  if type(aura) ~= "table" then
+    return aura
+  end
+
+  aura.load = Tables.MergeDefaults(type(aura.load) == "table" and aura.load or {}, self.load)
+  aura.display = Tables.MergeDefaults(type(aura.display) == "table" and aura.display or {}, self.display)
+  aura.position = Tables.MergeDefaults(type(aura.position) == "table" and aura.position or {}, self.position)
+  aura.text = Tables.MergeDefaults(type(aura.text) == "table" and aura.text or {}, self.text)
+  aura.conditions = type(aura.conditions) == "table" and aura.conditions or {}
+  aura.children = type(aura.children) == "table" and aura.children or {}
+  aura.enabled = aura.enabled ~= false
+
+  if aura.kind == "interrupt_tracker" then
+    aura.interrupt = Tables.MergeDefaults(type(aura.interrupt) == "table" and aura.interrupt or {}, self.interruptTracker)
+  end
+
+  if type(aura.triggers) ~= "table" then
+    aura.triggers = {}
+  end
+  if aura.kind ~= "interrupt_tracker" and aura.kind ~= "group" and aura.kind ~= "dynamic_group" and #aura.triggers == 0 then
+    aura.triggers[1] = Tables.DeepCopy(self.baseTrigger)
+  end
+  for _, trigger in ipairs(aura.triggers) do
+    self:ApplyTriggerDefaults(trigger)
+  end
+  if aura.triggerOp ~= "AND" and aura.triggerOp ~= "OR" then
+    aura.triggerOp = "AND"
+  end
+
+  if aura.kind == "text" then
+    aura.display.icon = false
+    aura.display.showTimer = false
+    aura.display.showStacks = false
+    aura.display.showBackground = false
+  elseif aura.kind == "interrupt_tracker" then
+    aura.display.showStacks = false
+  elseif aura.kind == "group" or aura.kind == "dynamic_group" then
+    aura.display.icon = false
+  end
+
+  return aura
+end
 
 Defaults.baseCondition = {
   type = "threshold",
@@ -201,11 +324,13 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].spellId = 0
     elseif triggerType == "spell_cooldown" then
       aura.triggers[1].spellId = 0
+      aura.triggers[1].cooldownMatch = "cooldown"
       aura.triggers[1].showAlways = true
       aura.triggers[1].manualCooldown = 0
       aura.triggers[1].showChargeCooldown = true
     elseif triggerType == "item_cooldown" then
       aura.triggers[1].itemId = 0
+      aura.triggers[1].cooldownMatch = "cooldown"
       aura.triggers[1].showAlways = true
     elseif triggerType == "cast" then
       aura.triggers[1].unit = "player"

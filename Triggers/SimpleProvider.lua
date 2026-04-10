@@ -15,8 +15,9 @@ function provider:GetAffectedAuras(event)
   end
 
   return ns.Registry:CollectAuraIds(function(aura)
-    local trigger = aura and aura.triggers and aura.triggers[1]
-    return trigger and trigger.type == "simple" and (trigger.mode or "always") == "target_exists"
+    return ns.TriggerBase:AnyTriggerMatches(aura, "simple", function(trigger)
+      return (trigger.mode or "always") == "target_exists"
+    end)
   end)
 end
 
@@ -28,6 +29,9 @@ function provider:Evaluate(trigger)
 
   if mode == "always" then
     active = true
+  elseif mode == "never" then
+    active = false
+    status = "Disabled"
   elseif mode == "in_combat" then
     active = InCombatLockdown()
     status = active and "In Combat" or "Out of Combat"

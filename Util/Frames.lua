@@ -133,6 +133,48 @@ function Frames.CreateDropdown(parent, width, initializer)
   return frame
 end
 
+function Frames.CreateSelectorButton(parent, width, height)
+  local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
+  button:SetSize(width or 180, height or 24)
+  button:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+  })
+  button:SetBackdropColor(0.08, 0.10, 0.15, 0.98)
+  button:SetBackdropBorderColor(0.24, 0.30, 0.40, 1)
+
+  button.Text = button:CreateFontString(nil, "OVERLAY")
+  Fonts.Apply(button.Text, 12, "OUTLINE")
+  button.Text:SetPoint("LEFT", 10, 0)
+  button.Text:SetPoint("RIGHT", -24, 0)
+  button.Text:SetJustifyH("LEFT")
+  button.Text:SetTextColor(0.95, 0.96, 1)
+
+  button.Arrow = button:CreateTexture(nil, "ARTWORK")
+  button.Arrow:SetSize(12, 12)
+  button.Arrow:SetPoint("RIGHT", -7, 0)
+  button.Arrow:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
+  button.Arrow:SetVertexColor(1, 0.88, 0.15)
+
+  button:SetScript("OnEnter", function(self)
+    self:SetBackdropColor(0.10, 0.13, 0.18, 0.98)
+  end)
+  button:SetScript("OnLeave", function(self)
+    self:SetBackdropColor(0.08, 0.10, 0.15, 0.98)
+  end)
+
+  function button:SetText(value)
+    self.Text:SetText(value or "")
+  end
+
+  function button:GetFontString()
+    return self.Text
+  end
+
+  return button
+end
+
 function Frames.SetDropdownValue(dropdown, value, label)
   UIDropDownMenu_SetSelectedValue(dropdown, value)
   UIDropDownMenu_SetText(dropdown, label or tostring(value or ""))

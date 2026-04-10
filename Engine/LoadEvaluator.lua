@@ -5,6 +5,7 @@ ns.LoadEvaluator = LoadEvaluator
 
 LoadEvaluator.activeTalentKeys = nil
 LoadEvaluator.activeTalentConfigID = nil
+LoadEvaluator.currentEncounterId = 0
 
 local function GetPlayerSpecIndex()
   if GetSpecialization then
@@ -62,6 +63,14 @@ function LoadEvaluator:InvalidateCache()
   self.activeTalentConfigID = nil
 end
 
+function LoadEvaluator:SetCurrentEncounterId(encounterId)
+  self.currentEncounterId = tonumber(encounterId or 0) or 0
+end
+
+function LoadEvaluator:GetCurrentEncounterId()
+  return tonumber(self.currentEncounterId or 0) or 0
+end
+
 local function TableHasEnabled(map, key)
   return type(map) == "table" and map[key] == true
 end
@@ -115,6 +124,51 @@ local function IsItemEquippedByID(itemId)
   end
 
   return true
+end
+
+local EQUIPMENT_SLOTS = {
+  INVSLOT_HEAD or 1,
+  INVSLOT_NECK or 2,
+  INVSLOT_SHOULDER or 3,
+  INVSLOT_CHEST or 5,
+  INVSLOT_WAIST or 6,
+  INVSLOT_LEGS or 7,
+  INVSLOT_FEET or 8,
+  INVSLOT_WRIST or 9,
+  INVSLOT_HAND or 10,
+  INVSLOT_FINGER1 or 11,
+  INVSLOT_FINGER2 or 12,
+  INVSLOT_TRINKET1 or 13,
+  INVSLOT_TRINKET2 or 14,
+  INVSLOT_BACK or 15,
+  INVSLOT_MAINHAND or 16,
+  INVSLOT_OFFHAND or 17,
+}
+
+local function NormalizeText(value)
+  value = tostring(value or "")
+  value = value:gsub("^%s+", ""):gsub("%s+$", "")
+  return value
+end
+
+local function IsItemEquippedByName(itemName)
+  itemName = NormalizeText(itemName)
+  if itemName == "" then
+    return true
+  end
+
+  local needle = string.lower(itemName)
+  for _, slotId in ipairs(EQUIPMENT_SLOTS) do
+    local itemId = GetInventoryItemID and GetInventoryItemID("player", slotId) or nil
+    if itemId and itemId > 0 then
+      local equippedName = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemId) or nil
+      if equippedName and string.lower(equippedName) == needle then
+        return true
+      end
+    end
+  end
+
+  return false
 end
 
 local function MatchesVisibility(load)
@@ -209,6 +263,12 @@ function LoadEvaluator:Matches(aura)
     return false
   end
 
+  if load.equippedItemId == nil or (tonumber(load.equippedItemId or 0) or 0) <= 0 then
+    if not IsItemEquippedByName(load.equippedItemName) then
+      return false
+    end
+  end
+
   if not MatchesVisibility(load) then
     return false
   end
@@ -220,8 +280,15 @@ function LoadEvaluator:Matches(aura)
     end
   end
 
+  if load.instanceId and load.instanceId > 0 then
+    local instanceId = select(8, GetInstanceInfo())
+    if instanceId ~= load.instanceId then
+      return false
+    end
+  end
+
   if load.encounterId and load.encounterId > 0 then
-    local encounterId = select(8, GetInstanceInfo())
+    local encounterId = self:GetCurrentEncounterId()
     if encounterId ~= load.encounterId then
       return false
     end

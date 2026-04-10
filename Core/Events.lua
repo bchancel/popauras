@@ -14,6 +14,8 @@ local GLOBAL_REFRESH_EVENTS = {
   PLAYER_REGEN_DISABLED = true,
   PLAYER_REGEN_ENABLED = true,
   ZONE_CHANGED_NEW_AREA = true,
+  ENCOUNTER_START = true,
+  ENCOUNTER_END = true,
 }
 
 local function AddAffectedAuraIds(target, source)
@@ -100,6 +102,13 @@ function Events:InitializeEventFrame()
 
     if fullRefresh and ns.LoadEvaluator and ns.LoadEvaluator.InvalidateCache then
       ns.LoadEvaluator:InvalidateCache()
+    end
+    if ns.LoadEvaluator and ns.LoadEvaluator.SetCurrentEncounterId then
+      if event == "ENCOUNTER_START" then
+        ns.LoadEvaluator:SetCurrentEncounterId(...)
+      elseif event == "ENCOUNTER_END" or event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+        ns.LoadEvaluator:SetCurrentEncounterId(0)
+      end
     end
 
     for _, provider in ipairs(self.providersByEvent[event] or EMPTY) do

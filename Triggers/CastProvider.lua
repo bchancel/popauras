@@ -24,8 +24,9 @@ function provider:GetAffectedAuras(event, ...)
   end
 
   return ns.Registry:CollectAuraIds(function(aura)
-    local trigger = aura and aura.triggers and aura.triggers[1]
-    return trigger and trigger.type == "cast" and (trigger.unit or "player") == unit
+    return ns.TriggerBase:AnyTriggerMatches(aura, "cast", function(trigger)
+      return (trigger.unit or "player") == unit
+    end)
   end)
 end
 

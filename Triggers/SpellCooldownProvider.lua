@@ -19,6 +19,21 @@ local spellIDsCache = setmetatable({}, { __mode = "k" })
 local REAL_TIME_MODIFIER = Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime or nil
 local IsCooldownActive
 
+local function IterateSpellCooldownTriggers(aura)
+  return ns.TriggerBase:IterateTriggers(aura, "spell_cooldown")
+end
+
+local function GetCooldownMatchMode(trigger)
+  return trigger and trigger.cooldownMatch == "ready" and "ready" or "cooldown"
+end
+
+local function ShouldPersistDisplay(trigger, aura)
+  if not trigger or trigger.showAlways == false then
+    return false
+  end
+  return not (aura and type(aura.triggers) == "table" and #aura.triggers > 1)
+end
+
 local function GetSpellIDs(trigger)
   trigger = trigger or {}
   local signatureParts = { tostring(tonumber(trigger.spellId or 0) or 0) }
@@ -718,17 +733,13 @@ function provider:GetAffectedAurasForSpellIDs(spellIDs)
   end
 
   return ns.Registry:CollectAuraIds(function(aura)
-    local trigger = aura and aura.triggers and aura.triggers[1]
-    if not trigger or trigger.type ~= "spell_cooldown" then
-      return false
-    end
-
-    for _, spellID in ipairs(GetSpellIDs(trigger)) do
-      if wanted[spellID] then
-        return true
+    for _, trigger in IterateSpellCooldownTriggers(aura) do
+      for _, spellID in ipairs(GetSpellIDs(trigger)) do
+        if wanted[spellID] then
+          return true
+        end
       end
     end
-
     return false
   end)
 end
@@ -736,8 +747,7 @@ end
 function provider:GetAffectedAuras(event, ...)
   if event == "SPELL_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_CHARGES" then
     return ns.Registry:CollectAuraIds(function(aura)
-      local trigger = aura and aura.triggers and aura.triggers[1]
-      return trigger and trigger.type == "spell_cooldown"
+      return ns.TriggerBase:AnyTriggerMatches(aura, "spell_cooldown")
     end)
   end
 
@@ -755,8 +765,7 @@ end
 function provider:PruneCache()
   local activeSpellIDs = {}
   for _, aura in ns.Registry:IterateAll() do
-    local trigger = aura and aura.triggers and aura.triggers[1]
-    if trigger and trigger.type == "spell_cooldown" then
+    for _, trigger in IterateSpellCooldownTriggers(aura) do
       for _, spellID in ipairs(GetSpellIDs(trigger)) do
         activeSpellIDs[spellID] = true
       end
@@ -888,8 +897,7 @@ function provider:HandleEvent(event, ...)
 
     for _, auraId in ipairs(affectedAuraIds) do
       local aura = ns.Registry:GetAura(auraId)
-      local trigger = aura and aura.triggers and aura.triggers[1]
-      if trigger and trigger.type == "spell_cooldown" then
+      for _, trigger in IterateSpellCooldownTriggers(aura) do
         local baseCooldown = nil
         local triggerSpellIDs = GetSpellIDs(trigger)
 
@@ -968,12 +976,13 @@ function provider:HandleEvent(event, ...)
   end
 end
 
-function provider:Evaluate(trigger)
+function provider:Evaluate(trigger, aura)
   local spellIDs = GetSpellIDs(trigger)
   if #spellIDs == 0 or not C_Spell then
     return ns.Schema.NormalizeRuntimeState({ show = false, active = false, source = "spell_cooldown" })
   end
   local allowChargeTracking = #spellIDs == 1
+  local matchMode = GetCooldownMatchMode(trigger)
 
   local sharedCache = {}
   local sharedCharges
@@ -1328,8 +1337,10 @@ function provider:Evaluate(trigger)
       candidateTotal = 1
     end
 
+    local matched = (matchMode == "ready") and isReady or not isReady
     local candidate = ns.Schema.NormalizeRuntimeState({
-      show = trigger.showAlways ~= false or not isReady,
+      show = ShouldPersistDisplay(trigger, aura) or matched,
+      matched = matched,
       active = not isReady,
       icon = (cdmAuraDetails and cdmAuraDetails.icon) or icon,
       name = (cdmAuraDetails and cdmAuraDetails.name) or name,

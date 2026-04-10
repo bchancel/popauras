@@ -12,6 +12,10 @@ local provider = ns.TriggerBase:CreateProvider("aura", {
   },
 })
 
+local function IterateAuraTriggers(aura)
+  return ns.TriggerBase:IterateTriggers(aura, "aura")
+end
+
 local Strings = ns.util.Strings
 
 provider.pendingTargetAuras = provider.pendingTargetAuras or {}
@@ -917,6 +921,7 @@ local function BuildMissingState(trigger, auraConfig, helpful, unit, missingUnit
 
   return ns.Schema.NormalizeRuntimeState({
     show = true,
+    matched = true,
     active = true,
     icon = GetPreferredAuraIcon(trigger),
     name = preferredName,
@@ -939,6 +944,7 @@ local function BuildSatisfiedState(trigger, auraConfig, helpful, unit, matchedUn
   local shouldShowSatisfied = trigger and trigger.showAlways == true
   return ns.Schema.NormalizeRuntimeState({
     show = shouldShowSatisfied,
+    matched = false,
     active = false,
     isReady = shouldShowSatisfied,
     icon = shouldShowSatisfied and GetPreferredAuraIcon(trigger) or nil,
@@ -957,6 +963,7 @@ end
 local function BuildFilteredOutState(unit)
   return ns.Schema.NormalizeRuntimeState({
     show = false,
+    matched = false,
     active = false,
     duration = 0,
     expirationTime = 0,
@@ -1011,6 +1018,7 @@ local function BuildStateFromAuraData(auraData, matchedUnit, helpful, fallbackNa
   end
   return ns.Schema.NormalizeRuntimeState({
     show = true,
+    matched = true,
     active = true,
     icon = GetSafeAuraIcon(auraData, trigger),
     name = auraName or fallbackName or "",
@@ -1038,6 +1046,7 @@ local function CloneRuntimeState(state)
   end
   return ns.Schema.NormalizeRuntimeState({
     show = state.show,
+    matched = state.matched,
     active = state.active,
     icon = state.icon,
     name = state.name,
@@ -1173,20 +1182,13 @@ local function PruneOrphanedCaches()
 end
 
 local function AuraTriggerMatches(aura, unit, auraType)
-  local trigger = aura and aura.triggers and aura.triggers[1]
-  if not trigger or trigger.type ~= "aura" then
-    return false
+  for _, trigger in IterateAuraTriggers(aura) do
+    if (not unit or TriggerUsesUnit(trigger.unit, unit))
+      and (not auraType or (trigger.auraType or "buff") == auraType) then
+      return true
+    end
   end
-
-  if unit and not TriggerUsesUnit(trigger.unit, unit) then
-    return false
-  end
-
-  if auraType and (trigger.auraType or "buff") ~= auraType then
-    return false
-  end
-
-  return true
+  return false
 end
 
 function provider:GetAffectedAurasForUnit(unit, auraType)
@@ -1219,15 +1221,19 @@ function provider:GetAffectedAurasForSpellIDs(spellIDs, unit, auraType)
       return false
     end
 
-    local trigger = aura.triggers and aura.triggers[1] or nil
-    for _, spellID in ipairs(GetSpellIDs(trigger)) do
-      if wanted[spellID] then
-        return true
-      end
-    end
-    for _, spellName in ipairs(GetSpellNames(trigger)) do
-      if wantedNames[spellName] then
-        return true
+    for _, trigger in IterateAuraTriggers(aura) do
+      if (not unit or TriggerUsesUnit(trigger.unit, unit))
+        and (not auraType or (trigger.auraType or "buff") == auraType) then
+        for _, spellID in ipairs(GetSpellIDs(trigger)) do
+          if wanted[spellID] then
+            return true
+          end
+        end
+        for _, spellName in ipairs(GetSpellNames(trigger)) do
+          if wantedNames[spellName] then
+            return true
+          end
+        end
       end
     end
     return false
@@ -1462,7 +1468,7 @@ function provider:HandleEvent(event, ...)
     for auraId, pending in pairs(self.pendingTargetAuras or {}) do
       if pending.targetGUID == nil or targetGUID == nil or pending.targetGUID ~= targetGUID then
         local aura = ns.Registry:GetAura(auraId)
-        local trigger = aura and aura.triggers and aura.triggers[1]
+        local _, trigger = ns.TriggerBase:AnyTriggerMatches(aura, "aura")
         LogAuraEvent(aura, trigger, string.format("PLAYER_TARGET_CHANGED cleared pending castSpellID=%s", tostring(pending.castSpellID)))
         self.pendingTargetAuras[auraId] = nil
       end
@@ -1480,23 +1486,25 @@ function provider:HandleEvent(event, ...)
     local affectedAuraIds = {}
     local affectedSeen = {}
     for auraId, aura in ns.Registry:IterateAll() do
-      local trigger = aura and aura.triggers and aura.triggers[1]
-      if trigger and trigger.type == "aura" and TriggerMatchesSpell(trigger, spellID) then
-        if trigger.unit == "target" and trigger.auraType == "debuff" then
-          self.pendingTargetAuras[auraId] = {
-            targetGUID = targetGUID,
-            expiresAt = now + 2,
-            castAt = now,
-            castSpellID = tonumber(spellID or 0) or 0,
-            castSpellName = SafeLower(C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)),
-          }
-          LogAuraEvent(aura, trigger, string.format("UNIT_SPELLCAST_SUCCEEDED set pending spellID=%s targetGUID=%s", tostring(spellID), tostring(targetGUID)))
-        end
-        if trigger.unit == "player" or trigger.unit == "target" or trigger.unit == "group" then
-          if not affectedSeen[auraId] then
-            affectedSeen[auraId] = true
-            affectedAuraIds[#affectedAuraIds + 1] = auraId
+      for _, trigger in IterateAuraTriggers(aura) do
+        if TriggerMatchesSpell(trigger, spellID) then
+          if trigger.unit == "target" and trigger.auraType == "debuff" then
+            self.pendingTargetAuras[auraId] = {
+              targetGUID = targetGUID,
+              expiresAt = now + 2,
+              castAt = now,
+              castSpellID = tonumber(spellID or 0) or 0,
+              castSpellName = SafeLower(C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)),
+            }
+            LogAuraEvent(aura, trigger, string.format("UNIT_SPELLCAST_SUCCEEDED set pending spellID=%s targetGUID=%s", tostring(spellID), tostring(targetGUID)))
           end
+          if trigger.unit == "player" or trigger.unit == "target" or trigger.unit == "group" then
+            if not affectedSeen[auraId] then
+              affectedSeen[auraId] = true
+              affectedAuraIds[#affectedAuraIds + 1] = auraId
+            end
+          end
+          break
         end
       end
     end
@@ -1542,7 +1550,7 @@ function provider:HandleEvent(event, ...)
         local cached = GetCachedTargetEntry(aura, targetGUID)
         for _, removedId in ipairs(unitAuraUpdateInfo.removedAuraInstanceIDs) do
           if cached and cached.auraInstanceID == removedId then
-            local trigger = aura and aura.triggers and aura.triggers[1]
+            local _, trigger = ns.TriggerBase:AnyTriggerMatches(aura, "aura")
             LogAuraEvent(aura, trigger, string.format("UNIT_AURA removed cached auraInstanceID=%s added=%d updated=%d removed=%d", tostring(removedId), addedCount, updatedCount, removedCount))
             RemoveCachedTargetEntry(aura, targetGUID)
             break
@@ -1568,16 +1576,17 @@ function provider:HandleEvent(event, ...)
 
     if next(changedAuras) then
       for auraId, aura in ns.Registry:IterateAll() do
-        local trigger = aura and aura.triggers and aura.triggers[1]
-        if trigger and trigger.type == "aura" and trigger.unit == "target" and trigger.auraType == "debuff" then
-          for auraInstanceID, auraData in pairs(changedAuras) do
-            if TriggerMatchesAuraData(trigger, auraData) then
-              SetCachedTargetEntry(aura, targetGUID, {
-                auraInstanceID = auraInstanceID,
-              })
-              self.pendingTargetAuras[auraId] = nil
-              LogAuraEvent(aura, trigger, string.format("UNIT_AURA matched changed auraInstanceID=%s spellId=%s added=%d updated=%d removed=%d", tostring(auraInstanceID), tostring(SafeSpellID(auraData.spellId)), addedCount, updatedCount, removedCount))
-              break
+        for _, trigger in IterateAuraTriggers(aura) do
+          if trigger.unit == "target" and trigger.auraType == "debuff" then
+            for auraInstanceID, auraData in pairs(changedAuras) do
+              if TriggerMatchesAuraData(trigger, auraData) then
+                SetCachedTargetEntry(aura, targetGUID, {
+                  auraInstanceID = auraInstanceID,
+                })
+                self.pendingTargetAuras[auraId] = nil
+                LogAuraEvent(aura, trigger, string.format("UNIT_AURA matched changed auraInstanceID=%s spellId=%s added=%d updated=%d removed=%d", tostring(auraInstanceID), tostring(SafeSpellID(auraData.spellId)), addedCount, updatedCount, removedCount))
+                break
+              end
             end
           end
         end
@@ -1622,13 +1631,13 @@ function provider:HandleEvent(event, ...)
                 viaPending = true,
                 castAt = pending.castAt,
               })
-              local trigger = aura and aura.triggers and aura.triggers[1]
+              local _, trigger = ns.TriggerBase:AnyTriggerMatches(aura, "aura")
               LogAuraEvent(aura, trigger, string.format("UNIT_AURA resolved pending auraInstanceID=%s added=%d updated=%d removed=%d", tostring(chosenAuraInstanceID), addedCount, updatedCount, removedCount))
             end
             self.pendingTargetAuras[auraId] = nil
           elseif pending.expiresAt and pending.expiresAt < now then
             local aura = ns.Registry:GetAura(auraId)
-            local trigger = aura and aura.triggers and aura.triggers[1]
+            local _, trigger = ns.TriggerBase:AnyTriggerMatches(aura, "aura")
             LogAuraEvent(aura, trigger, string.format("UNIT_AURA expired pending spellID=%s", tostring(pending.castSpellID)))
             self.pendingTargetAuras[auraId] = nil
           end
@@ -1827,6 +1836,7 @@ function provider:Evaluate(trigger, auraConfig)
       local shouldShowMissing = trigger.showAlways == true
       missing = ns.Schema.NormalizeRuntimeState({
         show = shouldShowMissing,
+        matched = false,
         active = false,
         isReady = shouldShowMissing,
         icon = shouldShowMissing and GetPreferredAuraIcon(trigger) or nil,

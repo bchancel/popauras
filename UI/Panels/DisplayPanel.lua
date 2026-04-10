@@ -5,6 +5,7 @@ local Anchors = ns.util.Anchors
 local BaseRegion = ns.renderers.BaseRegion
 local Colors = ns.util.Colors
 local Fonts = ns.util.Fonts
+local SoundPicker = ns.util.SoundPicker
 
 local Panel = {}
 ns.panels.DisplayPanel = Panel
@@ -50,6 +51,47 @@ local barTextureValues = {
   "GLAZE",
   "BLIZZARD",
 }
+
+local function GetSelectedTrigger(aura)
+  if not aura or type(aura.triggers) ~= "table" or #aura.triggers == 0 then
+    return {}
+  end
+  local index = tonumber(ns.db and ns.db.ui and ns.db.ui.selectedTriggerIndex or 1) or 1
+  index = math.max(1, math.min(index, #aura.triggers))
+  return aura.triggers[index] or aura.triggers[1] or {}
+end
+
+local function GetSoundDropdownValues()
+  if ns.Interrupts and ns.Interrupts.GetSoundOptions then
+    local values = {}
+    for _, entry in ipairs(ns.Interrupts:GetSoundOptions() or {}) do
+      local name = entry and entry.name
+      if name then
+        values[#values + 1] = {
+          value = name,
+          label = entry.label or name,
+          color = entry.color,
+          sourceLabel = entry.sourceLabel,
+          sourceColor = entry.sourceColor,
+        }
+      end
+    end
+    return values
+  end
+  local values = {
+    { value = "None", label = "None" },
+  }
+  return values
+end
+
+local function GetSoundChannelDropdownValues()
+  if ns.Interrupts and ns.Interrupts.GetSoundChannelOptions then
+    return ns.Interrupts:GetSoundChannelOptions() or {}
+  end
+  return {
+    { value = "Master", label = "Master" },
+  }
+end
 
 local function ResolveDropdownEntries(values)
   if type(values) == "function" then
@@ -154,6 +196,14 @@ local function SetDropdown(dropdown, value)
   UIDropDownMenu_SetText(dropdown, GetDropdownLabel(dropdown, value))
 end
 
+local function UpdateSelectorButtonText(button, dropdown)
+  if not button or not dropdown then
+    return
+  end
+  local value = UIDropDownMenu_GetSelectedValue(dropdown) or "None"
+  button:SetText(GetDropdownLabel(dropdown, value))
+end
+
 local function CreateSection(parent, title, y, height)
   local box = CreateFrame("Frame", nil, parent, "BackdropTemplate")
   box:SetBackdrop({
@@ -163,8 +213,11 @@ local function CreateSection(parent, title, y, height)
   })
   box:SetBackdropColor(0.08, 0.10, 0.15, 0.96)
   box:SetBackdropBorderColor(0.22, 0.28, 0.36, 1)
-  box:SetPoint("TOPLEFT", 16, y)
-  box:SetSize(840, height)
+  box.insetLeft = 16
+  box.insetRight = 20
+  box:SetPoint("TOPLEFT", box.insetLeft, y)
+  box:SetPoint("TOPRIGHT", -box.insetRight, y)
+  box:SetHeight(height)
 
   box.header = CreateFrame("Frame", nil, box, "BackdropTemplate")
   box.header:SetPoint("TOPLEFT", 1, -1)
@@ -466,6 +519,24 @@ local function CommitString(input)
   return value
 end
 
+local function CommitIconOverride(input, aura)
+  local value = CommitString(input)
+  aura.display.iconOverrideName = ""
+  if value == "" or value == "0" then
+    aura.display.iconOverrideId = 0
+    return
+  end
+
+  local numeric = tonumber(value)
+  if numeric then
+    aura.display.iconOverrideId = math.floor(numeric + 0.5)
+    return
+  end
+
+  aura.display.iconOverrideId = 0
+  aura.display.iconOverrideName = value
+end
+
 function Panel:GetSelectedAura()
   return ns.Registry:GetAura(ns.db.ui.selectedAuraId)
 end
@@ -509,9 +580,10 @@ function Panel:UpdateControlStates()
   local showStacks = frame.stacksControls.showCheck:GetChecked() == true
   local showBackground = frame.showBackgroundCheck:GetChecked() == true
   local readyLook = frame.readyLookCheck:GetChecked() == true
-  local trigger = aura and aura.triggers and aura.triggers[1] or {}
+  local trigger = GetSelectedTrigger(aura)
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura")
   local showIconCooldownControls = not isGroup and not isText and isIconAura and frame.iconSection.collapsed ~= true
+  local soundEnabled = frame.soundEnabledCheck:GetChecked() == true
 
   SetControlGroupEnabled({
     frame.barColorWrap.button, frame.barColorWrap.label,
@@ -529,6 +601,7 @@ function Panel:UpdateControlStates()
   SetControlGroupEnabled({
     frame.reverseCheck,
     frame.iconMatchSizeCheck,
+    frame.hideCDMIconCheck,
     frame.altIconIdWrap.input, frame.altIconIdWrap.label,
     frame.iconAnchorWrap.dropdown, frame.iconAnchorWrap.label,
     frame.iconXWrap.input, frame.iconXWrap.label,
@@ -579,6 +652,15 @@ function Panel:UpdateControlStates()
     frame.stacksControls.yWrap.input, frame.stacksControls.yWrap.label,
     frame.stacksControls.colorWrap.button, frame.stacksControls.colorWrap.label,
   }, showStacks and not isGroup and not isText)
+
+  SetControlGroupEnabled({
+    frame.soundFileButton, frame.soundFileWrap.label,
+    frame.soundChannelWrap.dropdown, frame.soundChannelWrap.label,
+    frame.soundTestButton,
+  }, soundEnabled and not isGroup)
+  if (not soundEnabled or isGroup) and SoundPicker then
+    SoundPicker:HideIfDropdown(frame.soundFileWrap.dropdown)
+  end
 end
 
 function Panel:ApplyCurrent()
@@ -624,8 +706,9 @@ function Panel:ApplyCurrent()
   aura.display.alpha = aura.display.color.a
   aura.display.readyLook = frame.readyLookCheck:GetChecked() == true
   aura.display.glowWhenActive = frame.glowWhenActiveCheck:GetChecked() == true
-  if aura.triggers and aura.triggers[1] and (aura.triggers[1].type == "spell_cooldown" or aura.triggers[1].type == "item_cooldown" or aura.triggers[1].type == "aura") then
-    aura.triggers[1].showAlways = frame.showAlwaysReadyCheck:GetChecked() == true
+  local trigger = GetSelectedTrigger(aura)
+  if trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura") then
+    trigger.showAlways = frame.showAlwaysReadyCheck:GetChecked() == true
   end
   aura.display.readyColor = Colors.Copy(frame.readyColorWrap.color or aura.display.readyColor or aura.display.color)
   local selectedBarTexture = UIDropDownMenu_GetSelectedValue(frame.barTextureWrap.dropdown) or aura.display.barTexture or "FLAT"
@@ -642,8 +725,9 @@ function Panel:ApplyCurrent()
   aura.display.iconMatchBarSize = frame.iconMatchSizeCheck:GetChecked() == true
   aura.display.iconCooldownEdge = frame.iconEdgeCheck:GetChecked() == true
   aura.display.iconCooldownBling = frame.iconFinishFlashCheck:GetChecked() == true
+  aura.display.hideCDMIcon = frame.hideCDMIconCheck:GetChecked() == true
   aura.display.iconSwipeColor = Colors.Copy(frame.iconSwipeColorWrap.color or aura.display.iconSwipeColor or { r = 0, g = 0, b = 0, a = 0.60 })
-  aura.display.iconOverrideId = CommitInteger(frame.altIconIdWrap.input, aura.display.iconOverrideId or 0)
+  CommitIconOverride(frame.altIconIdWrap.input, aura)
   aura.display.iconSize = CommitNumeric(frame.iconSizeWrap.input, aura.display.iconSize or 32)
   aura.display.iconAnchor = UIDropDownMenu_GetSelectedValue(frame.iconAnchorWrap.dropdown) or aura.display.iconAnchor
   if aura.display.iconAnchor == "LEFT_OUTSIDE" then
@@ -685,6 +769,9 @@ function Panel:ApplyCurrent()
   aura.display.stacksOffsetX = CommitNumeric(frame.stacksControls.xWrap.input, aura.display.stacksOffsetX or 0)
   aura.display.stacksOffsetY = CommitNumeric(frame.stacksControls.yWrap.input, aura.display.stacksOffsetY or 0)
   aura.display.stacksColor = Colors.Copy(frame.stacksControls.colorWrap.color or aura.display.stacksColor)
+  aura.display.soundEnabled = frame.soundEnabledCheck:GetChecked() == true
+  aura.display.soundFile = UIDropDownMenu_GetSelectedValue(frame.soundFileWrap.dropdown) or aura.display.soundFile or "None"
+  aura.display.soundChannel = UIDropDownMenu_GetSelectedValue(frame.soundChannelWrap.dropdown) or aura.display.soundChannel or "Master"
 
   if aura.kind == "text" then
     aura.display.icon = false
@@ -730,7 +817,7 @@ function Panel:Create(parent)
   frame.scroll:SetPoint("BOTTOMRIGHT", -28, 0)
 
   frame.content = CreateFrame("Frame", nil, frame.scroll)
-  frame.content:SetSize(900, 1680)
+  frame.content:SetSize(760, 1820)
   frame.scroll:SetScrollChild(frame.content)
 
   frame.summary = Frames.CreateLabel(frame.content, "", "GameFontHighlight")
@@ -748,6 +835,7 @@ function Panel:Create(parent)
   frame.nameSection = CreateSection(frame.content, "Name Text", -786, 220)
   frame.timerSection = CreateSection(frame.content, "Duration Text", -1022, 260)
   frame.stacksSection = CreateSection(frame.content, "Stacks Text", -1258, 220)
+  frame.soundSection = CreateSection(frame.content, "Sound", -1494, 136)
 
   local function HookSection(section, key)
     section.header:EnableMouse(true)
@@ -765,6 +853,7 @@ function Panel:Create(parent)
   HookSection(frame.nameSection, "name")
   HookSection(frame.timerSection, "timer")
   HookSection(frame.stacksSection, "stacks")
+  HookSection(frame.soundSection, "sound")
 
   frame.nameInputWrap = CreateLabeledInput(frame.canvasSection, "Aura Name", 12, -34, 420)
   frame.widthWrap = CreateLabeledInput(frame.canvasSection, "Width", 12, -88, 60)
@@ -902,22 +991,60 @@ function Panel:Create(parent)
   frame.showIconCheck = Frames.CreateCheckbox(frame.iconSection, "Show Icon")
   frame.showIconCheck:SetPoint("TOPLEFT", 12, -34)
   frame.reverseCheck = Frames.CreateCheckbox(frame.iconSection, "Drain / Reverse Fill")
-  frame.reverseCheck:SetPoint("TOPLEFT", 160, -34)
+  frame.reverseCheck:SetPoint("TOPLEFT", 150, -34)
+  frame.hideCDMIconCheck = Frames.CreateCheckbox(frame.iconSection, "Hide CDM Icon")
+  frame.hideCDMIconCheck:SetPoint("TOPLEFT", 330, -34)
   frame.iconEdgeCheck = Frames.CreateCheckbox(frame.iconSection, "Bright Cooldown Edge")
-  frame.iconEdgeCheck:SetPoint("TOPLEFT", 330, -34)
+  frame.iconEdgeCheck:SetPoint("TOPLEFT", 12, -122)
   frame.iconFinishFlashCheck = Frames.CreateCheckbox(frame.iconSection, "Finish Flash")
-  frame.iconFinishFlashCheck:SetPoint("TOPLEFT", 540, -34)
+  frame.iconFinishFlashCheck:SetPoint("TOPLEFT", 180, -122)
   frame.iconMatchSizeCheck = Frames.CreateCheckbox(frame.iconSection, "Match Bar Size")
   frame.iconMatchSizeCheck:SetPoint("TOPLEFT", 12, -58)
   frame.iconSizeWrap = CreateLabeledInput(frame.iconSection, "Icon Size", 12, -72, 54)
-  frame.iconAnchorWrap = CreateLabeledDropdown(frame.iconSection, "Icon Anchor", 140, -72, 180, iconAnchorValues)
-  frame.altIconIdWrap = CreateLabeledInput(frame.iconSection, "Alternate Icon ID", 12, -146, 110)
-  frame.iconXWrap = CreateLabeledInput(frame.iconSection, "Icon X", 140, -146, 72)
-  frame.iconYWrap = CreateLabeledInput(frame.iconSection, "Icon Y", 230, -146, 72)
-  frame.iconSwipeColorWrap = CreateColorSwatch(frame.iconSection, "Cooldown Shade", 330, -146)
-  frame.iconHint = Frames.CreateLabel(frame.iconSection, "Alternate Icon ID accepts a spell ID or a raw texture file ID. Use X/Y offsets for fine positioning.", "GameFontDisableSmall")
-  frame.iconHint:SetPoint("TOPLEFT", 12, -198)
-  frame.iconHint:SetWidth(780)
+  frame.iconAnchorWrap = CreateLabeledDropdown(frame.iconSection, "Icon Anchor", 110, -72, 150, iconAnchorValues)
+  frame.altIconIdWrap = CreateLabeledInput(frame.iconSection, "Alternate Icon Name / ID", 280, -72, 180)
+  frame.iconXWrap = CreateLabeledInput(frame.iconSection, "Icon X", 480, -72, 60)
+  frame.iconYWrap = CreateLabeledInput(frame.iconSection, "Icon Y", 552, -72, 60)
+  frame.iconSwipeColorWrap = CreateColorSwatch(frame.iconSection, "Cooldown Shade", 360, -118)
+  frame.iconHint = Frames.CreateLabel(frame.iconSection, "Alternate icon accepts a spell name, spell ID, or raw texture file ID. Hide CDM Icon only affects mapped tracked-buff icons.", "GameFontDisableSmall")
+  frame.iconHint:SetPoint("TOPLEFT", 12, -170)
+  frame.iconHint:SetWidth(660)
+
+  frame.soundEnabledCheck = Frames.CreateCheckbox(frame.soundSection, "Play Sound On Activate")
+  frame.soundEnabledCheck:SetPoint("TOPLEFT", 12, -34)
+  frame.soundFileWrap = CreateLabeledDropdown(frame.soundSection, "Sound", 12, -68, 260, GetSoundDropdownValues)
+  frame.soundFileWrap.dropdown:Hide()
+  frame.soundFileButton = Frames.CreateSelectorButton(frame.soundSection, 246, 24)
+  frame.soundFileButton:SetPoint("TOPLEFT", frame.soundFileWrap.label, "BOTTOMLEFT", 0, -6)
+  frame.soundFileButton:SetScript("OnClick", function()
+    if not SoundPicker then
+      return
+    end
+    SoundPicker:Toggle(frame.soundFileButton, frame.soundFileWrap.dropdown, GetSoundDropdownValues, {
+      title = "Select Aura Sound",
+      onChanged = function()
+        UpdateSelectorButtonText(frame.soundFileButton, frame.soundFileWrap.dropdown)
+        Panel:ApplyCurrent()
+      end,
+      channelProvider = function()
+        return UIDropDownMenu_GetSelectedValue(frame.soundChannelWrap.dropdown) or "Master"
+      end,
+    })
+  end)
+  frame.soundChannelWrap = CreateLabeledDropdown(frame.soundSection, "Channel", 296, -68, 150, GetSoundChannelDropdownValues)
+  frame.soundTestButton = Frames.CreateButton(frame.soundSection, "Test", 52, 22, function()
+    if ns.Interrupts and ns.Interrupts.PlaySound then
+      ns.Interrupts:PlaySound(
+        UIDropDownMenu_GetSelectedValue(frame.soundFileWrap.dropdown) or "None",
+        UIDropDownMenu_GetSelectedValue(frame.soundChannelWrap.dropdown) or "Master"
+      )
+    end
+  end)
+  frame.soundTestButton:SetPoint("TOPLEFT", 468, -88)
+  Frames.StyleSecondaryButton(frame.soundTestButton)
+  frame.soundHint = Frames.CreateLabel(frame.soundSection, "Plays once when the aura becomes visible or active. The picker is scrollable and color-codes sounds by source pack. Use %m in text auras if you want the matched chat message rendered.", "GameFontDisableSmall")
+  frame.soundHint:SetPoint("TOPLEFT", 12, -118)
+  frame.soundHint:SetWidth(660)
 
   frame.nameControls = CreateTwoColumnTextSection(frame.nameSection, -34, "Name", true)
   frame.timerControls = CreateTwoColumnTextSection(frame.timerSection, -34, "Duration")
@@ -956,7 +1083,7 @@ function Panel:Create(parent)
     frame.groupHint
   )
   RegisterSectionWidgets(frame.iconSection,
-    frame.showIconCheck, frame.reverseCheck, frame.iconEdgeCheck, frame.iconFinishFlashCheck, frame.iconMatchSizeCheck,
+    frame.showIconCheck, frame.reverseCheck, frame.hideCDMIconCheck, frame.iconEdgeCheck, frame.iconFinishFlashCheck, frame.iconMatchSizeCheck,
     frame.iconSizeWrap.label, frame.iconSizeWrap.input,
     frame.iconAnchorWrap.label, frame.iconAnchorWrap.dropdown,
     frame.altIconIdWrap.label, frame.altIconIdWrap.input,
@@ -998,6 +1125,13 @@ function Panel:Create(parent)
     frame.stacksControls.yWrap.label, frame.stacksControls.yWrap.input,
     frame.stacksControls.colorWrap.label, frame.stacksControls.colorWrap.button, frame.stacksControls.colorWrap.valueText
   )
+  RegisterSectionWidgets(frame.soundSection,
+    frame.soundEnabledCheck,
+    frame.soundFileWrap.label, frame.soundFileButton,
+    frame.soundChannelWrap.label, frame.soundChannelWrap.dropdown,
+    frame.soundTestButton,
+    frame.soundHint
+  )
   frame.saveButton = Frames.CreateButton(frame.content, "Save", 150, 28, function()
     Panel:ApplyCurrent()
   end)
@@ -1010,7 +1144,7 @@ function Panel:Create(parent)
   ConfigureNumericInput(frame.levelWrap.input, 5)
   ConfigureNumericInput(frame.groupSpacingWrap.input, 3)
   ConfigureNumericInput(frame.iconSizeWrap.input, 3)
-  ConfigureNumericInput(frame.altIconIdWrap.input, 10)
+  frame.altIconIdWrap.input:SetMaxLetters(64)
   ConfigureNumericInput(frame.iconXWrap.input, 10)
   ConfigureNumericInput(frame.iconYWrap.input, 10)
   frame.nameControls.altNameWrap.input:SetMaxLetters(64)
@@ -1031,6 +1165,7 @@ function Panel:Create(parent)
     frame.nameSection,
     frame.timerSection,
     frame.stacksSection,
+    frame.soundSection,
   }
 
   self.frame = frame
@@ -1062,12 +1197,14 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.iconEdgeCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.iconFinishFlashCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.iconMatchSizeCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.hideCDMIconCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupShowBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.readyLookCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.glowWhenActiveCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showAlwaysReadyCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupMaintainOrderCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.soundEnabledCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.nameControls.showCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.timerControls.showCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.timerControls.hideReadyCheck, function() Panel:ApplyCurrent() end)
@@ -1081,6 +1218,8 @@ function Panel:Create(parent)
   InitDropdownWithCallback(frame.barTextureWrap.dropdown, barTextureValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.groupGrowthWrap.dropdown, { "DOWN", "UP", "RIGHT", "LEFT" }, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.iconAnchorWrap.dropdown, iconAnchorValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.soundFileWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.soundChannelWrap.dropdown, GetSoundChannelDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.nameControls.fontWrap.dropdown, fontStyleValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.nameControls.rotationWrap.dropdown, textRotationValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.nameControls.anchorWrap.dropdown, textAnchorValues, function() Panel:ApplyCurrent() end)
@@ -1141,48 +1280,48 @@ function Panel:ApplyCanvasLayout(isGroup)
 
   if isGroup then
     PositionLabeledInput(frame.widthWrap, 12, -88)
-    PositionLabeledInput(frame.heightWrap, 96, -88)
-    PositionLabeledInput(frame.xWrap, 180, -88)
-    PositionLabeledInput(frame.yWrap, 282, -88)
+    PositionLabeledInput(frame.heightWrap, 98, -88)
+    PositionLabeledInput(frame.xWrap, 184, -88)
+    PositionLabeledInput(frame.yWrap, 286, -88)
 
     PositionLabeledDropdown(frame.anchorWrap, 12, -150)
-    PositionLabeledDropdown(frame.framePointWrap, 368, -150)
+    PositionLabeledDropdown(frame.framePointWrap, 310, -150)
 
     PositionLabeledDropdown(frame.parentPointWrap, 12, -212)
-    PositionLabeledDropdown(frame.strataWrap, 220, -212)
-    PositionLabeledInput(frame.levelWrap, 410, -212)
+    PositionLabeledDropdown(frame.strataWrap, 250, -212)
+    PositionLabeledInput(frame.levelWrap, 430, -212)
 
     frame.showBackgroundCheck:ClearAllPoints()
     frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -274)
-    PositionColorSwatch(frame.backgroundColorWrap, 200, -274)
+    PositionColorSwatch(frame.backgroundColorWrap, 180, -274)
     return
   end
 
   PositionLabeledInput(frame.widthWrap, 12, -88)
-  PositionLabeledInput(frame.heightWrap, 88, -88)
-  PositionLabeledInput(frame.xWrap, 164, -88)
-  PositionLabeledInput(frame.yWrap, 264, -88)
-  PositionLabeledDropdown(frame.orientationWrap, 368, -88)
-  PositionLabeledDropdown(frame.framePointWrap, 544, -88)
+  PositionLabeledInput(frame.heightWrap, 96, -88)
+  PositionLabeledInput(frame.xWrap, 180, -88)
+  PositionLabeledInput(frame.yWrap, 284, -88)
+  PositionLabeledDropdown(frame.orientationWrap, 390, -88)
+  PositionLabeledDropdown(frame.framePointWrap, 560, -88)
 
   PositionLabeledDropdown(frame.anchorWrap, 12, -150)
-  PositionLabeledDropdown(frame.parentPointWrap, 368, -150)
-  PositionLabeledDropdown(frame.strataWrap, 554, -150)
-  PositionLabeledInput(frame.levelWrap, 720, -150)
+  PositionLabeledDropdown(frame.parentPointWrap, 300, -150)
+  PositionLabeledDropdown(frame.strataWrap, 470, -150)
+  PositionLabeledInput(frame.levelWrap, 612, -150)
 
   PositionColorSwatch(frame.barColorWrap, 12, -224)
+  PositionColorSwatch(frame.readyColorWrap, 220, -224)
+  PositionLabeledDropdown(frame.barTextureWrap, 470, -216)
   frame.readyLookCheck:ClearAllPoints()
-  frame.readyLookCheck:SetPoint("TOPLEFT", 150, -222)
+  frame.readyLookCheck:SetPoint("TOPLEFT", 12, -276)
   frame.glowWhenActiveCheck:ClearAllPoints()
-  frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 150, -248)
+  frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 180, -276)
   frame.showAlwaysReadyCheck:ClearAllPoints()
-  frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 330, -248)
-  PositionColorSwatch(frame.readyColorWrap, 330, -224)
-  PositionLabeledDropdown(frame.barTextureWrap, 538, -216)
+  frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 360, -276)
 
   frame.showBackgroundCheck:ClearAllPoints()
-  frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -284)
-  PositionColorSwatch(frame.backgroundColorWrap, 200, -284)
+  frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -304)
+  PositionColorSwatch(frame.backgroundColorWrap, 220, -304)
 end
 
 function Panel:LayoutSections()
@@ -1194,7 +1333,8 @@ function Panel:LayoutSections()
   for _, section in ipairs(self.frame.sections) do
     if section:IsShown() then
       section:ClearAllPoints()
-      section:SetPoint("TOPLEFT", 16, y)
+      section:SetPoint("TOPLEFT", section.insetLeft or 16, y)
+      section:SetPoint("TOPRIGHT", -(section.insetRight or 20), y)
       y = y - section:GetHeight() - 10
     end
   end
@@ -1207,7 +1347,7 @@ function Panel:Refresh(aura)
   local isGroup = aura.kind == "group" or aura.kind == "dynamic_group"
   local isText = aura.kind == "text"
   local isIconAura = aura.kind == "icon"
-  local trigger = aura.triggers and aura.triggers[1] or {}
+  local trigger = GetSelectedTrigger(aura)
   local supportsShowAlways = trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura"
   local summaryText = aura.kind:gsub("_", " ")
   summaryText = summaryText:gsub("(%a)([%w']*)", function(first, rest)
@@ -1230,6 +1370,8 @@ function Panel:Refresh(aura)
   RefreshDropdown(self.frame.anchorWrap.dropdown)
   RefreshDropdown(self.frame.framePointWrap.dropdown)
   RefreshDropdown(self.frame.parentPointWrap.dropdown)
+  RefreshDropdown(self.frame.soundFileWrap.dropdown)
+  RefreshDropdown(self.frame.soundChannelWrap.dropdown)
   SetDropdown(self.frame.strataWrap.dropdown, aura.display.frameStrata or "MEDIUM")
   self.frame.levelWrap.input:SetText(tostring(aura.display.frameLevel or 1))
   SetColorSwatch(self.frame.barColorWrap, {
@@ -1281,11 +1423,18 @@ function Panel:Refresh(aura)
   self.frame.iconEdgeCheck:SetChecked(aura.display.iconCooldownEdge == true)
   self.frame.iconFinishFlashCheck:SetChecked(aura.display.iconCooldownBling == true)
   self.frame.iconMatchSizeCheck:SetChecked(aura.display.iconMatchBarSize == true)
-  self.frame.altIconIdWrap.input:SetText(tostring(aura.display.iconOverrideId or 0))
+  self.frame.hideCDMIconCheck:SetChecked(aura.display.hideCDMIcon == true)
+  local iconOverrideText = aura.display.iconOverrideName or ""
+  if iconOverrideText == "" then
+    local overrideId = tonumber(aura.display.iconOverrideId or 0) or 0
+    iconOverrideText = overrideId > 0 and tostring(overrideId) or ""
+  end
+  self.frame.altIconIdWrap.input:SetText(iconOverrideText)
   self.frame.iconSizeWrap.input:SetText(tostring(aura.display.iconSize or 32))
   self.frame.iconXWrap.input:SetText(tostring(aura.display.iconOffsetX or 0))
   self.frame.iconYWrap.input:SetText(tostring(aura.display.iconOffsetY or 0))
   SetColorSwatch(self.frame.iconSwipeColorWrap, aura.display.iconSwipeColor or { r = 0, g = 0, b = 0, a = 0.60 })
+  self.frame.soundEnabledCheck:SetChecked(aura.display.soundEnabled == true)
 
   SetDropdown(self.frame.orientationWrap.dropdown, aura.display.orientation or "HORIZONTAL")
   SetDropdown(self.frame.anchorWrap.dropdown, aura.position.relativeTo or "UIParent")
@@ -1293,6 +1442,12 @@ function Panel:Refresh(aura)
   SetDropdown(self.frame.parentPointWrap.dropdown, aura.position.relativePoint or "CENTER")
   SetDropdown(self.frame.groupGrowthWrap.dropdown, aura.display.growth or "DOWN")
   SetDropdown(self.frame.iconAnchorWrap.dropdown, aura.display.iconAnchor or "LEFT")
+  SetDropdown(self.frame.soundFileWrap.dropdown, aura.display.soundFile or "None")
+  UpdateSelectorButtonText(self.frame.soundFileButton, self.frame.soundFileWrap.dropdown)
+  SetDropdown(self.frame.soundChannelWrap.dropdown, aura.display.soundChannel or "Master")
+  if SoundPicker then
+    SoundPicker:RefreshIfOpen(self.frame.soundFileWrap.dropdown)
+  end
 
   self.frame.nameControls.showCheck:SetChecked(aura.display.showName == true)
   self.frame.nameControls.altNameWrap.input:SetText((aura.text and aura.text.nameOverride) or "")
@@ -1330,6 +1485,10 @@ function Panel:Refresh(aura)
   self.frame.nameSection:SetShown(not isGroup)
   self.frame.timerSection:SetShown(not isGroup and not isText)
   self.frame.stacksSection:SetShown(not isGroup and not isText)
+  self.frame.soundSection:SetShown(not isGroup)
+  if isGroup and SoundPicker then
+    SoundPicker:HideIfDropdown(self.frame.soundFileWrap.dropdown)
+  end
 
   self.frame.canvasSection.expandedHeight = isGroup and self.frame.canvasSection.expandedHeightGroup or self.frame.canvasSection.expandedHeightAura
 
@@ -1339,6 +1498,7 @@ function Panel:Refresh(aura)
   SetSectionCollapsed(self.frame.nameSection, self.frame.collapsedSections.name)
   SetSectionCollapsed(self.frame.timerSection, self.frame.collapsedSections.timer)
   SetSectionCollapsed(self.frame.stacksSection, self.frame.collapsedSections.stacks)
+  SetSectionCollapsed(self.frame.soundSection, self.frame.collapsedSections.sound)
 
   self.frame.orientationWrap.label:SetShown(not isGroup and not isText)
   self.frame.orientationWrap.dropdown:SetShown(not isGroup and not isText)

@@ -53,6 +53,16 @@ local function ShouldShowTab(aura, key)
   return true
 end
 
+local function GetSelectedAuraTrigger(aura)
+  if not aura or type(aura.triggers) ~= "table" or #aura.triggers == 0 then
+    return nil
+  end
+  local index = tonumber(ns.db and ns.db.ui and ns.db.ui.selectedTriggerIndex or 1) or 1
+  index = math.max(1, math.min(index, #aura.triggers))
+  ns.db.ui.selectedTriggerIndex = index
+  return aura.triggers[index]
+end
+
 local function HidePanel(panel)
   if panel and panel.frame then
     panel.frame:Hide()
@@ -241,7 +251,7 @@ function MainWindow:Create()
   frame.triggerDebugLabel:SetTextColor(0.92, 0.95, 1)
   frame.triggerDebugCheck:SetScript("OnClick", function(selfCheck)
     local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
-    local trigger = aura and aura.triggers and aura.triggers[1] or nil
+    local trigger = GetSelectedAuraTrigger(aura)
     if not aura or not trigger then
       selfCheck:SetChecked(false)
       return
@@ -358,15 +368,16 @@ function MainWindow:RefreshSelection()
     and aura.kind ~= "dynamic_group"
     and aura.kind ~= "interrupt_tracker"
     and aura.triggers
-    and aura.triggers[1] ~= nil
+    and GetSelectedAuraTrigger(aura) ~= nil
   local showPreviewToggle = editorMode ~= "new_aura" and aura ~= nil and aura.kind ~= "interrupt_tracker"
+  local selectedTrigger = GetSelectedAuraTrigger(aura)
 
   self.frame.previewAnimateCheck:SetShown(showPreviewToggle)
   self.frame.previewAnimateLabel:SetShown(showPreviewToggle)
   self.frame.previewAnimateCheck:SetChecked(showPreviewToggle and aura and aura.display and aura.display.previewAnimate == true or false)
   self.frame.triggerDebugCheck:SetShown(hasTrigger)
   self.frame.triggerDebugLabel:SetShown(hasTrigger)
-  self.frame.triggerDebugCheck:SetChecked(hasTrigger and aura.triggers[1].debug == true or false)
+  self.frame.triggerDebugCheck:SetChecked(hasTrigger and selectedTrigger and selectedTrigger.debug == true or false)
 
   self:HideAllPanels()
 

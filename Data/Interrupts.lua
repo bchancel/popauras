@@ -147,6 +147,14 @@ Interrupts.BUILTIN_SOUNDS = {
   { name = "Ping", file = "Sound\\Doodad\\BellTollNight.ogg" },
 }
 
+Interrupts.SOUND_CHANNELS = {
+  { value = "Master", label = "Master" },
+  { value = "SFX", label = "SFX" },
+  { value = "Ambience", label = "Ambience" },
+  { value = "Music", label = "Music" },
+  { value = "Dialog", label = "Dialog" },
+}
+
 Interrupts.SPELL_INDEX = {}
 Interrupts.CLASS_FILTER_LOOKUP = {}
 
@@ -167,6 +175,98 @@ local function GetLSM()
     return nil
   end
   return LibStub("LibSharedMedia-3.0", true)
+end
+
+local SOURCE_SWATCHES = {
+  { 0.93, 0.78, 0.24 },
+  { 0.40, 0.78, 0.97 },
+  { 0.63, 0.85, 0.48 },
+  { 0.96, 0.64, 0.34 },
+  { 0.82, 0.64, 0.94 },
+  { 0.94, 0.58, 0.74 },
+}
+
+local function HashString(value)
+  local hash = 0
+  value = tostring(value or "")
+  for index = 1, #value do
+    hash = (hash * 33 + value:byte(index)) % 2147483647
+  end
+  return hash
+end
+
+local function CopyColor(r, g, b, a)
+  return { r = r, g = g, b = b, a = a == nil and 1 or a }
+end
+
+local function GetAddonNameFromPath(file)
+  file = tostring(file or ""):gsub("/", "\\")
+  return file:match("[Ii]nterface\\[Aa]ddOns\\([^\\]+)")
+end
+
+local function NormalizeSourceLabel(label)
+  label = tostring(label or "")
+  label = label:gsub("^DBM%-VP", "DBM VP ")
+  label = label:gsub("^DBM%-", "DBM ")
+  label = label:gsub("^SharedMedia[_%-]?", "SharedMedia ")
+  label = label:gsub("^LibSharedMedia[_%-]?", "LSM ")
+  label = label:gsub("[_%-%s]+", " ")
+  label = label:gsub("^%s+", ""):gsub("%s+$", "")
+  return label
+end
+
+local function GetSourceColor(sourceKey)
+  sourceKey = tostring(sourceKey or ""):lower()
+  if sourceKey == "disabled" then
+    return CopyColor(0.62, 0.68, 0.76)
+  end
+  if sourceKey == "blizzard" then
+    return CopyColor(0.82, 0.86, 0.92)
+  end
+  if sourceKey == "dbm-core" then
+    return CopyColor(0.40, 0.78, 0.97)
+  end
+  if sourceKey:match("^dbm%-vp") then
+    return CopyColor(0.96, 0.64, 0.34)
+  end
+  if sourceKey == "popauras" then
+    return CopyColor(0.93, 0.78, 0.24)
+  end
+  if sourceKey:find("sharedmedia", 1, true) then
+    return CopyColor(0.63, 0.85, 0.48)
+  end
+  local swatch = SOURCE_SWATCHES[(HashString(sourceKey) % #SOURCE_SWATCHES) + 1]
+  return CopyColor(swatch[1], swatch[2], swatch[3])
+end
+
+local function GetSoundSourceInfo(name, file)
+  if name == "None" then
+    return "disabled", "Disabled", GetSourceColor("disabled"), 0
+  end
+
+  local addonName = GetAddonNameFromPath(file)
+  if addonName == "PopAuras" then
+    return "popauras", "PopAuras", GetSourceColor("popauras"), 10
+  end
+  if addonName == "DBM-Core" then
+    return "dbm-core", "DBM Core", GetSourceColor("dbm-core"), 20
+  end
+  if addonName and addonName:match("^DBM%-VP") then
+    return addonName:lower(), NormalizeSourceLabel(addonName), GetSourceColor(addonName), 21
+  end
+  if addonName and addonName:match("^DBM%-") then
+    return addonName:lower(), NormalizeSourceLabel(addonName), GetSourceColor(addonName), 22
+  end
+  if addonName and addonName:find("SharedMedia", 1, true) then
+    return addonName:lower(), NormalizeSourceLabel(addonName), GetSourceColor(addonName), 30
+  end
+  if addonName and addonName ~= "" then
+    return addonName:lower(), NormalizeSourceLabel(addonName), GetSourceColor(addonName), 40
+  end
+  if tostring(file or "") ~= "" then
+    return "blizzard", "Blizzard", GetSourceColor("blizzard"), 15
+  end
+  return "custom", "Custom", GetSourceColor("custom"), 50
 end
 
 local function NormalizeSoundLabel(name)
@@ -265,60 +365,89 @@ function Interrupts:GetPlayerInterrupt()
 end
 
 function Interrupts:GetSoundOptions()
-  local out = { { name = "None" } }
-  local seen = { None = true }
+  if self.soundOptionsCache then
+    return self.soundOptionsCache
+  end
+
+  local out = {}
+  local seen = {}
+
+  local function addSound(name, label, file)
+    if not name or seen[name] then
+      return
+    end
+    seen[name] = true
+    local sourceKey, sourceLabel, sourceColor, sourceSort = GetSoundSourceInfo(name, file)
+    out[#out + 1] = {
+      name = name,
+      label = NormalizeSoundLabel(label or name),
+      file = file,
+      sourceKey = sourceKey,
+      sourceLabel = sourceLabel,
+      sourceColor = sourceColor,
+      color = sourceColor,
+      sourceSort = sourceSort or 99,
+    }
+  end
+
+  addSound("None", "None", nil)
+
   local lsm = GetLSM()
   if lsm and lsm.List and lsm.Fetch then
     local list = lsm:List("sound")
     if type(list) == "table" then
-      table.sort(list, function(a, b)
-        return NormalizeSoundLabel(a):lower() < NormalizeSoundLabel(b):lower()
-      end)
       for _, name in ipairs(list) do
         local file = lsm:Fetch("sound", name)
-        if file and not seen[name] then
-          seen[name] = true
-          out[#out + 1] = {
-            name = name,
-            label = NormalizeSoundLabel(name),
-            file = file,
-          }
+        if file then
+          addSound(name, name, file)
         end
       end
     end
   end
 
   for _, entry in ipairs(self.BUILTIN_SOUNDS) do
-    if not seen[entry.name] then
-      seen[entry.name] = true
-      out[#out + 1] = {
-        name = entry.name,
-        label = NormalizeSoundLabel(entry.name),
-        file = entry.file,
-      }
+    if entry.name ~= "None" then
+      addSound(entry.name, entry.name, entry.file)
     end
   end
 
-  return out
+  table.sort(out, function(a, b)
+    if a.sourceSort ~= b.sourceSort then
+      return a.sourceSort < b.sourceSort
+    end
+    if a.sourceLabel ~= b.sourceLabel then
+      return tostring(a.sourceLabel or ""):lower() < tostring(b.sourceLabel or ""):lower()
+    end
+    return tostring(a.label or a.name or ""):lower() < tostring(b.label or b.name or ""):lower()
+  end)
+
+  self.soundOptionsCache = out
+  return self.soundOptionsCache
 end
 
-function Interrupts:PlaySound(soundName)
+function Interrupts:GetSoundChannelOptions()
+  return self.SOUND_CHANNELS
+end
+
+function Interrupts:PlaySound(soundName, channel)
   if not soundName or soundName == "None" then
     return
   end
+
+  local soundChannel = tostring(channel or "Master")
 
   local lsm = GetLSM()
   if lsm and lsm.Fetch and PlaySoundFile then
     local path = lsm:Fetch("sound", soundName, true)
     if path then
-      PlaySoundFile(path, "Master")
+      PlaySoundFile(path, soundChannel)
       return
     end
   end
 
   for _, entry in ipairs(self.BUILTIN_SOUNDS) do
     if entry.name == soundName and entry.file and PlaySoundFile then
-      PlaySoundFile(entry.file, "Master")
+      PlaySoundFile(entry.file, soundChannel)
       return
     end
   end

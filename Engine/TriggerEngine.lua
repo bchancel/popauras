@@ -30,10 +30,17 @@ local function MergeStates(base, nextState, op)
   end
 
   if op == "AND" then
+    base.matched = base.matched and nextState.matched
     base.show = base.show and nextState.show
     base.active = base.active and nextState.active
-    if nextState.icon then base.icon = nextState.icon end
-    if nextState.name ~= "" then base.name = nextState.name end
+    if not base.icon and nextState.icon then base.icon = nextState.icon end
+    if (base.name == nil or base.name == "") and nextState.name ~= "" then base.name = nextState.name end
+    if (base.statusText == nil or base.statusText == "") and nextState.statusText ~= "" then
+      base.statusText = nextState.statusText
+    end
+    if (base.message == nil or base.message == "") and nextState.message ~= "" then
+      base.message = nextState.message
+    end
     if nextState.durationObject then
       base.durationObject = nextState.durationObject
     end
@@ -50,7 +57,7 @@ local function MergeStates(base, nextState, op)
     return base
   end
 
-  if not base.show and nextState.show then
+  if not base.matched and nextState.matched then
     return ns.Schema.NormalizeRuntimeState(nextState)
   end
 
@@ -70,14 +77,16 @@ function TriggerEngine:EvaluateAura(aura)
   local auraBucket = ns.Profiler and ns.Profiler.GetAuraBucket and ns.Profiler:GetAuraBucket("eval_aura", aura) or nil
   local auraProfile = ProfileStart(auraBucket)
   local op = aura.triggerOp or "AND"
+  local enabledTriggerCount = 0
   local resolved = op == "OR" and ns.Schema.NormalizeRuntimeState({ show = false, active = false }) or nil
-  for _, trigger in ipairs(aura.triggers or {}) do
+  for index, trigger in ipairs(aura.triggers or {}) do
     if trigger.enabled ~= false and trigger.type then
+      enabledTriggerCount = enabledTriggerCount + 1
       local provider = self:GetProvider(trigger.type)
       if provider and provider.Evaluate then
         local providerBucket = string.format("provider_eval:%s", tostring(provider.key or trigger.type or "unknown"))
         local providerProfile = ProfileStart(providerBucket)
-        local evaluated = provider:Evaluate(trigger, aura)
+        local evaluated = provider:Evaluate(trigger, aura, index)
         ProfileFinish(providerBucket, providerProfile)
         resolved = MergeStates(resolved, evaluated, op)
         if ns.Debug and ns.Debug.LogTrigger then
@@ -88,6 +97,9 @@ function TriggerEngine:EvaluateAura(aura)
   end
 
   resolved = resolved or ns.Schema.NormalizeRuntimeState({ show = false, active = false })
+  if enabledTriggerCount > 1 then
+    resolved.show = resolved.matched == true
+  end
   if resolved.name == "" then
     resolved.name = aura.name
   end

@@ -36,6 +36,34 @@ local VISIBILITY_OPTIONS = {
   { key = "battleground", label = "Battlegrounds" },
 }
 
+local INSTANCE_TYPE_OPTIONS = {
+  { value = "", label = "Any Instance Type" },
+  { value = "party", label = "Party / Dungeon" },
+  { value = "raid", label = "Raid" },
+  { value = "scenario", label = "Scenario / Delve" },
+  { value = "arena", label = "Arena" },
+  { value = "pvp", label = "Battleground" },
+}
+
+local EQUIPMENT_SLOTS = {
+  INVSLOT_HEAD or 1,
+  INVSLOT_NECK or 2,
+  INVSLOT_SHOULDER or 3,
+  INVSLOT_CHEST or 5,
+  INVSLOT_WAIST or 6,
+  INVSLOT_LEGS or 7,
+  INVSLOT_FEET or 8,
+  INVSLOT_WRIST or 9,
+  INVSLOT_HAND or 10,
+  INVSLOT_FINGER1 or 11,
+  INVSLOT_FINGER2 or 12,
+  INVSLOT_TRINKET1 or 13,
+  INVSLOT_TRINKET2 or 14,
+  INVSLOT_BACK or 15,
+  INVSLOT_MAINHAND or 16,
+  INVSLOT_OFFHAND or 17,
+}
+
 local function IsVisibilityEnabled(visibility, key)
   if type(visibility) ~= "table" then
     return true
@@ -53,6 +81,80 @@ local function CombatModeLabel(current)
     return "Out of Combat"
   end
   return "Always"
+end
+
+local function GetInstanceTypeLabel(current)
+  for _, entry in ipairs(INSTANCE_TYPE_OPTIONS) do
+    if entry.value == current then
+      return entry.label
+    end
+  end
+  return INSTANCE_TYPE_OPTIONS[1].label
+end
+
+local function NormalizeText(value)
+  value = tostring(value or "")
+  value = value:gsub("^%s+", ""):gsub("%s+$", "")
+  return value
+end
+
+local function FindEquippedItemByName(itemName)
+  local needle = string.lower(NormalizeText(itemName))
+  if needle == "" then
+    return 0, nil
+  end
+
+  for _, slotId in ipairs(EQUIPMENT_SLOTS) do
+    local itemId = GetInventoryItemID and GetInventoryItemID("player", slotId) or nil
+    if itemId and itemId > 0 then
+      local equippedName = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemId) or nil
+      if equippedName and string.lower(equippedName) == needle then
+        return itemId, equippedName
+      end
+    end
+  end
+
+  return 0, nil
+end
+
+local function GetEquippedItemResolvedText(itemId, itemName)
+  itemId = tonumber(itemId or 0) or 0
+  itemName = NormalizeText(itemName)
+
+  if itemId > 0 then
+    local resolvedName = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemId) or itemName
+    if resolvedName ~= "" then
+      return string.format("|cff88ff88Equipped Item:|r %s (%d)", resolvedName, itemId)
+    end
+    return string.format("|cff88ff88Equipped Item ID:|r %d", itemId)
+  end
+
+  if itemName ~= "" then
+    return string.format("|cff88ff88Equipped Item Name:|r %s", itemName)
+  end
+
+  return "|cffaaaaaaNo equipped item requirement.|r"
+end
+
+local function ResolveItemFilterInput(input)
+  input = NormalizeText(input)
+  if input == "" then
+    return 0, ""
+  end
+
+  local numeric = tonumber(input)
+  if numeric then
+    return math.floor(numeric + 0.5), ""
+  end
+
+  local itemId = FindEquippedItemByName(input)
+  return itemId or 0, input
+end
+
+local function SetCollapseButtonText(button, collapsed)
+  if button and button.SetText then
+    button:SetText(collapsed and ">" or "v")
+  end
 end
 
 local function EnsureMap(tbl)
@@ -322,21 +424,6 @@ local function BuildTalentOptions(load)
   return nil, "No class talent tree data for that class is cached this session yet."
 end
 
-local function ResolveItemId(input)
-  input = tostring(input or ""):gsub("^%s+", ""):gsub("%s+$", "")
-  if input == "" then
-    return 0, ""
-  end
-
-  local numeric = tonumber(input)
-  if numeric then
-    local itemName = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(numeric)
-    return numeric, itemName or ("Item " .. tostring(numeric))
-  end
-
-  return nil, "Items currently require a numeric item ID."
-end
-
 local function GetOrderedUniquePositions(items, field)
   local seen = {}
   local values = {}
@@ -512,18 +599,18 @@ function Panel:ApplyCurrent()
     aura.load.visibility[key] = check:GetChecked() == true
   end
   aura.load.talent = self.frame.talentEnabledCheck:GetChecked() == true
-  aura.load.level = tonumber(self.frame.levelInput:GetText()) or 0
-  local equippedItemId, itemResult = ResolveItemId(self.frame.equippedItemInput:GetText())
-  if equippedItemId == nil then
-    self.frame.equippedItemResolved:SetText("|cffff4444" .. itemResult .. "|r")
-    return
-  end
+  aura.load.level = math.max(0, math.floor((tonumber(self.frame.levelInput:GetText()) or 0) + 0.5))
+  aura.load.instanceType = UIDropDownMenu_GetSelectedValue(self.frame.instanceTypeDropDown) or ""
+  aura.load.instanceId = math.max(0, math.floor((tonumber(self.frame.instanceIdInput:GetText()) or 0) + 0.5))
+  aura.load.encounterId = math.max(0, math.floor((tonumber(self.frame.encounterIdInput:GetText()) or 0) + 0.5))
+  local equippedItemId, equippedItemName = ResolveItemFilterInput(self.frame.equippedItemInput:GetText())
   aura.load.equippedItemId = equippedItemId or 0
-  if aura.load.equippedItemId > 0 then
-    self.frame.equippedItemResolved:SetText(string.format("|cff88ff88Equipped Item:|r %s (%d)", itemResult or "Item", aura.load.equippedItemId))
-  else
-    self.frame.equippedItemResolved:SetText("|cffaaaaaaNo equipped item requirement.|r")
-  end
+  aura.load.equippedItemName = equippedItemName or ""
+  self.frame.levelInput:SetText(aura.load.level > 0 and tostring(aura.load.level) or "")
+  self.frame.instanceIdInput:SetText(aura.load.instanceId > 0 and tostring(aura.load.instanceId) or "")
+  self.frame.encounterIdInput:SetText(aura.load.encounterId > 0 and tostring(aura.load.encounterId) or "")
+  self.frame.equippedItemInput:SetText(aura.load.equippedItemId > 0 and tostring(aura.load.equippedItemId) or aura.load.equippedItemName or "")
+  self.frame.equippedItemResolved:SetText(GetEquippedItemResolvedText(aura.load.equippedItemId, aura.load.equippedItemName))
   ns.runtime:RefreshAura(aura.id)
 end
 
@@ -534,12 +621,38 @@ function Panel:RefreshSpecSection(aura)
   load.talents = EnsureMap(load.talents)
 
   local hasClasses = false
+  local classCollapsed = self.frame.collapsedSections and self.frame.collapsedSections.class == true
+  local specCollapsed = self.frame.collapsedSections and self.frame.collapsedSections.spec == true
   local anchor = self.frame.classSection
 
   for _, specCheck in ipairs(self.frame.specChecks or {}) do
     specCheck:Hide()
   end
   self.frame.specChecks = self.frame.specChecks or {}
+
+  self.frame.classHeader:ClearAllPoints()
+  self.frame.classHeader:SetPoint("TOPLEFT", self.frame.combatDropDown, "BOTTOMLEFT", 14, -18)
+  self.frame.classHeader:SetText("Class Filter")
+  self.frame.classToggle:ClearAllPoints()
+  self.frame.classToggle:SetPoint("LEFT", self.frame.classHeader, "RIGHT", 8, 0)
+  self.frame.classToggle:Show()
+  SetCollapseButtonText(self.frame.classToggle, classCollapsed)
+
+  self.frame.classSection:ClearAllPoints()
+  self.frame.classSection:SetPoint("TOPLEFT", self.frame.classHeader, "BOTTOMLEFT", 0, -8)
+
+  local classRowCount = math.ceil(#CLASS_ORDER / 2)
+  self.frame.classSection:SetHeight(classCollapsed and 0 or (classRowCount * 24))
+  for index, classToken in ipairs(CLASS_ORDER) do
+    local check = self.frame.classChecks[classToken]
+    if check then
+      local row = math.floor((index - 1) / 2)
+      local column = (index - 1) % 2
+      check:ClearAllPoints()
+      check:SetPoint("TOPLEFT", self.frame.classSection, "TOPLEFT", column * 220, -(row * 24))
+      check:SetShown(not classCollapsed)
+    end
+  end
 
   local index = 0
   for _, classToken in ipairs(CLASS_ORDER) do
@@ -554,7 +667,7 @@ function Panel:RefreshSpecSection(aura)
           self.frame.specChecks[index] = check
         end
         check:ClearAllPoints()
-        check:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -10 - ((index - 1) * 24))
+        check:SetPoint("TOPLEFT", self.frame.specHeader, "BOTTOMLEFT", 0, -8 - ((index - 1) * 24))
         local key = classToken .. ":" .. specIndex
         check.Text:SetText(string.format("%s: %s", info.className, specName))
         check:SetChecked(load.specs[key] == true)
@@ -563,31 +676,88 @@ function Panel:RefreshSpecSection(aura)
           Panel:RefreshSpecSection(aura)
           Panel:ApplyCurrent()
         end)
-        check:Show()
+        check:SetShown(not specCollapsed)
       end
     end
   end
 
   self.frame.specHeader:SetShown(hasClasses)
+  self.frame.specToggle:SetShown(hasClasses)
   self.frame.specHeader:ClearAllPoints()
-  self.frame.specHeader:SetPoint("TOPLEFT", self.frame.classSection, "BOTTOMLEFT", 0, -10)
-  self.frame.specHeader:SetText(hasClasses and "Specs" or "")
+  self.frame.specHeader:SetPoint(
+    "TOPLEFT",
+    classCollapsed and self.frame.classHeader or self.frame.classSection,
+    "BOTTOMLEFT",
+    0,
+    -18
+  )
+  self.frame.specHeader:SetText(hasClasses and "Spec Filter" or "")
+  self.frame.specToggle:ClearAllPoints()
+  self.frame.specToggle:SetPoint("LEFT", self.frame.specHeader, "RIGHT", 8, 0)
+  SetCollapseButtonText(self.frame.specToggle, specCollapsed)
 
-  local specSectionHeight = hasClasses and (index * 24 + 28) or 0
-  self:RefreshTalentSection(aura, hasClasses, specSectionHeight)
+  local specAnchor = classCollapsed and self.frame.classHeader or self.frame.classSection
+  if hasClasses then
+    specAnchor = specCollapsed and self.frame.specHeader or (self.frame.specChecks[index] or self.frame.specHeader)
+  end
+  self:RefreshTalentSection(aura, specAnchor)
 end
 
-function Panel:RefreshTalentSection(aura, hasClasses, specSectionHeight)
+function Panel:RefreshTalentSection(aura, topAnchor)
   local load = aura.load or {}
   load.talents = EnsureMap(load.talents)
 
   HideTalentListWidgets(self.frame)
 
-  self.frame.talentHeader:SetShown(hasClasses)
-  self.frame.talentEnabledCheck:SetShown(hasClasses)
+  self.frame.visibilityHeader:ClearAllPoints()
+  self.frame.visibilityHeader:SetPoint("TOPLEFT", topAnchor, "BOTTOMLEFT", 0, -24)
+  self.frame.visibilitySection:ClearAllPoints()
+  self.frame.visibilitySection:SetPoint("TOPLEFT", self.frame.visibilityHeader, "BOTTOMLEFT", 0, -8)
+
+  local visibilityIndex = 0
+  for _, entry in ipairs(VISIBILITY_OPTIONS) do
+    local check = self.frame.visibilityChecks and self.frame.visibilityChecks[entry.key] or nil
+    if check then
+      local row = math.floor(visibilityIndex / 3)
+      local column = visibilityIndex % 3
+      check:ClearAllPoints()
+      check:SetPoint("TOPLEFT", self.frame.visibilitySection, "TOPLEFT", column * 180, -(row * 24))
+      visibilityIndex = visibilityIndex + 1
+    end
+  end
+
+  self.frame.levelLabel:ClearAllPoints()
+  self.frame.levelLabel:SetPoint("TOPLEFT", self.frame.visibilitySection, "BOTTOMLEFT", 0, -20)
+  self.frame.levelInput:ClearAllPoints()
+  self.frame.levelInput:SetPoint("TOPLEFT", self.frame.levelLabel, "BOTTOMLEFT", 0, -6)
+
+  self.frame.instanceTypeLabel:ClearAllPoints()
+  self.frame.instanceTypeLabel:SetPoint("TOPLEFT", self.frame.visibilitySection, "BOTTOMLEFT", 110, -20)
+  self.frame.instanceTypeDropDown:ClearAllPoints()
+  self.frame.instanceTypeDropDown:SetPoint("TOPLEFT", self.frame.instanceTypeLabel, "BOTTOMLEFT", -14, -4)
+
+  self.frame.instanceIdLabel:ClearAllPoints()
+  self.frame.instanceIdLabel:SetPoint("TOPLEFT", self.frame.visibilitySection, "BOTTOMLEFT", 326, -20)
+  self.frame.instanceIdInput:ClearAllPoints()
+  self.frame.instanceIdInput:SetPoint("TOPLEFT", self.frame.instanceIdLabel, "BOTTOMLEFT", 0, -6)
+
+  self.frame.encounterIdLabel:ClearAllPoints()
+  self.frame.encounterIdLabel:SetPoint("TOPLEFT", self.frame.visibilitySection, "BOTTOMLEFT", 438, -20)
+  self.frame.encounterIdInput:ClearAllPoints()
+  self.frame.encounterIdInput:SetPoint("TOPLEFT", self.frame.encounterIdLabel, "BOTTOMLEFT", 0, -6)
+
+  self.frame.equippedItemLabel:ClearAllPoints()
+  self.frame.equippedItemLabel:SetPoint("TOPLEFT", self.frame.levelInput, "BOTTOMLEFT", 0, -18)
+  self.frame.equippedItemInput:ClearAllPoints()
+  self.frame.equippedItemInput:SetPoint("TOPLEFT", self.frame.equippedItemLabel, "BOTTOMLEFT", 0, -6)
+  self.frame.equippedItemResolved:ClearAllPoints()
+  self.frame.equippedItemResolved:SetPoint("TOPLEFT", self.frame.equippedItemInput, "BOTTOMLEFT", 0, -6)
+
+  self.frame.talentHeader:SetShown(true)
+  self.frame.talentEnabledCheck:SetShown(true)
   self.frame.talentEnabledCheck:SetChecked(load.talent == true)
   self.frame.talentHeader:ClearAllPoints()
-  self.frame.talentHeader:SetPoint("TOPLEFT", self.frame.specHeader, "BOTTOMLEFT", 0, -(hasClasses and specSectionHeight or 24))
+  self.frame.talentHeader:SetPoint("TOPLEFT", self.frame.equippedItemResolved, "BOTTOMLEFT", 0, -24)
   self.frame.talentEnabledCheck:ClearAllPoints()
   self.frame.talentEnabledCheck:SetPoint("TOPLEFT", self.frame.talentHeader, "BOTTOMLEFT", 0, -8)
   self.frame.talentPickerButton:ClearAllPoints()
@@ -596,7 +766,7 @@ function Panel:RefreshTalentSection(aura, hasClasses, specSectionHeight)
   local anchor = self.frame.talentEnabledCheck
   local contentHeight = 0
 
-  if hasClasses and load.talent == true then
+  if load.talent == true then
     local groups, reason = BuildTalentOptions(load)
     self.frame.talentHint:ClearAllPoints()
     self.frame.talentHint:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -10)
@@ -627,37 +797,18 @@ function Panel:RefreshTalentSection(aura, hasClasses, specSectionHeight)
     self.frame.talentPickerButton:Hide()
   end
 
-  local sectionAnchor = hasClasses and anchor or self.frame.classSection
-  self.frame.visibilityHeader:ClearAllPoints()
-  self.frame.visibilityHeader:SetPoint("TOPLEFT", sectionAnchor, "BOTTOMLEFT", 0, -24)
-  self.frame.visibilitySection:ClearAllPoints()
-  self.frame.visibilitySection:SetPoint("TOPLEFT", self.frame.visibilityHeader, "BOTTOMLEFT", 0, -8)
+  self.frame.saveButton:ClearAllPoints()
+  self.frame.saveButton:SetPoint("TOPLEFT", (self.frame.talentHint:IsShown() and self.frame.talentHint or self.frame.talentEnabledCheck), "BOTTOMLEFT", 0, -18)
 
-  local visibilityIndex = 0
-  for _, entry in ipairs(VISIBILITY_OPTIONS) do
-    local check = self.frame.visibilityChecks and self.frame.visibilityChecks[entry.key] or nil
-    if check then
-      local row = math.floor(visibilityIndex / 3)
-      local column = visibilityIndex % 3
-      check:ClearAllPoints()
-      check:SetPoint("TOPLEFT", self.frame.visibilitySection, "TOPLEFT", column * 180, -(row * 24))
-      visibilityIndex = visibilityIndex + 1
+  local selectedSpecCount = 0
+  for _, classToken in ipairs(CLASS_ORDER) do
+    if load.classes[classToken] then
+      selectedSpecCount = selectedSpecCount + #(CLASS_SPECS[classToken].specs or {})
     end
   end
-
-  self.frame.levelLabel:ClearAllPoints()
-  self.frame.levelLabel:SetPoint("TOPLEFT", self.frame.visibilitySection, "BOTTOMLEFT", 0, -20)
-  self.frame.levelInput:ClearAllPoints()
-  self.frame.levelInput:SetPoint("TOPLEFT", self.frame.levelLabel, "BOTTOMLEFT", 0, -6)
-  self.frame.equippedItemLabel:ClearAllPoints()
-  self.frame.equippedItemLabel:SetPoint("TOPLEFT", self.frame.levelInput, "BOTTOMLEFT", 0, -18)
-  self.frame.equippedItemInput:ClearAllPoints()
-  self.frame.equippedItemInput:SetPoint("TOPLEFT", self.frame.equippedItemLabel, "BOTTOMLEFT", 0, -6)
-  self.frame.equippedItemResolved:ClearAllPoints()
-  self.frame.equippedItemResolved:SetPoint("TOPLEFT", self.frame.equippedItemInput, "BOTTOMLEFT", 0, -6)
-  self.frame.saveButton:ClearAllPoints()
-  self.frame.saveButton:SetPoint("TOPLEFT", self.frame.equippedItemResolved, "BOTTOMLEFT", 0, -18)
-  self.frame.content:SetHeight(math.max(900, 490 + (specSectionHeight or 0) + contentHeight))
+  local classHeight = (self.frame.collapsedSections and self.frame.collapsedSections.class == true) and 0 or (math.ceil(#CLASS_ORDER / 2) * 24)
+  local specHeight = (self.frame.collapsedSections and self.frame.collapsedSections.spec == true) and 0 or (selectedSpecCount * 24)
+  self.frame.content:SetHeight(math.max(980, 640 + classHeight + specHeight + contentHeight))
 end
 
 function Panel:ShowTalentPicker(aura, groups)
@@ -701,6 +852,7 @@ end
 function Panel:Create(parent)
   local frame = CreateFrame("Frame", nil, parent)
   frame:SetAllPoints()
+  frame.collapsedSections = frame.collapsedSections or {}
   frame.scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
   frame.scroll:SetPoint("TOPLEFT", 0, 0)
   frame.scroll:SetPoint("BOTTOMRIGHT", -28, 0)
@@ -731,6 +883,14 @@ function Panel:Create(parent)
 
   frame.classHeader = Frames.CreateLabel(frame.content, "By Class", "GameFontNormal")
   frame.classHeader:SetPoint("TOPLEFT", frame.combatDropDown, "BOTTOMLEFT", 14, -18)
+  frame.classToggle = Frames.CreateButton(frame.content, "v", 22, 20, function()
+    frame.collapsedSections.class = not frame.collapsedSections.class
+    local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+    if aura then
+      Panel:RefreshSpecSection(aura)
+    end
+  end)
+  Frames.StyleSecondaryButton(frame.classToggle)
   frame.classSection = CreateFrame("Frame", nil, frame.content)
   frame.classSection:SetPoint("TOPLEFT", frame.classHeader, "BOTTOMLEFT", 0, -8)
   frame.classSection:SetSize(520, 180)
@@ -746,6 +906,15 @@ function Panel:Create(parent)
   end
 
   frame.specHeader = Frames.CreateLabel(frame.content, "", "GameFontNormal")
+  frame.specToggle = Frames.CreateButton(frame.content, "v", 22, 20, function()
+    frame.collapsedSections.spec = not frame.collapsedSections.spec
+    local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+    if aura then
+      Panel:RefreshSpecSection(aura)
+    end
+  end)
+  Frames.StyleSecondaryButton(frame.specToggle)
+  frame.specToggle:Hide()
   frame.specChecks = {}
 
   frame.talentHeader = Frames.CreateLabel(frame.content, "Talent Filter", "GameFontNormal")
@@ -816,12 +985,35 @@ function Panel:Create(parent)
 
   frame.levelLabel = Frames.CreateLabel(frame.content, "Minimum Level", "GameFontNormal")
   frame.levelLabel:SetPoint("TOPLEFT", frame.classSection, "BOTTOMLEFT", 0, -24)
-  frame.levelInput = Frames.CreateInput(frame.content, 120, 24)
+  frame.levelInput = Frames.CreateInput(frame.content, 48, 24)
   frame.levelInput:SetPoint("TOPLEFT", frame.levelLabel, "BOTTOMLEFT", 0, -6)
+  frame.levelInput:SetMaxLetters(3)
+
+  frame.instanceTypeLabel = Frames.CreateLabel(frame.content, "Instance Type", "GameFontNormal")
+  frame.instanceTypeDropDown = Frames.CreateDropdown(frame.content, 170, function(self, level)
+    for _, entry in ipairs(INSTANCE_TYPE_OPTIONS) do
+      local info = UIDropDownMenu_CreateInfo()
+      info.text = entry.label
+      info.value = entry.value
+      info.func = function()
+        UIDropDownMenu_SetSelectedValue(frame.instanceTypeDropDown, entry.value)
+        UIDropDownMenu_SetText(frame.instanceTypeDropDown, entry.label)
+      end
+      UIDropDownMenu_AddButton(info, level)
+    end
+  end)
+
+  frame.instanceIdLabel = Frames.CreateLabel(frame.content, "Instance ID", "GameFontNormal")
+  frame.instanceIdInput = Frames.CreateInput(frame.content, 78, 24)
+  frame.instanceIdInput:SetMaxLetters(10)
+
+  frame.encounterIdLabel = Frames.CreateLabel(frame.content, "Encounter ID", "GameFontNormal")
+  frame.encounterIdInput = Frames.CreateInput(frame.content, 78, 24)
+  frame.encounterIdInput:SetMaxLetters(10)
 
   frame.equippedItemLabel = Frames.CreateLabel(frame.content, "Only Load If Item Equipped", "GameFontNormal")
   frame.equippedItemLabel:SetPoint("TOPLEFT", frame.levelInput, "BOTTOMLEFT", 0, -18)
-  frame.equippedItemInput = Frames.CreateInput(frame.content, 180, 24)
+  frame.equippedItemInput = Frames.CreateInput(frame.content, 240, 24)
   frame.equippedItemInput:SetPoint("TOPLEFT", frame.equippedItemLabel, "BOTTOMLEFT", 0, -6)
   frame.equippedItemResolved = Frames.CreateLabel(frame.content, "|cffaaaaaaNo equipped item requirement.|r", "GameFontHighlightSmall")
   frame.equippedItemResolved:SetPoint("TOPLEFT", frame.equippedItemInput, "BOTTOMLEFT", 0, -6)
@@ -857,6 +1049,33 @@ function Panel:Create(parent)
   frame.levelInput:SetScript("OnEditFocusLost", function()
     Panel:ApplyCurrent()
   end)
+  UIDropDownMenu_Initialize(frame.instanceTypeDropDown, function(self, level)
+    for _, entry in ipairs(INSTANCE_TYPE_OPTIONS) do
+      local info = UIDropDownMenu_CreateInfo()
+      info.text = entry.label
+      info.value = entry.value
+      info.func = function()
+        UIDropDownMenu_SetSelectedValue(frame.instanceTypeDropDown, entry.value)
+        UIDropDownMenu_SetText(frame.instanceTypeDropDown, entry.label)
+        Panel:ApplyCurrent()
+      end
+      UIDropDownMenu_AddButton(info, level)
+    end
+  end)
+  frame.instanceIdInput:SetScript("OnEnterPressed", function(selfInput)
+    selfInput:ClearFocus()
+    Panel:ApplyCurrent()
+  end)
+  frame.instanceIdInput:SetScript("OnEditFocusLost", function()
+    Panel:ApplyCurrent()
+  end)
+  frame.encounterIdInput:SetScript("OnEnterPressed", function(selfInput)
+    selfInput:ClearFocus()
+    Panel:ApplyCurrent()
+  end)
+  frame.encounterIdInput:SetScript("OnEditFocusLost", function()
+    Panel:ApplyCurrent()
+  end)
   frame.equippedItemInput:SetScript("OnEnterPressed", function(selfInput)
     selfInput:ClearFocus()
     Panel:ApplyCurrent()
@@ -885,16 +1104,19 @@ function Panel:Refresh(aura)
   aura.load.talents = EnsureMap(aura.load.talents)
   local visibilitySelection = GetVisibilitySelection(aura.load or {})
   self.frame.enabledCheck:SetChecked(aura.enabled ~= false)
-  self.frame.levelInput:SetText(tostring(aura.load.level or 0))
-  self.frame.equippedItemInput:SetText((aura.load.equippedItemId and aura.load.equippedItemId > 0) and tostring(aura.load.equippedItemId) or "")
-  if aura.load.equippedItemId and aura.load.equippedItemId > 0 then
-    local itemName = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(aura.load.equippedItemId)
-    self.frame.equippedItemResolved:SetText(string.format("|cff88ff88Equipped Item:|r %s (%d)", itemName or "Item", aura.load.equippedItemId))
-  else
-    self.frame.equippedItemResolved:SetText("|cffaaaaaaNo equipped item requirement.|r")
-  end
+  self.frame.levelInput:SetText((aura.load.level and aura.load.level > 0) and tostring(aura.load.level) or "")
+  self.frame.instanceIdInput:SetText((aura.load.instanceId and aura.load.instanceId > 0) and tostring(aura.load.instanceId) or "")
+  self.frame.encounterIdInput:SetText((aura.load.encounterId and aura.load.encounterId > 0) and tostring(aura.load.encounterId) or "")
+  self.frame.equippedItemInput:SetText(
+    (aura.load.equippedItemId and aura.load.equippedItemId > 0) and tostring(aura.load.equippedItemId)
+      or NormalizeText(aura.load.equippedItemName)
+      or ""
+  )
+  self.frame.equippedItemResolved:SetText(GetEquippedItemResolvedText(aura.load.equippedItemId, aura.load.equippedItemName))
   UIDropDownMenu_SetSelectedValue(self.frame.combatDropDown, aura.load.combat or "any")
   UIDropDownMenu_SetText(self.frame.combatDropDown, CombatModeLabel(aura.load.combat or "any"))
+  UIDropDownMenu_SetSelectedValue(self.frame.instanceTypeDropDown, aura.load.instanceType or "")
+  UIDropDownMenu_SetText(self.frame.instanceTypeDropDown, GetInstanceTypeLabel(aura.load.instanceType or ""))
   for classToken, check in pairs(self.frame.classChecks) do
     check:SetChecked(aura.load.classes[classToken] == true)
     check:SetScript("OnClick", function(selfCheck)

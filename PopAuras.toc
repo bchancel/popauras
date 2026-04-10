@@ -14,6 +14,8 @@ Util\Colors.lua
 Util\Fonts.lua
 Util\Anchors.lua
 Util\Frames.lua
+Util\SoundPicker.lua
+Util\Spells.lua
 
 Data\Defaults.lua
 Data\Interrupts.lua
@@ -40,6 +42,7 @@ Triggers\AuraProvider.lua
 Triggers\SpellCooldownProvider.lua
 Triggers\ItemCooldownProvider.lua
 Triggers\CastProvider.lua
+Triggers\ChatProvider.lua
 Triggers\SimpleProvider.lua
 Triggers\TimerProvider.lua
 Triggers\DeathAlertProvider.lua

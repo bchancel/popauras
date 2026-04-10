@@ -53,6 +53,38 @@ local function IsAuraInSelectedGroup(auraId, selectedAuraId)
   return false
 end
 
+local function ShouldPlayActivationSound(previousState, nextState)
+  if not previousState or type(previousState) ~= "table" then
+    return false
+  end
+  if type(nextState) ~= "table" or nextState.source == "preview" then
+    return false
+  end
+  if nextState.show ~= true then
+    return false
+  end
+  if previousState.show ~= true then
+    return true
+  end
+  return nextState.active == true and previousState.active ~= true
+end
+
+local function PlayAuraActivationSound(aura, previousState, nextState)
+  local display = aura and aura.display or nil
+  if not display or display.soundEnabled ~= true then
+    return
+  end
+  if not display.soundFile or display.soundFile == "" or display.soundFile == "None" then
+    return
+  end
+  if not ShouldPlayActivationSound(previousState, nextState) then
+    return
+  end
+  if ns.Interrupts and ns.Interrupts.PlaySound then
+    ns.Interrupts:PlaySound(display.soundFile, display.soundChannel or "Master")
+  end
+end
+
 function RuntimeStore:GetState(auraId)
   return self.states[auraId]
 end
@@ -220,6 +252,7 @@ function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
     self.activationOrder[auraId] = self.activationCounter
   end
 
+  PlayAuraActivationSound(aura, previousState, state)
   self:SetState(auraId, state)
   self:SetPresentation(auraId, state)
   local renderProfile = ProfileStart("runtime:render_aura")

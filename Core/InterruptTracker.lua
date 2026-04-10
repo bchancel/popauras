@@ -12,6 +12,17 @@ local SEPARATOR = ";"
 Tracker.members = {}
 Tracker.revision = 0
 
+local recentCasts = {}
+local signalTape = {}
+local signalSeq = 0
+local needsCorrelation = false
+local lastCorrelateAt = 0
+
+local SIGNAL_RETENTION = 0.35
+local CORRELATE_INTERVAL = 0.04
+local MATCH_WINDOW = 0.055
+local AURA_SUPPRESS_WINDOW = 0.028
+
 local function SafeShortName(name)
   if Strings and Strings.GetSafeShortPlayerName then
     return Strings.GetSafeShortPlayerName(name)
@@ -64,6 +75,79 @@ local function GetSafeWhisperTarget(unit)
     return name .. "-" .. realm
   end
   return name
+end
+
+local function PushSignal(kind, unit)
+  signalSeq = signalSeq + 1
+  signalTape[#signalTape + 1] = {
+    seq = signalSeq,
+    kind = kind,
+    unit = unit,
+    at = GetTime(),
+    consumed = false,
+  }
+  needsCorrelation = true
+end
+
+local function PruneSignalTape(now)
+  local keepFrom = now - SIGNAL_RETENTION
+  local kept = {}
+  for index = 1, #signalTape do
+    local signal = signalTape[index]
+    if signal and signal.at and signal.at >= keepFrom then
+      kept[#kept + 1] = signal
+    end
+  end
+  signalTape = kept
+end
+
+local function ResolveCastOwnerUnit(unit)
+  if type(unit) ~= "string" or unit == "" then
+    return nil
+  end
+  if unit == "player" or unit == "pet" then
+    return "player"
+  end
+  local partyIndex = unit:match("^partypet(%d+)$")
+  if partyIndex then
+    return "party" .. partyIndex
+  end
+  if unit:match("^party%d+$") then
+    return unit
+  end
+  return nil
+end
+
+local function ResolveObservedMemberName(unit)
+  local ownerUnit = ResolveCastOwnerUnit(unit)
+  if not ownerUnit then
+    return nil, nil
+  end
+  if ownerUnit == "player" then
+    return Tracker.playerName, ownerUnit
+  end
+  return GetSafeUnitShortName(ownerUnit), ownerUnit
+end
+
+local function ResolveObservedInterruptSpellID(memberName, rawSpellID)
+  local resolvedSpellID = nil
+  if rawSpellID ~= nil and not (issecretvalue and issecretvalue(rawSpellID)) then
+    resolvedSpellID = ns.Interrupts and ns.Interrupts.ResolveSpellID and ns.Interrupts:ResolveSpellID(rawSpellID) or nil
+  end
+  if resolvedSpellID then
+    return resolvedSpellID
+  end
+
+  local member = memberName and Tracker.members and Tracker.members[memberName] or nil
+  local memberSpellID = tonumber(member and member.spellID or 0) or 0
+  if memberSpellID > 0 then
+    return memberSpellID
+  end
+
+  local classToken = member and member.class or nil
+  local group = classToken and ns.Interrupts and ns.Interrupts.CLASS_FILTER_LOOKUP and ns.Interrupts.CLASS_FILTER_LOOKUP[classToken] or nil
+  local fallback = group and group.spells and group.spells[1] or nil
+  return fallback and fallback.id or nil
 end
 
 local function CopyEntry(target, source)
@@ -197,13 +281,18 @@ function Tracker:Transmit(payload)
     return
   end
 
-  local sent = false
-  if IsInGroup and IsInGroup(LE_PARTY_CATEGORY_HOME) then
-    local ok, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, payload, "PARTY")
-    sent = ok == true and result == 0
+  local function TrySend(channel, target)
+    local ok, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, payload, channel, target)
+    return ok == true and result == 0
   end
 
-  if sent then
+  local inHome = IsInGroup and IsInGroup(LE_PARTY_CATEGORY_HOME) or false
+  local inInstance = IsInGroup and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) or false
+
+  if inInstance and TrySend("INSTANCE_CHAT") then
+    return
+  end
+  if (inHome or inInstance) and TrySend("PARTY") then
     return
   end
 
@@ -212,7 +301,7 @@ function Tracker:Transmit(payload)
     if UnitExists(unit) and UnitIsPlayer(unit) then
       local target = GetSafeWhisperTarget(unit)
       if target then
-        pcall(C_ChatInfo.SendAddonMessage, PREFIX, payload, "WHISPER", target)
+        TrySend("WHISPER", target)
       end
     end
   end
@@ -261,6 +350,9 @@ function Tracker:HandleKick(name, spellID, baseCd, isLocal)
 
   local cooldown = ResolveBaseCooldown(resolvedSpellID, baseCd)
   local now = GetTime()
+  if member.pendingKick == true and member.spellID == resolvedSpellID and math.abs(now - (tonumber(member.lastKickAt or 0) or 0)) <= 0.35 then
+    return
+  end
   local token = string.format("%s:%0.3f", tostring(name), now)
 
   local changed = CopyEntry(member, {
@@ -302,6 +394,102 @@ function Tracker:ApplyKickResult(name, result)
   if changed then
     self:MarkDirty()
   end
+end
+
+function Tracker:HandleObservedKick(unit)
+  local memberName, ownerUnit = ResolveObservedMemberName(unit)
+  if not memberName or not ownerUnit then
+    return
+  end
+
+  if ownerUnit == "player" then
+    local member = self.members and self.members[memberName] or nil
+    local lastKickAt = tonumber(member and member.lastKickAt or 0) or 0
+    if member and member.pendingKick == true and lastKickAt > 0 and (GetTime() - lastKickAt) <= 1.0 then
+      self:ApplyKickResult(memberName, "success")
+      self:Transmit(BuildMessage("SUCCESSKICK"))
+    end
+    return
+  end
+
+  local cast = recentCasts[memberName]
+  local spellID = cast and cast.spellID or nil
+  if not spellID or math.abs(GetTime() - (tonumber(cast and cast.t or 0) or 0)) > 1.0 then
+    return
+  end
+
+  local member = self:GetOrCreateMember(memberName)
+  if member and member.pendingKick == true then
+    self:ApplyKickResult(memberName, "success")
+    return
+  end
+
+  local baseCd = ResolveBaseCooldown(spellID, member and member.baseCd)
+  self:HandleKick(memberName, spellID, baseCd, false)
+  self:ApplyKickResult(memberName, "success")
+end
+
+local function CorrelateSignals()
+  local now = GetTime()
+  if not needsCorrelation or (now - lastCorrelateAt) < CORRELATE_INTERVAL then
+    return
+  end
+  lastCorrelateAt = now
+  PruneSignalTape(now)
+
+  local casts = {}
+  local interrupts = {}
+  local auras = {}
+
+  for index = 1, #signalTape do
+    local signal = signalTape[index]
+    if signal and signal.consumed ~= true then
+      if signal.kind == "cast" then
+        casts[#casts + 1] = signal
+      elseif signal.kind == "interrupt" then
+        interrupts[#interrupts + 1] = signal
+      elseif signal.kind == "aura" then
+        auras[#auras + 1] = signal
+      end
+    end
+  end
+
+  if #casts == 0 or #interrupts == 0 then
+    needsCorrelation = false
+    return
+  end
+
+  table.sort(interrupts, function(left, right)
+    return (left.at or 0) < (right.at or 0)
+  end)
+  local freshest = interrupts[#interrupts]
+  freshest.consumed = true
+
+  for index = 1, #auras do
+    local auraSignal = auras[index]
+    if auraSignal.unit == freshest.unit and math.abs((freshest.at or 0) - (auraSignal.at or 0)) <= AURA_SUPPRESS_WINDOW then
+      needsCorrelation = false
+      return
+    end
+  end
+
+  local bestCast = nil
+  local bestDiff = math.huge
+  for index = 1, #casts do
+    local castSignal = casts[index]
+    local diff = math.abs((freshest.at or 0) - (castSignal.at or 0))
+    if diff <= MATCH_WINDOW and diff < bestDiff then
+      bestDiff = diff
+      bestCast = castSignal
+    end
+  end
+
+  if bestCast then
+    bestCast.consumed = true
+    Tracker:HandleObservedKick(bestCast.unit)
+  end
+
+  needsCorrelation = false
 end
 
 function Tracker:HandleMessage(prefix, message, sender)
@@ -411,8 +599,27 @@ function Tracker:HandleEvent(event, ...)
     end
   elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
     local unit, _, spellID = ...
+    local memberName, ownerUnit = ResolveObservedMemberName(unit)
+    local resolvedSpellID = ResolveObservedInterruptSpellID(memberName, spellID)
     if unit == "player" then
+      if resolvedSpellID and self.playerName then
+        recentCasts[self.playerName] = { t = GetTime(), spellID = resolvedSpellID }
+        PushSignal("cast", unit)
+      end
       self:HandlePlayerKick(spellID)
+    elseif ownerUnit and ownerUnit ~= "player" and memberName and resolvedSpellID then
+      recentCasts[memberName] = { t = GetTime(), spellID = resolvedSpellID }
+      PushSignal("cast", unit)
+    end
+  elseif event == "UNIT_SPELLCAST_INTERRUPTED" then
+    local unit = ...
+    if type(unit) == "string" and unit:match("^nameplate") then
+      PushSignal("interrupt", unit)
+    end
+  elseif event == "UNIT_AURA" then
+    local unit = ...
+    if type(unit) == "string" and unit:match("^nameplate") then
+      PushSignal("aura", unit)
     end
   end
 end
@@ -460,11 +667,18 @@ function Tracker:InitializeEventFrame()
   frame:RegisterEvent("GROUP_ROSTER_UPDATE")
   frame:RegisterEvent("SPELLS_CHANGED")
   frame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-  frame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+  frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+  frame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
+  frame:RegisterEvent("UNIT_AURA")
   frame:RegisterEvent("CHAT_MSG_ADDON")
   frame:RegisterEvent("CHAT_MSG_ADDON_LOGGED")
   frame:SetScript("OnEvent", function(_, event, ...)
     Tracker:HandleEvent(event, ...)
+  end)
+  frame:SetScript("OnUpdate", function()
+    if needsCorrelation then
+      CorrelateSignals()
+    end
   end)
 
   if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then

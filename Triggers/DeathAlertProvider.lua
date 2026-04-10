@@ -21,6 +21,11 @@ local provider = ns.TriggerBase:CreateProvider("death_alert", {
 
 local Strings = ns.util.Strings
 
+local function GetDeathAlertTrigger(aura)
+  local _, trigger = ns.TriggerBase:AnyTriggerMatches(aura, "death_alert")
+  return trigger
+end
+
 local function NormalizeRole(role)
   if role == "TANK" or role == "HEALER" then
     return role
@@ -110,8 +115,7 @@ end
 
 function provider:GetDeathAlertAuraIds()
   return ns.Registry:CollectAuraIds(function(aura)
-    local trigger = aura and aura.triggers and aura.triggers[1]
-    return trigger and trigger.type == "death_alert"
+    return GetDeathAlertTrigger(aura) ~= nil
   end)
 end
 
@@ -238,7 +242,7 @@ function provider:HandleEvent(event, ...)
   local affectedAuraIds = {}
   for _, auraId in ipairs(self:GetDeathAlertAuraIds()) do
     local aura = ns.Registry:GetAura(auraId)
-    local trigger = aura and aura.triggers and aura.triggers[1] or nil
+    local trigger = GetDeathAlertTrigger(aura)
     if trigger and TriggerMatchesRole(trigger, member.role) then
       local alertsThisCombat = tonumber(self.combatAlertCounts[auraId] or 0) or 0
       local alertCap = GetAlertCap(trigger)

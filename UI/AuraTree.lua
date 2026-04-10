@@ -62,6 +62,26 @@ local function IsAuraLoadedForList(aura)
   return ns.LoadEvaluator:Matches(aura) == true
 end
 
+local function NormalizeSearchQuery(value)
+  value = tostring(value or "")
+  value = value:gsub("^%s+", ""):gsub("%s+$", "")
+  return value:lower()
+end
+
+local function AuraMatchesQuery(aura, query)
+  if not aura or not query or query == "" then
+    return true
+  end
+
+  local name = tostring(aura.name or ""):lower()
+  if name:find(query, 1, true) then
+    return true
+  end
+
+  local kind = tostring(aura.kind or ""):lower()
+  return kind:find(query, 1, true) ~= nil
+end
+
 local function CollectTreeNodesForRoot(auraId, collapsedGroups, depth, results)
   local aura = ns.Registry:GetAura(auraId)
   if not aura then
@@ -92,6 +112,56 @@ local function BuildOrderedTreeNodes(collapsedGroups)
     if aura then
       local bucket = IsAuraLoadedForList(aura) and loadedRoots or unloadedRoots
       CollectTreeNodesForRoot(auraId, collapsedGroups, 0, bucket)
+    end
+  end
+
+  return loadedRoots, unloadedRoots
+end
+
+local function CollectFilteredTreeNodesForRoot(auraId, query, depth, results)
+  local aura = ns.Registry:GetAura(auraId)
+  if not aura then
+    return false
+  end
+
+  local matchedSelf = AuraMatchesQuery(aura, query)
+  local childNodes = {}
+  local matchedChild = false
+
+  for _, childId in ipairs(aura.children or {}) do
+    if CollectFilteredTreeNodesForRoot(childId, query, (depth or 0) + 1, childNodes) then
+      matchedChild = true
+    end
+  end
+
+  if not matchedSelf and not matchedChild then
+    return false
+  end
+
+  results[#results + 1] = {
+    aura = aura,
+    depth = depth or 0,
+    isLoaded = IsAuraLoadedForList(aura),
+    searchMatched = matchedSelf,
+    searchAncestor = matchedChild and not matchedSelf,
+  }
+
+  for _, node in ipairs(childNodes) do
+    results[#results + 1] = node
+  end
+
+  return true
+end
+
+local function BuildFilteredTreeNodes(query)
+  local loadedRoots = {}
+  local unloadedRoots = {}
+
+  for _, auraId in ipairs(ns.Registry:GetOrder()) do
+    local aura = ns.Registry:GetAura(auraId)
+    if aura then
+      local bucket = IsAuraLoadedForList(aura) and loadedRoots or unloadedRoots
+      CollectFilteredTreeNodesForRoot(auraId, query, 0, bucket)
     end
   end
 
@@ -427,6 +497,21 @@ function AuraTree:Create(parent)
   frame.title:SetTextColor(0.93, 0.95, 1)
   frame.title:SetShadowOffset(1, -1)
 
+  frame.searchLabel = Frames.CreateLabel(frame.titleBar, "Search", "GameFontNormalSmall")
+  frame.searchLabel:SetPoint("RIGHT", -154, 0)
+  frame.searchLabel:SetTextColor(0.78, 0.82, 0.90)
+
+  frame.searchInput = Frames.CreateInput(frame.titleBar, 130, 20)
+  frame.searchInput:SetPoint("LEFT", frame.searchLabel, "RIGHT", 6, 0)
+  frame.searchInput:SetTextInsets(4, 4, 0, 0)
+  frame.searchInput:SetScript("OnTextChanged", function()
+    AuraTree:Refresh()
+  end)
+  frame.searchInput:SetScript("OnEscapePressed", function(selfInput)
+    selfInput:SetText("")
+    selfInput:ClearFocus()
+  end)
+
   frame.scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
   frame.scroll:SetPoint("TOPLEFT", 8, -38)
   frame.scroll:SetPoint("BOTTOMRIGHT", -28, 8)
@@ -449,6 +534,11 @@ function AuraTree:Create(parent)
   end)
   frame.rows = {}
   frame.sectionHeaders = {}
+  frame.emptyText = Frames.CreateLabel(frame.content, "", "GameFontHighlightSmall")
+  frame.emptyText:SetTextColor(0.72, 0.76, 0.84)
+  frame.emptyText:SetWidth(220)
+  frame.emptyText:SetJustifyH("LEFT")
+  frame.emptyText:Hide()
 
   frame.dragProxy = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
   frame.dragProxy:SetSize(150, 24)
@@ -486,10 +576,14 @@ function AuraTree:Refresh()
   for _, header in ipairs(self.frame.sectionHeaders or {}) do
     header:Hide()
   end
+  if self.frame.emptyText then
+    self.frame.emptyText:Hide()
+  end
 
   local index = 0
   local yOffset = 0
   local sectionHeaderIndex = 0
+  local searchQuery = NormalizeSearchQuery(self.frame.searchInput and self.frame.searchInput:GetText() or "")
 
   local function EnsureSectionHeader(i)
     if self.frame.sectionHeaders[i] then
@@ -810,7 +904,7 @@ function AuraTree:Refresh()
     local isGroup = aura.kind == "group" or aura.kind == "dynamic_group"
     local inGroup = aura.parentId ~= nil
     row.expandButton.auraId = aura.id
-    row.expandButton:SetShown(isGroup)
+    row.expandButton:SetShown(isGroup and searchQuery == "")
     if isGroup then
       row.expandButton.text:SetText(ns.db.ui.collapsedGroups[aura.id] and ">" or "v")
       row.expandButton.text:Show()
@@ -889,17 +983,31 @@ function AuraTree:Refresh()
 
   end
 
-  local loadedNodes, unloadedNodes = BuildOrderedTreeNodes(ns.db.ui.collapsedGroups)
-  RenderSectionHeader("Loaded Auras")
+  local loadedNodes, unloadedNodes
+  if searchQuery ~= "" then
+    loadedNodes, unloadedNodes = BuildFilteredTreeNodes(searchQuery)
+  else
+    loadedNodes, unloadedNodes = BuildOrderedTreeNodes(ns.db.ui.collapsedGroups)
+  end
+
+  RenderSectionHeader(searchQuery ~= "" and "Matching Auras" or "Loaded Auras")
   for _, node in ipairs(loadedNodes) do
     RenderNode(node)
   end
   if #unloadedNodes > 0 then
     yOffset = yOffset + (#loadedNodes > 0 and 10 or 0)
-    RenderSectionHeader("Not Loaded")
+    RenderSectionHeader(searchQuery ~= "" and "Matching But Not Loaded" or "Not Loaded")
     for _, node in ipairs(unloadedNodes) do
       RenderNode(node)
     end
+  end
+
+  if #loadedNodes == 0 and #unloadedNodes == 0 and self.frame.emptyText then
+    self.frame.emptyText:ClearAllPoints()
+    self.frame.emptyText:SetPoint("TOPLEFT", 0, -yOffset)
+    self.frame.emptyText:SetText(searchQuery ~= "" and "No auras match that search." or "No auras created yet.")
+    self.frame.emptyText:Show()
+    yOffset = yOffset + 22
   end
 
   content:SetSize(240, math.max(1, yOffset))
