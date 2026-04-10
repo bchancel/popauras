@@ -90,7 +90,7 @@ function provider:Evaluate(trigger, aura)
   end
 
   local matchMode = GetCooldownMatchMode(trigger)
-  local matched = (matchMode == "ready") and isReady or not isReady
+  local matched = (matchMode == "ready") == isReady
 
   return ns.Schema.NormalizeRuntimeState({
     show = ShouldPersistDisplay(trigger, aura) or matched,

@@ -1337,7 +1337,7 @@ function provider:Evaluate(trigger, aura)
       candidateTotal = 1
     end
 
-    local matched = (matchMode == "ready") and isReady or not isReady
+    local matched = (matchMode == "ready") == isReady
     local candidate = ns.Schema.NormalizeRuntimeState({
       show = ShouldPersistDisplay(trigger, aura) or matched,
       matched = matched,
@@ -1385,6 +1385,8 @@ function provider:Evaluate(trigger, aura)
         string.format("chargeDisplay=%s", tostring(candidateDisplayCharges ~= nil and candidateDisplayCharges or "")),
         string.format("activeAuraOnly=%s", tostring(activeAuraOnly == true)),
         string.format("apiActive=%s", tostring(cooldownActive)),
+        string.format("matchMode=%s", tostring(matchMode)),
+        string.format("matched=%s", tostring(matched)),
       }),
     })
     local cooldownEnabled = cooldown and SafeBoolean(cooldown.isEnabled)
