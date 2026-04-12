@@ -507,6 +507,7 @@ function Panel:ApplyCurrent()
   ns.Defaults:ApplyTriggerDefaults(trigger)
   trigger.cooldownMatch = UIDropDownMenu_GetSelectedValue(frame.cooldownMatchDropDown) or trigger.cooldownMatch or "cooldown"
   trigger.mode = UIDropDownMenu_GetSelectedValue(frame.modeDropDown) or trigger.mode or "always"
+  trigger.showAlways = frame.showAlwaysCheck:GetChecked() == true
   trigger.manualCooldown = tonumber(frame.manualCooldownInput:GetText()) or 0
   trigger.showChargeCooldown = frame.chargeCooldownCheck:GetChecked() == true
   trigger.auraType = UIDropDownMenu_GetSelectedValue(frame.auraTypeDropDown) or trigger.auraType or "buff"
@@ -1238,6 +1239,8 @@ function Panel:Refresh(aura)
   self.frame.manualCooldownHint:SetShown(isSpellCooldown)
   self.frame.cooldownMatchLabel:SetShown(isSpellCooldown or isItemCooldown)
   self.frame.cooldownMatchDropDown:SetShown(isSpellCooldown or isItemCooldown)
+  self.frame.showAlwaysCheck:SetShown(isCooldownType)
+  self.frame.showAlwaysCheck:SetChecked(trigger.showAlways == true)
   self.frame.chargeCooldownCheck:SetShown(isSpellCooldown)
   self.frame.chargeCooldownCheck:SetChecked(trigger.showChargeCooldown ~= false)
   SetDropdownValue(self.frame.chatChannelDropDown, trigger.chatChannel or "WHISPER", function()

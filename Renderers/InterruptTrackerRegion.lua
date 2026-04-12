@@ -320,9 +320,6 @@ function InterruptTrackerRegion:EnsureRow(index)
   row.clickTarget:SetAllPoints()
   row.clickTarget:SetFrameLevel(row.overlay:GetFrameLevel() + 5)
   row.clickTarget:RegisterForDrag("LeftButton")
-  if row.clickTarget.SetPropagateMouseClicks then
-    row.clickTarget:SetPropagateMouseClicks(true)
-  end
   row.clickTarget:SetScript("OnMouseDown", function(_, button)
     if button ~= "LeftButton" then
       return

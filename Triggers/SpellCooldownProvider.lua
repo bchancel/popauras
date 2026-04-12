@@ -160,6 +160,24 @@ local function CallDurationObjectMethod(durationObject, methodName)
   return SafeNumber(value)
 end
 
+local function GetDurationObjectRemaining(durationObject)
+  if not durationObject then
+    return nil
+  end
+
+  local remaining = CallDurationObjectMethod(durationObject, "GetRemainingDuration")
+  if remaining ~= nil then
+    return math.max(0, remaining)
+  end
+
+  local endTime = CallDurationObjectMethod(durationObject, "GetEndTime")
+  if endTime ~= nil then
+    return math.max(0, endTime - GetTime())
+  end
+
+  return nil
+end
+
 local function IsLikelyGCD(duration)
   return type(duration) == "number" and duration > 0 and duration <= 1.6
 end
@@ -244,15 +262,12 @@ local function CooldownLooksReady(cooldown, duration, expirationTime, durationOb
     return false
   end
 
-  if durationObject ~= nil then
-    return false
-  end
-
   local explicitActive = SafeBoolean(cooldown.isActive)
   local enabled = SafeBoolean(cooldown.isEnabled)
   local startTime = SafeNumber(cooldown.startTime) or 0
   local liveDuration = SafeNumber(cooldown.duration) or 0
   local now = GetTime()
+  local durationObjectRemaining = GetDurationObjectRemaining(durationObject)
 
   if explicitActive == true then
     return false
@@ -263,6 +278,10 @@ local function CooldownLooksReady(cooldown, duration, expirationTime, durationOb
   end
 
   if expirationTime and expirationTime > now then
+    return false
+  end
+
+  if durationObjectRemaining ~= nil and durationObjectRemaining > 0 then
     return false
   end
 
@@ -535,6 +554,11 @@ end
 local function IsUsableCDMCooldownState(cdmState)
   if type(cdmState) ~= "table" or cdmState.active ~= true then
     return false
+  end
+
+  if cdmState.durationObject ~= nil then
+    return cdmState.isOnActualCooldown == true
+      or IsUsableCooldownDuration(cdmState.duration, cdmState.expirationTime, false)
   end
 
   return IsUsableCooldownDuration(cdmState.duration, cdmState.expirationTime, false)
@@ -911,10 +935,6 @@ function provider:HandleEvent(event, ...)
             baseCooldown = PreferShorterCooldownDuration(baseCooldown, cooldownDuration)
           end
 
-          if cdmState and cdmState.active and IsUsableCooldownDuration(cdmState.duration, cdmState.expirationTime, false) then
-            baseCooldown = PreferShorterCooldownDuration(baseCooldown, cdmState.duration)
-          end
-
           if C_Spell and C_Spell.GetSpellCharges then
             local chargeInfo = C_Spell.GetSpellCharges(linkedSpellID)
             local chargeDuration, chargeExpirationTime = GetSpellChargeTiming(linkedSpellID, chargeInfo)
@@ -925,6 +945,10 @@ function provider:HandleEvent(event, ...)
 
           if cache and IsUsableCooldownDuration(cache.duration, cache.expirationTime, false) then
             baseCooldown = PreferShorterCooldownDuration(baseCooldown, cache.duration)
+          end
+
+          if cdmState and cdmState.active and IsUsableCooldownDuration(cdmState.duration, cdmState.expirationTime, false) then
+            baseCooldown = PreferShorterCooldownDuration(baseCooldown, cdmState.duration)
           end
 
           if (not baseCooldown or baseCooldown <= 0) and cdmState and cdmState.maxDuration and cdmState.maxDuration > 0 then
@@ -949,6 +973,8 @@ function provider:HandleEvent(event, ...)
             self.cache[linkedSpellID].expirationTime = now + baseCooldown
             self.cache[linkedSpellID].active = true
             self.cache[linkedSpellID].source = "learned_cast"
+            self.cache[linkedSpellID].deferredByActiveAura = nil
+            self.cache[linkedSpellID].deferredExpirationTime = nil
             local inferredCharges = self.cache[linkedSpellID].currentCharges
             if inferredCharges == nil and (self.cache[linkedSpellID].isChargeSpell or ((self.cache[linkedSpellID].maxCharges or 0) > 1)) then
               inferredCharges = self.cache[linkedSpellID].maxCharges
@@ -1048,11 +1074,18 @@ function provider:Evaluate(trigger, aura)
       isReady = false
       duration = cdmState.duration or 0
       expirationTime = cdmState.expirationTime or 0
-      cache.duration = duration
-      cache.expirationTime = expirationTime
+      activeDurationObject = cdmState.durationObject or nil
+      if duration and duration > 0 then
+        cache.duration = duration
+      end
+      if expirationTime and expirationTime > 0 then
+        cache.expirationTime = expirationTime
+      end
       cache.active = true
       cache.cooldownID = cdmState.cooldownID
       cache.source = "cdm"
+      cache.deferredByActiveAura = nil
+      cache.deferredExpirationTime = nil
       source = "cdm"
     end
 
@@ -1114,11 +1147,16 @@ function provider:Evaluate(trigger, aura)
       cooldownActive = false
     end
 
-    local hasCooldownDurationObject = cooldownDurationObject ~= nil and (
-      cooldownActive
-      or (cooldownExpirationTime or 0) > GetTime()
-      or (cooldownDuration or 0) > 0
-    )
+    local cooldownDurationObjectRemaining = GetDurationObjectRemaining(cooldownDurationObject)
+    local cooldownApiActive = SafeBoolean(cooldown and cooldown.isActive) == true
+    local hasCooldownDurationObject = cooldownDurationObject ~= nil
+      and cooldownIsOnGCD ~= true
+      and cooldownLooksLikeGCD ~= true
+      and (
+        (cooldownDurationObjectRemaining ~= nil and cooldownDurationObjectRemaining > 0)
+        or cooldownApiActive
+        or cooldownActive
+      )
     if isReady and (hasCooldownDurationObject or (cooldownActive and cooldownExpirationTime > GetTime() and cooldownDuration > 0)) then
       isReady = false
       duration = cooldownDuration
@@ -1133,6 +1171,7 @@ function provider:Evaluate(trigger, aura)
       cache.active = true
       cache.source = hasCooldownDurationObject and "api_duration" or "api"
       cache.deferredByActiveAura = nil
+      cache.deferredExpirationTime = nil
       source = cache.source
     end
 
@@ -1194,9 +1233,12 @@ function provider:Evaluate(trigger, aura)
         cache.isChargeSpell = false
       end
       local chargeCooldownActive = chargeInfo and IsChargeCooldownActive(chargeInfo) or false
+      local chargeApiActive = SafeBoolean(chargeInfo and chargeInfo.isActive) == true
       local hasChargeDurationObject = chargeDurationObject ~= nil and (
         (safeChargeExpiration or 0) > GetTime()
         or (safeChargeDuration or 0) > 0
+        or chargeApiActive
+        or chargeCooldownActive
       )
       local shouldShowChargeCooldown = hasRealCharges and missingCharges and (trigger.showChargeCooldown ~= false or noChargesAvailable)
       if shouldShowChargeCooldown and isReady and (
@@ -1218,6 +1260,7 @@ function provider:Evaluate(trigger, aura)
         cache.active = true
         cache.source = "charges"
         cache.deferredByActiveAura = nil
+        cache.deferredExpirationTime = nil
         source = "charges"
       end
     end
@@ -1229,8 +1272,9 @@ function provider:Evaluate(trigger, aura)
       and activeDurationObject == nil
 
     if activeAuraOnly then
-      if cache.source == "learned_cast" and (cache.expirationTime or 0) > GetTime() and (cache.duration or 0) > 0 then
+      if IsLearnedCastSource(cache.source) and (cache.expirationTime or 0) > GetTime() and (cache.duration or 0) > 0 then
         cache.deferredByActiveAura = true
+        cache.deferredExpirationTime = cache.expirationTime
         cache.expirationTime = 0
         cache.active = false
       end
@@ -1242,10 +1286,17 @@ function provider:Evaluate(trigger, aura)
       cache.source = "cdm_aura"
       cache.active = false
     elseif cache.deferredByActiveAura == true and isReady and (cache.duration or 0) > 0 then
-      cache.expirationTime = GetTime() + (cache.duration or 0)
-      cache.active = true
-      cache.source = "learned_cast_deferred"
+      local deferredExpirationTime = SafeNumber(cache.deferredExpirationTime)
+      if deferredExpirationTime and deferredExpirationTime > GetTime() then
+        cache.expirationTime = deferredExpirationTime
+        cache.active = true
+        cache.source = "learned_cast_deferred"
+      else
+        cache.expirationTime = 0
+        cache.active = false
+      end
       cache.deferredByActiveAura = nil
+      cache.deferredExpirationTime = nil
     end
 
     local cooldownReadyNow = CooldownLooksReady(
@@ -1269,6 +1320,7 @@ function provider:Evaluate(trigger, aura)
       cache.expirationTime = 0
       cache.active = false
       cache.deferredByActiveAura = nil
+      cache.deferredExpirationTime = nil
       if cache.isChargeSpell == true and SafeNumber(cache.maxCharges) and cache.maxCharges > 1 then
         cache.currentCharges = cache.maxCharges
       end
@@ -1295,6 +1347,7 @@ function provider:Evaluate(trigger, aura)
       cache.expirationTime = 0
       cache.active = false
       cache.deferredByActiveAura = nil
+      cache.deferredExpirationTime = nil
       cacheExpirationTime = 0
     end
     if isReady and not activeAuraOnly and cacheExpirationTime and cacheExpirationTime > GetTime() then
@@ -1366,8 +1419,11 @@ function provider:Evaluate(trigger, aura)
         string.format("cdmID=%s", tostring(cdmState and cdmState.cooldownID or cache.cooldownID or "")),
         string.format("cooldownQueryID=%s", tostring(cooldownQueryID or "")),
         string.format("cdmActive=%s", tostring(cdmStateActive == true)),
-        string.format("cdmActiveRaw=%s", tostring(cdmState and cdmState.active or false)),
+        string.format("cdmActiveRaw=%s", tostring(cdmState and (cdmState.rawActive == true or cdmState.active == true) or false)),
+        string.format("cdmActual=%s", tostring(cdmState and cdmState.isOnActualCooldown == true or false)),
+        string.format("cdmGCD=%s", tostring(cdmState and cdmState.isOnGCD == true or false)),
         string.format("cdmDur=%s", tostring(cdmState and cdmState.duration or "")),
+        string.format("cdmObj=%s", tostring(cdmState and cdmState.durationObject ~= nil or false)),
         string.format("cdmCount=%s", tostring(cdmCount ~= nil and cdmCount or "")),
         string.format("cdmText=%s", tostring(cdmCountText or "")),
         string.format("cdmAura=%s", tostring(cdmAuraActive)),

@@ -31,6 +31,10 @@ local function SafeNumber(value)
   return nil
 end
 
+local function IsLikelyGCD(duration)
+  return type(duration) == "number" and duration > 0 and duration <= 1.6
+end
+
 local function GetItemCooldownInfo(itemId)
   if C_Item and C_Item.GetItemCooldown then
     local startTime, duration, enableCooldownTimer = C_Item.GetItemCooldown(itemId)
@@ -84,9 +88,12 @@ function provider:Evaluate(trigger, aura)
   local isEnabled = type(info) == "table" and info.isEnabled == true
 
   if startTime and cooldownDuration and cooldownDuration > 0 and isEnabled then
-    duration = cooldownDuration
-    expirationTime = startTime + cooldownDuration
-    isReady = false
+    local candidateExpirationTime = startTime + cooldownDuration
+    if not IsLikelyGCD(cooldownDuration) and candidateExpirationTime > GetTime() then
+      duration = cooldownDuration
+      expirationTime = candidateExpirationTime
+      isReady = false
+    end
   end
 
   local matchMode = GetCooldownMatchMode(trigger)

@@ -69,6 +69,22 @@ local function ShouldPlayActivationSound(previousState, nextState)
   return nextState.active == true and previousState.active ~= true
 end
 
+local function ShouldPlayReadySound(previousState, nextState)
+  if not previousState or type(previousState) ~= "table" then
+    return false
+  end
+  if type(nextState) ~= "table" or nextState.source == "preview" then
+    return false
+  end
+  if nextState.show ~= true then
+    return false
+  end
+
+  local previousReady = ns.TextResolver and ns.TextResolver.IsReadyState and ns.TextResolver:IsReadyState(previousState) or false
+  local nextReady = ns.TextResolver and ns.TextResolver.IsReadyState and ns.TextResolver:IsReadyState(nextState) or false
+  return nextReady == true and previousReady ~= true
+end
+
 local function PlayAuraActivationSound(aura, previousState, nextState)
   local display = aura and aura.display or nil
   if not display or display.soundEnabled ~= true then
@@ -77,7 +93,11 @@ local function PlayAuraActivationSound(aura, previousState, nextState)
   if not display.soundFile or display.soundFile == "" or display.soundFile == "None" then
     return
   end
-  if not ShouldPlayActivationSound(previousState, nextState) then
+  local soundMode = display.soundMode == "ready" and "ready" or "activate"
+  local shouldPlay = soundMode == "ready"
+    and ShouldPlayReadySound(previousState, nextState)
+    or ShouldPlayActivationSound(previousState, nextState)
+  if not shouldPlay then
     return
   end
   if ns.Interrupts and ns.Interrupts.PlaySound then

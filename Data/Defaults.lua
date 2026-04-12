@@ -67,6 +67,7 @@ Defaults.display = {
   iconCooldownBling = false,
   hideCDMIcon = false,
   soundEnabled = false,
+  soundMode = "activate",
   soundFile = "None",
   soundChannel = "Master",
   desaturate = false,
@@ -194,7 +195,7 @@ local function ApplyTriggerTypeDefaults(trigger)
     trigger.spellId = tonumber(trigger.spellId or 0) or 0
     trigger.cooldownMatch = trigger.cooldownMatch or "cooldown"
     if trigger.showAlways == nil then
-      trigger.showAlways = true
+      trigger.showAlways = false
     end
     trigger.manualCooldown = tonumber(trigger.manualCooldown or 0) or 0
     if trigger.showChargeCooldown == nil then
@@ -204,7 +205,7 @@ local function ApplyTriggerTypeDefaults(trigger)
     trigger.itemId = tonumber(trigger.itemId or 0) or 0
     trigger.cooldownMatch = trigger.cooldownMatch or "cooldown"
     if trigger.showAlways == nil then
-      trigger.showAlways = true
+      trigger.showAlways = false
     end
   elseif triggerType == "cast" then
     trigger.unit = trigger.unit or "player"
@@ -334,13 +335,13 @@ function Defaults:NewAura(kind, triggerType)
     elseif triggerType == "spell_cooldown" then
       aura.triggers[1].spellId = 0
       aura.triggers[1].cooldownMatch = "cooldown"
-      aura.triggers[1].showAlways = true
+      aura.triggers[1].showAlways = false
       aura.triggers[1].manualCooldown = 0
       aura.triggers[1].showChargeCooldown = true
     elseif triggerType == "item_cooldown" then
       aura.triggers[1].itemId = 0
       aura.triggers[1].cooldownMatch = "cooldown"
-      aura.triggers[1].showAlways = true
+      aura.triggers[1].showAlways = false
     elseif triggerType == "cast" then
       aura.triggers[1].unit = "player"
     elseif triggerType == "death_alert" then

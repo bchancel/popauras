@@ -49,6 +49,8 @@ CooldownManager.auraFrameRefs = CreateWeakValueTable()
 CooldownManager.hookedAuraFrames = CreateWeakKeyTable()
 CooldownManager.pendingAuraRefreshes = {}
 
+local HookCooldownWidget
+
 local function SafeNumber(value)
   if value == nil then
     return nil
@@ -57,6 +59,19 @@ local function SafeNumber(value)
     return nil
   end
   if type(value) == "number" then
+    return value
+  end
+  return nil
+end
+
+local function SafeBoolean(value)
+  if value == nil then
+    return nil
+  end
+  if issecretvalue and issecretvalue(value) then
+    return nil
+  end
+  if type(value) == "boolean" then
     return value
   end
   return nil
@@ -295,6 +310,7 @@ function CooldownManager:FindFramesByCooldownID(cooldownID)
   end
 
   for _, frame in ipairs(results) do
+    HookCooldownWidget(frame)
     self:HookFrameForAuraUpdates(frame)
   end
 
@@ -348,7 +364,253 @@ local function ResolveTimingFromCooldownWidget(widget)
   return nil, nil
 end
 
-local function GetFrameCountText(frame)
+local function GetFrameCooldownWidget(frame)
+  if not frame then
+    return nil
+  end
+
+  local direct = frame.Cooldown
+    or frame.cooldown
+    or (frame.Icon and (frame.Icon.Cooldown or frame.Icon.cooldown))
+  if direct and direct.GetCooldownTimes then
+    return direct
+  end
+
+  local visited = {}
+  local function findNested(owner)
+    if not owner or visited[owner] then
+      return nil
+    end
+    visited[owner] = true
+
+    local nested = owner.Cooldown or owner.cooldown or (owner.Icon and (owner.Icon.Cooldown or owner.Icon.cooldown))
+    if nested and nested.GetCooldownTimes then
+      return nested
+    end
+
+    if owner.GetChildren then
+      for _, child in ipairs({ owner:GetChildren() }) do
+        local found = findNested(child)
+        if found then
+          return found
+        end
+      end
+    end
+
+    return nil
+  end
+
+  return findNested(frame)
+end
+
+local function GetFrameStoredDurationObject(frame, widget)
+  local candidates = {
+    frame and frame._popaurasDurationObject,
+    frame and frame._arcTextColorDurObj,
+    widget and widget._popaurasDurationObject,
+    frame and frame.Icon and frame.Icon._popaurasDurationObject,
+    frame and frame.Icon and frame.Icon._arcTextColorDurObj,
+    frame and frame.cooldownInfo and frame.cooldownInfo.durationObject,
+    frame and frame.Icon and frame.Icon.cooldownInfo and frame.Icon.cooldownInfo.durationObject,
+  }
+
+  for _, candidate in ipairs(candidates) do
+    if candidate ~= nil then
+      return candidate
+    end
+  end
+
+  return nil
+end
+
+local function GetDurationObjectFromCooldownInfo(info)
+  if type(info) ~= "table" or not C_Spell then
+    return nil
+  end
+
+  local isOnActualCooldown = SafeBoolean(info.isOnActualCooldown)
+  local isOnGCD = SafeBoolean(info.isOnGCD)
+  if isOnActualCooldown == false or isOnGCD == true then
+    return nil
+  end
+
+  local spellID = tonumber(info.overrideSpellID or info.spellID or 0) or 0
+  if spellID <= 0 then
+    return nil
+  end
+
+  local chargeInfo = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(spellID) or nil
+  local maxCharges = SafeNumber(chargeInfo and chargeInfo.maxCharges)
+  if maxCharges and maxCharges > 1 and C_Spell.GetSpellChargeDuration then
+    local ok, durationObject = pcall(C_Spell.GetSpellChargeDuration, spellID)
+    if ok and durationObject ~= nil then
+      return durationObject
+    end
+  end
+
+  if C_Spell.GetSpellCooldownDuration then
+    local ok, durationObject = pcall(C_Spell.GetSpellCooldownDuration, spellID)
+    if ok and durationObject ~= nil then
+      return durationObject
+    end
+  end
+
+  return nil
+end
+
+HookCooldownWidget = function(frame)
+  local widget = GetFrameCooldownWidget(frame)
+  if not widget or widget._popaurasDurationHooked then
+    return
+  end
+
+  widget._popaurasDurationHooked = true
+  widget._popaurasOwnerFrame = frame
+
+  if widget.SetCooldownFromDurationObject then
+    hooksecurefunc(widget, "SetCooldownFromDurationObject", function(self, durationObject)
+      local owner = self._popaurasOwnerFrame or frame
+      if not owner or durationObject == nil then
+        return
+      end
+
+      local isOnGCD = SafeBoolean(owner.isOnGCD)
+      local isOnActualCooldown = SafeBoolean(owner.isOnActualCooldown)
+      if isOnActualCooldown == false then
+        return
+      end
+      if isOnGCD == true and isOnActualCooldown ~= true then
+        return
+      end
+
+      owner._popaurasDurationObject = durationObject
+      self._popaurasDurationObject = durationObject
+    end)
+  end
+
+  if widget.Clear then
+    hooksecurefunc(widget, "Clear", function(self)
+      local owner = self._popaurasOwnerFrame or frame
+      if owner then
+        owner._popaurasDurationObject = nil
+      end
+      self._popaurasDurationObject = nil
+    end)
+  end
+
+  if widget.SetCooldown then
+    hooksecurefunc(widget, "SetCooldown", function(self, startTime, duration)
+      if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration)) then
+        return
+      end
+
+      if type(startTime) == "number" and type(duration) == "number" and startTime == 0 and duration == 0 then
+        local owner = self._popaurasOwnerFrame or frame
+        if owner then
+          owner._popaurasDurationObject = nil
+        end
+        self._popaurasDurationObject = nil
+      end
+    end)
+  end
+
+  if widget.HookScript then
+    widget:HookScript("OnHide", function(self)
+      local owner = self._popaurasOwnerFrame or frame
+      if owner then
+        owner._popaurasDurationObject = nil
+      end
+      self._popaurasDurationObject = nil
+    end)
+  end
+end
+
+local function ResolveTimingFromLiveFrame(frame)
+  local widget = GetFrameCooldownWidget(frame)
+  if not widget then
+    return nil, nil, false
+  end
+
+  local duration, expirationTime = ResolveTimingFromCooldownWidget(widget)
+  if duration and duration > 0 and expirationTime and expirationTime > GetTime() then
+    return duration, expirationTime, true
+  end
+
+  return nil, nil, false
+end
+
+local function ResolveTimingFromFrameInfo(frame)
+  if not frame then
+    return nil, nil
+  end
+
+  local duration, expirationTime = ResolveTimingFromTable(frame.cooldownInfo)
+  if (not duration or duration <= 0) and frame.Icon and frame.Icon.cooldownInfo then
+    duration, expirationTime = ResolveTimingFromTable(frame.Icon.cooldownInfo)
+  end
+
+  return duration, expirationTime
+end
+
+local GetFrameCountText
+
+local function BuildFrameCooldownState(frame)
+  if not frame then
+    return nil
+  end
+
+  local widget = GetFrameCooldownWidget(frame)
+  local duration, expirationTime, hasLiveWidget = ResolveTimingFromLiveFrame(frame)
+  if not hasLiveWidget then
+    duration, expirationTime = ResolveTimingFromFrameInfo(frame)
+  end
+
+  local isShown = frame.IsShown and frame:IsShown() or false
+  local rawActive = frame.isActive == true
+    or (frame.cooldownInfo and frame.cooldownInfo.isActive == true)
+    or (frame.Icon and frame.Icon.cooldownInfo and frame.Icon.cooldownInfo.isActive == true)
+  local isOnActualCooldown = SafeBoolean(frame.isOnActualCooldown)
+  if isOnActualCooldown == nil then
+    isOnActualCooldown = SafeBoolean(frame.cooldownInfo and frame.cooldownInfo.isOnActualCooldown)
+  end
+  if isOnActualCooldown == nil then
+    isOnActualCooldown = SafeBoolean(frame.Icon and frame.Icon.cooldownInfo and frame.Icon.cooldownInfo.isOnActualCooldown)
+  end
+  local isOnGCD = SafeBoolean(frame.isOnGCD)
+  if isOnGCD == nil then
+    isOnGCD = SafeBoolean(frame.cooldownInfo and frame.cooldownInfo.isOnGCD)
+  end
+  if isOnGCD == nil then
+    isOnGCD = SafeBoolean(frame.Icon and frame.Icon.cooldownInfo and frame.Icon.cooldownInfo.isOnGCD)
+  end
+  local durationObject = GetFrameStoredDurationObject(frame, widget)
+  if durationObject == nil and (isOnActualCooldown == true or (isOnActualCooldown == nil and rawActive and isOnGCD ~= true)) then
+    durationObject = GetDurationObjectFromCooldownInfo(frame.cooldownInfo)
+      or (frame.Icon and GetDurationObjectFromCooldownInfo(frame.Icon.cooldownInfo))
+  end
+  local numericActive = duration and expirationTime and expirationTime > GetTime() or false
+  local active = numericActive
+    or isOnActualCooldown == true
+    or (isOnActualCooldown == nil and rawActive and isOnGCD ~= true and durationObject ~= nil)
+  local countText = GetFrameCountText(frame)
+  local count = tonumber(countText or "")
+
+  return {
+    frame = frame,
+    duration = numericActive and duration or 0,
+    expirationTime = numericActive and expirationTime or 0,
+    durationObject = active and durationObject or nil,
+    active = active,
+    rawActive = rawActive,
+    isOnActualCooldown = isOnActualCooldown == true,
+    isOnGCD = isOnGCD == true,
+    countText = countText,
+    count = count,
+    isShown = isShown,
+  }
+end
+
+GetFrameCountText = function(frame)
   local candidates = {
     frame and frame.Count,
     frame and frame.CountText,
@@ -598,15 +860,32 @@ function CooldownManager:GetCooldownStateForCooldownID(cooldownID)
     return nil
   end
   local info = self:GetCooldownInfo(cooldownID)
-  local frame = self:FindFrameByCooldownID(cooldownID)
-  local duration, expirationTime = ResolveTimingFromTable(info)
+  local frames = self:FindFramesByCooldownID(cooldownID)
+  local bestFrameState = nil
 
-  if (not duration or duration <= 0) and frame and frame.cooldownInfo then
-    duration, expirationTime = ResolveTimingFromTable(frame.cooldownInfo)
+  for _, frame in ipairs(frames) do
+    local candidate = BuildFrameCooldownState(frame)
+    if candidate then
+      local candidateHasCount = (candidate.countText and candidate.countText ~= "") or ((candidate.count or 0) > 0)
+      local bestHasCount = bestFrameState and ((bestFrameState.countText and bestFrameState.countText ~= "") or ((bestFrameState.count or 0) > 0)) or false
+      if not bestFrameState
+        or (candidate.active and not bestFrameState.active)
+        or (candidate.active == bestFrameState.active and candidate.rawActive and not bestFrameState.rawActive)
+        or (candidate.active == bestFrameState.active and candidate.rawActive == bestFrameState.rawActive and candidateHasCount and not bestHasCount)
+        or (candidate.active == bestFrameState.active and candidate.rawActive == bestFrameState.rawActive and candidateHasCount == bestHasCount and candidate.isShown and not bestFrameState.isShown)
+        or (candidate.active == bestFrameState.active and candidate.rawActive == bestFrameState.rawActive and candidateHasCount == bestHasCount and candidate.isShown == bestFrameState.isShown and (candidate.expirationTime or 0) > (bestFrameState.expirationTime or 0)) then
+        bestFrameState = candidate
+      end
+    end
   end
 
-  if (not duration or duration <= 0) and frame then
-    duration, expirationTime = ResolveTimingFromCooldownWidget(frame.Cooldown or frame.cooldown)
+  local frame = bestFrameState and bestFrameState.frame or nil
+  local duration = bestFrameState and bestFrameState.duration or nil
+  local expirationTime = bestFrameState and bestFrameState.expirationTime or nil
+  local durationObject = bestFrameState and bestFrameState.durationObject or nil
+
+  if not duration or duration <= 0 then
+    duration, expirationTime = ResolveTimingFromTable(info)
   end
 
   local maxDuration = nil
@@ -617,9 +896,14 @@ function CooldownManager:GetCooldownStateForCooldownID(cooldownID)
     maxDuration = duration
   end
 
-  local active = duration and expirationTime and expirationTime > GetTime() or false
-  local countText = GetFrameCountText(frame)
-  local count = tonumber(countText or "")
+  local active = (bestFrameState and bestFrameState.active == true)
+    or (duration and expirationTime and expirationTime > GetTime())
+    or false
+  local countText = bestFrameState and bestFrameState.countText or GetFrameCountText(frame)
+  local count = bestFrameState and bestFrameState.count or tonumber(countText or "")
+  local rawActive = bestFrameState and bestFrameState.rawActive
+    or SafeBoolean(info and info.isActive)
+    or false
 
   return {
     cooldownID = cooldownID,
@@ -627,8 +911,12 @@ function CooldownManager:GetCooldownStateForCooldownID(cooldownID)
     info = info,
     duration = active and duration or 0,
     expirationTime = active and expirationTime or 0,
+    durationObject = active and durationObject or nil,
     maxDuration = maxDuration or 0,
     active = active,
+    rawActive = rawActive,
+    isOnActualCooldown = bestFrameState and bestFrameState.isOnActualCooldown or false,
+    isOnGCD = bestFrameState and bestFrameState.isOnGCD or false,
     count = count,
     countText = countText,
   }

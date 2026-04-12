@@ -656,9 +656,9 @@ function Panel:UpdateControlStates()
   }, showStacks and not isGroup and not isText)
 
   SetControlGroupEnabled({
+    frame.soundReadyCheck,
     frame.soundFileButton, frame.soundFileWrap.label,
     frame.soundChannelWrap.dropdown, frame.soundChannelWrap.label,
-    frame.soundTestButton,
   }, soundEnabled and not isGroup)
   if (not soundEnabled or isGroup) and SoundPicker then
     SoundPicker:HideIfDropdown(frame.soundFileWrap.dropdown)
@@ -772,6 +772,7 @@ function Panel:ApplyCurrent()
   aura.display.stacksOffsetY = CommitNumeric(frame.stacksControls.yWrap.input, aura.display.stacksOffsetY or 0)
   aura.display.stacksColor = Colors.Copy(frame.stacksControls.colorWrap.color or aura.display.stacksColor)
   aura.display.soundEnabled = frame.soundEnabledCheck:GetChecked() == true
+  aura.display.soundMode = frame.soundReadyCheck:GetChecked() and "ready" or "activate"
   aura.display.soundFile = UIDropDownMenu_GetSelectedValue(frame.soundFileWrap.dropdown) or aura.display.soundFile or "None"
   aura.display.soundChannel = UIDropDownMenu_GetSelectedValue(frame.soundChannelWrap.dropdown) or aura.display.soundChannel or "Master"
 
@@ -837,7 +838,7 @@ function Panel:Create(parent)
   frame.nameSection = CreateSection(frame.content, "Name Text", -816, 290)
   frame.timerSection = CreateSection(frame.content, "Duration Text", -1122, 260)
   frame.stacksSection = CreateSection(frame.content, "Stacks Text", -1398, 220)
-  frame.soundSection = CreateSection(frame.content, "Sound", -1634, 136)
+  frame.soundSection = CreateSection(frame.content, "Sound", -1634, 164)
 
   local function HookSection(section, key)
     section.header:EnableMouse(true)
@@ -1012,11 +1013,13 @@ function Panel:Create(parent)
   frame.iconHint:SetPoint("TOPLEFT", 12, -196)
   frame.iconHint:SetWidth(660)
 
-  frame.soundEnabledCheck = Frames.CreateCheckbox(frame.soundSection, "Play Sound On Activate")
+  frame.soundEnabledCheck = Frames.CreateCheckbox(frame.soundSection, "Play Aura Sound")
   frame.soundEnabledCheck:SetPoint("TOPLEFT", 12, -34)
-  frame.soundFileWrap = CreateLabeledDropdown(frame.soundSection, "Sound", 12, -68, 260, GetSoundDropdownValues)
+  frame.soundReadyCheck = Frames.CreateCheckbox(frame.soundSection, "Play On Ready")
+  frame.soundReadyCheck:SetPoint("LEFT", frame.soundEnabledCheck.Text, "RIGHT", 28, 0)
+  frame.soundFileWrap = CreateLabeledDropdown(frame.soundSection, "Sound", 12, -68, 460, GetSoundDropdownValues)
   frame.soundFileWrap.dropdown:Hide()
-  frame.soundFileButton = Frames.CreateSelectorButton(frame.soundSection, 246, 24)
+  frame.soundFileButton = Frames.CreateSelectorButton(frame.soundSection, 446, 24)
   frame.soundFileButton:SetPoint("TOPLEFT", frame.soundFileWrap.label, "BOTTOMLEFT", 0, -6)
   frame.soundFileButton:SetScript("OnClick", function()
     if not SoundPicker then
@@ -1033,20 +1036,10 @@ function Panel:Create(parent)
       end,
     })
   end)
-  frame.soundChannelWrap = CreateLabeledDropdown(frame.soundSection, "Channel", 296, -68, 150, GetSoundChannelDropdownValues)
-  frame.soundTestButton = Frames.CreateButton(frame.soundSection, "Test", 52, 22, function()
-    if ns.Interrupts and ns.Interrupts.PlaySound then
-      ns.Interrupts:PlaySound(
-        UIDropDownMenu_GetSelectedValue(frame.soundFileWrap.dropdown) or "None",
-        UIDropDownMenu_GetSelectedValue(frame.soundChannelWrap.dropdown) or "Master"
-      )
-    end
-  end)
-  frame.soundTestButton:SetPoint("TOPLEFT", 468, -88)
-  Frames.StyleSecondaryButton(frame.soundTestButton)
-  frame.soundHint = Frames.CreateLabel(frame.soundSection, "Plays once when the aura becomes visible or active. The picker is scrollable and color-codes sounds by source pack. Use %m in text auras if you want the matched chat message rendered.", "GameFontDisableSmall")
-  frame.soundHint:SetPoint("TOPLEFT", 12, -118)
-  frame.soundHint:SetWidth(660)
+  frame.soundChannelWrap = CreateLabeledDropdown(frame.soundSection, "Channel", 488, -68, 150, GetSoundChannelDropdownValues)
+  frame.soundHint = Frames.CreateLabel(frame.soundSection, "Choose whether the sound plays when the aura activates or when it becomes ready/off cooldown. The picker is scrollable and color-codes sounds by source pack. Use %m in text auras if you want the matched chat message rendered.", "GameFontDisableSmall")
+  frame.soundHint:SetPoint("TOPLEFT", 12, -146)
+  frame.soundHint:SetWidth(720)
 
   frame.nameControls = CreateTwoColumnTextSection(frame.nameSection, -34, "Name", true)
   frame.timerControls = CreateTwoColumnTextSection(frame.timerSection, -34, "Duration")
@@ -1129,9 +1122,9 @@ function Panel:Create(parent)
   )
   RegisterSectionWidgets(frame.soundSection,
     frame.soundEnabledCheck,
+    frame.soundReadyCheck,
     frame.soundFileWrap.label, frame.soundFileButton,
     frame.soundChannelWrap.label, frame.soundChannelWrap.dropdown,
-    frame.soundTestButton,
     frame.soundHint
   )
   frame.saveButton = Frames.CreateButton(frame.content, "Save", 150, 28, function()
@@ -1207,6 +1200,7 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.showAlwaysReadyCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupMaintainOrderCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.soundEnabledCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.soundReadyCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.nameControls.showCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.timerControls.showCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.timerControls.hideReadyCheck, function() Panel:ApplyCurrent() end)
@@ -1445,6 +1439,7 @@ function Panel:Refresh(aura)
   SetDropdown(self.frame.parentPointWrap.dropdown, aura.position.relativePoint or "CENTER")
   SetDropdown(self.frame.groupGrowthWrap.dropdown, aura.display.growth or "DOWN")
   SetDropdown(self.frame.iconAnchorWrap.dropdown, aura.display.iconAnchor or "LEFT")
+  self.frame.soundReadyCheck:SetChecked(aura.display.soundMode == "ready")
   SetDropdown(self.frame.soundFileWrap.dropdown, aura.display.soundFile or "None")
   UpdateSelectorButtonText(self.frame.soundFileButton, self.frame.soundFileWrap.dropdown)
   SetDropdown(self.frame.soundChannelWrap.dropdown, aura.display.soundChannel or "Master")
