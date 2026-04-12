@@ -78,8 +78,11 @@ function TextResolver:GetDurationObjectRemaining(state, now)
 
   local remainingValue = nil
   local hasNumericTiming = (tonumber(state.expirationTime or 0) or 0) > 0 or (tonumber(state.duration or 0) or 0) > 0
-  local displayOnlyDurationObject = state.source == "cdm" and state.durationObject ~= nil and not hasNumericTiming
-  if C_UnitAuras and C_UnitAuras.GetAuraDurationRemaining and state.unit and state.auraInstanceID and (state.durationObject ~= nil or not hasNumericTiming) then
+  local preferDurationObjectOverAuraAPI = state.source == "cdm_aura" and state.durationObject ~= nil
+  local displayOnlyDurationObject = (state.source == "cdm" or state.source == "cdm_aura") and state.durationObject ~= nil and not hasNumericTiming
+  if not preferDurationObjectOverAuraAPI
+    and C_UnitAuras and C_UnitAuras.GetAuraDurationRemaining
+    and state.unit and state.auraInstanceID and (state.durationObject ~= nil or not hasNumericTiming) then
     local ok, remaining = pcall(C_UnitAuras.GetAuraDurationRemaining, state.unit, state.auraInstanceID)
     if ok and SafeDurationNumber(remaining) ~= nil then
       remainingValue = math.max(0, remaining)

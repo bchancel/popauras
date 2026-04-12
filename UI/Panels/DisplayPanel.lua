@@ -581,6 +581,7 @@ function Panel:UpdateControlStates()
   local showTimer = frame.timerControls.showCheck:GetChecked() == true
   local showStacks = frame.stacksControls.showCheck:GetChecked() == true
   local showBackground = frame.showBackgroundCheck:GetChecked() == true
+  local useClassColor = frame.textClassColorCheck and frame.textClassColorCheck:GetChecked() == true
   local readyLook = frame.readyLookCheck:GetChecked() == true
   local trigger = GetSelectedTrigger(aura)
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura")
@@ -631,7 +632,7 @@ function Panel:UpdateControlStates()
     frame.nameControls.xWrap.input, frame.nameControls.xWrap.label,
     frame.nameControls.yWrap.input, frame.nameControls.yWrap.label,
     frame.nameControls.colorWrap.button, frame.nameControls.colorWrap.label,
-  }, showName and not isGroup)
+  }, showName and not isGroup and not (isText and useClassColor))
 
   SetControlGroupEnabled({
     frame.timerControls.fontWrap.dropdown, frame.timerControls.fontWrap.label,
@@ -716,6 +717,7 @@ function Panel:ApplyCurrent()
   local selectedBarTexture = UIDropDownMenu_GetSelectedValue(frame.barTextureWrap.dropdown) or aura.display.barTexture or "FLAT"
   aura.display.barTexture = NormalizeBarTextureValue(selectedBarTexture)
   aura.display.showBackground = frame.showBackgroundCheck:GetChecked() == true
+  aura.display.useClassColor = frame.textClassColorCheck:GetChecked() == true
   aura.display.backgroundColor = Colors.Copy(frame.backgroundColorWrap.color or aura.display.backgroundColor)
 
   aura.display.spacing = CommitNumeric(frame.groupSpacingWrap.input, aura.display.spacing or 6)
@@ -882,6 +884,8 @@ function Panel:Create(parent)
   frame.barTextureWrap = CreateLabeledDropdown(frame.canvasSection, "Bar Texture", 430, -276, 166, barTextureValues)
   frame.showBackgroundCheck = Frames.CreateCheckbox(frame.canvasSection, "Show Background")
   frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -364)
+  frame.textClassColorCheck = Frames.CreateCheckbox(frame.canvasSection, "Use Class Colors")
+  frame.textClassColorCheck:SetPoint("TOPLEFT", 180, -364)
   frame.backgroundColorWrap = CreateColorSwatch(frame.canvasSection, "Background", 220, -364)
   frame.backgroundColorWrap.button:ClearAllPoints()
   frame.backgroundColorWrap.button:SetPoint("TOPLEFT", 220, -364)
@@ -1067,6 +1071,7 @@ function Panel:Create(parent)
     frame.readyColorWrap.label, frame.readyColorWrap.button, frame.readyColorWrap.valueText,
     frame.barTextureWrap.label, frame.barTextureWrap.dropdown,
     frame.showBackgroundCheck,
+    frame.textClassColorCheck,
     frame.backgroundColorWrap.label, frame.backgroundColorWrap.button, frame.backgroundColorWrap.valueText
   )
   RegisterSectionWidgets(frame.groupSection,
@@ -1194,6 +1199,7 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.iconMatchSizeCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.hideCDMIconCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showBackgroundCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.textClassColorCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupShowBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.readyLookCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.glowWhenActiveCheck, function() Panel:ApplyCurrent() end)
@@ -1289,6 +1295,8 @@ function Panel:ApplyCanvasLayout(isGroup)
 
     frame.showBackgroundCheck:ClearAllPoints()
     frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -274)
+    frame.textClassColorCheck:ClearAllPoints()
+    frame.textClassColorCheck:SetPoint("TOPLEFT", 180, -274)
     PositionColorSwatch(frame.backgroundColorWrap, 180, -274)
     return
   end
@@ -1318,6 +1326,8 @@ function Panel:ApplyCanvasLayout(isGroup)
 
   frame.showBackgroundCheck:ClearAllPoints()
   frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -364)
+  frame.textClassColorCheck:ClearAllPoints()
+  frame.textClassColorCheck:SetPoint("TOPLEFT", 180, -364)
   PositionColorSwatch(frame.backgroundColorWrap, 220, -364)
 end
 
@@ -1354,7 +1364,7 @@ function Panel:Refresh(aura)
   if isGroup then
     self.frame.hint:SetText("Dock this group to the screen, CDM, unit frames, or another group, then tune spacing below.")
   elseif isText then
-    self.frame.hint:SetText("Text-only alert aura. Use the trigger tab for death filters, sounds, and alert duration.")
+    self.frame.hint:SetText("Text aura. Configure font, color, anchoring, and optional class coloring from display settings.")
   else
     self.frame.hint:SetText("Placement and appearance for the selected aura.")
   end
@@ -1411,6 +1421,7 @@ function Panel:Refresh(aura)
   aura.display.barTexture = NormalizeBarTextureValue(aura.display.barTexture)
   SetDropdown(self.frame.barTextureWrap.dropdown, aura.display.barTexture or "FLAT")
   self.frame.showBackgroundCheck:SetChecked(aura.display.showBackground ~= false)
+  self.frame.textClassColorCheck:SetChecked(aura.display.useClassColor == true)
   SetColorSwatch(self.frame.backgroundColorWrap, aura.display.backgroundColor or { r = 0, g = 0, b = 0, a = 0.45 })
 
   self.frame.groupSpacingWrap.input:SetText(tostring(aura.display.spacing or 6))
@@ -1516,6 +1527,7 @@ function Panel:Refresh(aura)
   self.frame.barTextureWrap.label:SetShown(not isGroup and not isText)
   self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText)
   self.frame.showBackgroundCheck:SetShown(true)
+  self.frame.textClassColorCheck:SetShown(isText)
   self.frame.backgroundColorWrap.label:SetShown(true)
   self.frame.backgroundColorWrap.button:SetShown(true)
   self.frame.backgroundColorWrap.valueText:SetShown(true)

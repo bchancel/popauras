@@ -3,6 +3,7 @@ local _, ns = ...
 local Slash = {}
 ns.Slash = Slash
 local PERF_OVERLAY_UPDATE_INTERVAL = 0.2
+local COMBAT_OPEN_NOTE = "|cffffff00PopAuras will open after combat ends.|r"
 
 local function WriteChatLine(message)
   if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
@@ -15,6 +16,53 @@ end
 local function WriteChatLines(lines)
   for _, line in ipairs(lines or {}) do
     WriteChatLine(line)
+  end
+end
+
+local function OpenMainWindow(editorMode, activeTab)
+  if editorMode then
+    ns.db.ui.editorMode = editorMode
+  end
+  if activeTab then
+    ns.db.ui.activeTab = activeTab
+  end
+
+  if not ns.ui.MainWindow.frame or not ns.ui.MainWindow.frame:IsShown() then
+    ns.ui.MainWindow:Toggle()
+  else
+    ns.ui.MainWindow:RefreshSelection()
+  end
+end
+
+local function EnsureDeferredOpenFrame()
+  if Slash.deferredOpenFrame then
+    return Slash.deferredOpenFrame
+  end
+
+  local frame = CreateFrame("Frame")
+  frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+  frame:SetScript("OnEvent", function()
+    local pending = Slash.pendingOpenRequest
+    if not pending then
+      return
+    end
+    Slash.pendingOpenRequest = nil
+    Slash.pendingOpenNoteShown = false
+    OpenMainWindow(pending.editorMode or "config", pending.activeTab)
+  end)
+  Slash.deferredOpenFrame = frame
+  return frame
+end
+
+local function QueueOpenAfterCombat(editorMode, activeTab)
+  EnsureDeferredOpenFrame()
+  Slash.pendingOpenRequest = {
+    editorMode = editorMode or "config",
+    activeTab = activeTab,
+  }
+  if not Slash.pendingOpenNoteShown then
+    Slash.pendingOpenNoteShown = true
+    WriteChatLine(COMBAT_OPEN_NOTE)
   end
 end
 
@@ -281,15 +329,21 @@ function Slash:Initialize()
       return
     end
     if msg == "export" or msg == "import" then
-      ns.db.ui.editorMode = "config"
-      ns.db.ui.activeTab = "import_export"
-      if not ns.ui.MainWindow.frame or not ns.ui.MainWindow.frame:IsShown() then
-        ns.ui.MainWindow:Toggle()
+      if InCombatLockdown and InCombatLockdown() then
+        QueueOpenAfterCombat("config", "import_export")
       else
-        ns.ui.MainWindow:RefreshSelection()
+        OpenMainWindow("config", "import_export")
       end
       return
     end
-    ns.ui.MainWindow:Toggle()
+    if InCombatLockdown and InCombatLockdown() then
+      if ns.ui.MainWindow and ns.ui.MainWindow.IsOpen and not ns.ui.MainWindow:IsOpen() then
+        QueueOpenAfterCombat("config", ns.db and ns.db.ui and ns.db.ui.activeTab or nil)
+      else
+        ns.ui.MainWindow:Toggle()
+      end
+    else
+      ns.ui.MainWindow:Toggle()
+    end
   end
 end

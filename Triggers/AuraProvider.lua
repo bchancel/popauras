@@ -1040,6 +1040,42 @@ local function BuildStateFromAuraData(auraData, matchedUnit, helpful, fallbackNa
   })
 end
 
+local function ApplyCDMAuraTiming(state, cdmState)
+  if not state or type(cdmState) ~= "table" then
+    return state, false
+  end
+
+  local now = GetTime()
+  local durationObject = cdmState.durationObject
+  local duration = tonumber(cdmState.duration or 0) or 0
+  local expirationTime = tonumber(cdmState.expirationTime or 0) or 0
+  local hasNumericTiming = duration > 0 and expirationTime > now
+  local hasCDMTimer = durationObject ~= nil or hasNumericTiming
+
+  if not hasCDMTimer then
+    return state, false
+  end
+
+  state.duration = hasNumericTiming and duration or 0
+  state.expirationTime = hasNumericTiming and expirationTime or 0
+  state.durationObject = durationObject
+  state.progressType = "timed"
+  state.value = state.duration
+  state.total = state.duration
+  state.source = "cdm_aura"
+
+  local countText = cdmState.countText
+  local count = tonumber(cdmState.count or "") or tonumber(countText or "")
+  if (state.stacks or 0) <= 0 and count and count > 0 then
+    state.stacks = count
+  end
+  if (not state.stackText or state.stackText == "") and countText and countText ~= "" then
+    state.stackText = countText
+  end
+
+  return ns.Schema.NormalizeRuntimeState(state), true
+end
+
 local function CloneRuntimeState(state)
   if not state then
     return nil
@@ -1732,14 +1768,36 @@ function provider:Evaluate(trigger, auraConfig)
       if cached and cached.auraInstanceID and C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
         local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID("target", cached.auraInstanceID)
         if auraData and (cached.viaCDM == true or cached.viaPending == true or TriggerMatchesAuraData(trigger, auraData)) then
-          local cachedState = BuildStateFromAuraData(auraData, "target", helpful, GetPreferredAuraName(trigger, auraConfig), trigger)
+          local activeCDMState = nil
+          local activeCDMAura = nil
+          local activeCDMUnit = nil
+          if cached.viaCDM == true then
+            activeCDMAura, activeCDMUnit, activeCDMState = FindCDMAura(trigger, auraConfig, "target", helpful)
+            if activeCDMState and cached.auraInstanceID and activeCDMState.auraInstanceID ~= cached.auraInstanceID then
+              activeCDMState = nil
+              activeCDMAura = nil
+              activeCDMUnit = nil
+            end
+          end
+
+          local cachedState = BuildStateFromAuraData(
+            activeCDMAura or auraData,
+            activeCDMUnit or "target",
+            helpful,
+            GetPreferredAuraName(trigger, auraConfig),
+            trigger
+          )
           if cachedState then
+            local usedCDMTiming = false
+            cachedState, usedCDMTiming = ApplyCDMAuraTiming(cachedState, activeCDMState)
             local usedLearnedDuration = false
-            cachedState, usedLearnedDuration = ApplyLearnedDuration(trigger, auraConfig, cachedState, cached.castAt)
+            if not usedCDMTiming then
+              cachedState, usedLearnedDuration = ApplyLearnedDuration(trigger, auraConfig, cachedState, cached.castAt)
+            end
             RememberTargetAuraState(auraConfig, cachedState)
             RememberLearnedTargetDuration(trigger, auraConfig, cachedState)
             if ns.Debug and ns.Debug.LogTrigger and trigger.debug == true then
-              ns.Debug:LogTrigger(nil, trigger, cachedState, string.format("cachedAuraInstanceID=%s viaCDM=%s viaPending=%s usedLearnedDuration=%s", tostring(cached.auraInstanceID), tostring(cached.viaCDM == true), tostring(cached.viaPending == true), tostring(usedLearnedDuration == true)))
+              ns.Debug:LogTrigger(nil, trigger, cachedState, string.format("cachedAuraInstanceID=%s viaCDM=%s viaPending=%s usedCDMTiming=%s usedLearnedDuration=%s", tostring(cached.auraInstanceID), tostring(cached.viaCDM == true), tostring(cached.viaPending == true), tostring(usedCDMTiming == true), tostring(usedLearnedDuration == true)))
             end
             if filterMode == "missing" then
               return BuildSatisfiedState(trigger, auraConfig, helpful, unit, matchedUnit)
@@ -1776,19 +1834,23 @@ function provider:Evaluate(trigger, auraConfig)
     cdmReason = reason
     if cdmAura then
       local cdmFound = BuildStateFromAuraData(cdmAura, cdmUnit or unit, helpful, GetPreferredAuraName(trigger, auraConfig), trigger)
+      local usedCDMTiming = false
+      cdmFound, usedCDMTiming = ApplyCDMAuraTiming(cdmFound, cdmState)
       if supportsTargetCache then
         local usedLearnedDuration = false
-        cdmFound, usedLearnedDuration = ApplyLearnedDuration(trigger, auraConfig, cdmFound)
+        if not usedCDMTiming then
+          cdmFound, usedLearnedDuration = ApplyLearnedDuration(trigger, auraConfig, cdmFound)
+        end
         RememberTargetAuraState(auraConfig, cdmFound, {
           auraInstanceID = cdmState and cdmState.auraInstanceID or nil,
           viaCDM = true,
         })
         RememberLearnedTargetDuration(trigger, auraConfig, cdmFound)
         if ns.Debug and ns.Debug.LogTrigger and trigger.debug == true then
-          ns.Debug:LogTrigger(nil, trigger, cdmFound, string.format("cdmAuraInstanceID=%s cooldownID=%s usedLearnedDuration=%s", tostring(cdmState and cdmState.auraInstanceID), tostring(cdmState and cdmState.cooldownID), tostring(usedLearnedDuration == true)))
+          ns.Debug:LogTrigger(nil, trigger, cdmFound, string.format("cdmAuraInstanceID=%s cooldownID=%s usedCDMTiming=%s usedLearnedDuration=%s", tostring(cdmState and cdmState.auraInstanceID), tostring(cdmState and cdmState.cooldownID), tostring(usedCDMTiming == true), tostring(usedLearnedDuration == true)))
         end
       elseif ns.Debug and ns.Debug.LogTrigger and trigger.debug == true then
-        ns.Debug:LogTrigger(nil, trigger, cdmFound, string.format("cdmAuraInstanceID=%s cooldownID=%s", tostring(cdmState and cdmState.auraInstanceID), tostring(cdmState and cdmState.cooldownID)))
+        ns.Debug:LogTrigger(nil, trigger, cdmFound, string.format("cdmAuraInstanceID=%s cooldownID=%s usedCDMTiming=%s", tostring(cdmState and cdmState.auraInstanceID), tostring(cdmState and cdmState.cooldownID), tostring(usedCDMTiming == true)))
       end
       if filterMode == "missing" then
         return BuildSatisfiedState(trigger, auraConfig, helpful, unit, cdmUnit or unit)

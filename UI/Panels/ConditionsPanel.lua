@@ -20,7 +20,7 @@ function Panel:Create(parent)
   frame.actionLabel = Frames.CreateLabel(frame, "Action", "GameFontNormal")
   frame.actionLabel:SetPoint("TOPLEFT", frame.valueInput, "BOTTOMLEFT", 0, -16)
   frame.actionDropDown = Frames.CreateDropdown(frame, 150, function(self, level)
-    for _, value in ipairs({ "color", "hide", "show", "glow", "desaturate" }) do
+    for _, value in ipairs({ "color", "hide", "show", "glow", "desaturate", "text_scale" }) do
       local info = UIDropDownMenu_CreateInfo()
       info.text = value
       info.value = value
@@ -33,6 +33,11 @@ function Panel:Create(parent)
   end)
   frame.actionDropDown:SetPoint("TOPLEFT", frame.actionLabel, "BOTTOMLEFT", -14, -4)
 
+  frame.scaleLabel = Frames.CreateLabel(frame, "Text Scale Multiplier", "GameFontNormal")
+  frame.scaleLabel:SetPoint("TOPLEFT", frame.actionDropDown, "BOTTOMLEFT", 14, -12)
+  frame.scaleInput = Frames.CreateInput(frame, 120, 24)
+  frame.scaleInput:SetPoint("TOPLEFT", frame.scaleLabel, "BOTTOMLEFT", 0, -6)
+
   frame.saveButton = Frames.CreateButton(frame, "Apply Condition", 120, 22, function()
     local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
     if not aura then return end
@@ -41,11 +46,12 @@ function Panel:Create(parent)
       operator = "<=",
       value = tonumber(frame.valueInput:GetText()) or 5,
       action = UIDropDownMenu_GetSelectedValue(frame.actionDropDown) or "color",
+      scale = tonumber(frame.scaleInput:GetText()) or 1.25,
       color = { r = 1, g = 0.2, b = 0.2, a = 1 },
     }
     ns.runtime:RefreshAura(aura.id)
   end)
-  frame.saveButton:SetPoint("TOPLEFT", frame.actionDropDown, "BOTTOMLEFT", 14, -18)
+  frame.saveButton:SetPoint("TOPLEFT", frame.scaleInput, "BOTTOMLEFT", 0, -18)
 
   self.frame = frame
   return frame
@@ -56,4 +62,5 @@ function Panel:Refresh(aura)
   self.frame.valueInput:SetText(tostring(condition.value or 5))
   UIDropDownMenu_SetSelectedValue(self.frame.actionDropDown, condition.action or "color")
   UIDropDownMenu_SetText(self.frame.actionDropDown, condition.action or "color")
+  self.frame.scaleInput:SetText(tostring(condition.scale or 1.25))
 end

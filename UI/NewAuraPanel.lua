@@ -46,9 +46,18 @@ local auraOptions = {
   },
   {
     kind = "text",
+    preset = "text",
+    title = "Text Aura",
+    description = "Display configurable text with custom font, color, anchor, and trigger-driven values.",
+    accent = { 0.72, 0.30, 0.92 },
+    art = "text",
+  },
+  {
+    kind = "text",
+    preset = "death_alert_text",
     title = "Death Alert",
     description = "Show class-colored text when someone in your party or raid dies, with role filters and sounds.",
-    accent = { 0.72, 0.30, 0.92 },
+    accent = { 0.58, 0.24, 0.82 },
     art = "text",
   },
   {
@@ -365,7 +374,7 @@ local function CreateTile(parent, option)
     edgeSize = 1,
   })
   tile:SetScript("OnClick", function()
-    ns.ui.CreateAuraDialog:Show(option.kind)
+    ns.ui.CreateAuraDialog:Show(option.preset or option.kind)
   end)
   tile:SetScript("OnEnter", function(self)
     StyleTile(self, true)

@@ -48,6 +48,7 @@ CooldownManager.auraStateCache = {}
 CooldownManager.auraFrameRefs = CreateWeakValueTable()
 CooldownManager.hookedAuraFrames = CreateWeakKeyTable()
 CooldownManager.pendingAuraRefreshes = {}
+CooldownManager.pendingVisibilityOverrideSync = false
 
 local HookCooldownWidget
 
@@ -74,6 +75,19 @@ local function SafeBoolean(value)
   if type(value) == "boolean" then
     return value
   end
+  return nil
+end
+
+local function SafeGetFrameScript(node, scriptName)
+  if not node or not node.GetScript then
+    return nil
+  end
+
+  local ok, script = pcall(node.GetScript, node, scriptName)
+  if ok then
+    return script
+  end
+
   return nil
 end
 
@@ -107,12 +121,24 @@ function CooldownManager:Initialize()
   self:RestoreAllHiddenFrames()
   self.hookedAuraFrames = self.hookedAuraFrames or CreateWeakKeyTable()
   self.pendingAuraRefreshes = self.pendingAuraRefreshes or {}
+  self.pendingVisibilityOverrideSync = self.pendingVisibilityOverrideSync == true
   if not self.hiddenParent then
     local parent = CreateFrame("Frame", nil, UIParent)
     parent:SetAllPoints(UIParent)
     parent:SetFrameStrata("BACKGROUND")
     parent:Hide()
     self.hiddenParent = parent
+  end
+  if not self.visibilityOverrideEventFrame then
+    local eventFrame = CreateFrame("Frame")
+    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    eventFrame:SetScript("OnEvent", function()
+      if self.pendingVisibilityOverrideSync == true then
+        self.pendingVisibilityOverrideSync = false
+        self:ApplyVisibilityOverrides()
+      end
+    end)
+    self.visibilityOverrideEventFrame = eventFrame
   end
 end
 
@@ -123,6 +149,7 @@ function CooldownManager:Invalidate()
   self.frameCache = {}
   self.auraStateCache = {}
   self.auraFrameRefs = CreateWeakValueTable()
+  self.pendingVisibilityOverrideSync = false
   if self.pendingAuraRefreshes then
     wipe(self.pendingAuraRefreshes)
   end
@@ -280,23 +307,25 @@ local function CollectFramesByCooldownID(owner, cooldownID, results, visited)
   end
 end
 
-function CooldownManager:FindFramesByCooldownID(cooldownID)
+function CooldownManager:FindFramesByCooldownID(cooldownID, forceRefresh)
   cooldownID = tonumber(cooldownID or 0) or 0
   if cooldownID <= 0 then
     return {}
   end
 
-  local cached = self.frameCache[cooldownID]
-  if cached and #cached > 0 then
-    local valid = {}
-    for _, frame in ipairs(cached) do
-      if self:GetFrameCooldownID(frame) == cooldownID then
-        valid[#valid + 1] = frame
+  if forceRefresh ~= true then
+    local cached = self.frameCache[cooldownID]
+    if cached and #cached > 0 then
+      local valid = {}
+      for _, frame in ipairs(cached) do
+        if self:GetFrameCooldownID(frame) == cooldownID then
+          valid[#valid + 1] = frame
+        end
       end
-    end
-    if #valid > 0 then
-      self.frameCache[cooldownID] = valid
-      return valid
+      if #valid > 0 then
+        self.frameCache[cooldownID] = valid
+        return valid
+      end
     end
   end
 
@@ -403,13 +432,32 @@ local function GetFrameCooldownWidget(frame)
   return findNested(frame)
 end
 
+local function GetFrameTimerBar(frame)
+  if not frame then
+    return nil
+  end
+
+  local direct = frame.Bar
+    or frame.bar
+    or (frame.Icon and (frame.Icon.Bar or frame.Icon.bar))
+  if direct and direct.SetTimerDuration then
+    return direct
+  end
+
+  return nil
+end
+
 local function GetFrameStoredDurationObject(frame, widget)
   local candidates = {
     frame and frame._popaurasDurationObject,
     frame and frame._arcTextColorDurObj,
     widget and widget._popaurasDurationObject,
+    frame and frame.Bar and frame.Bar._popaurasDurationObject,
+    frame and frame.bar and frame.bar._popaurasDurationObject,
     frame and frame.Icon and frame.Icon._popaurasDurationObject,
     frame and frame.Icon and frame.Icon._arcTextColorDurObj,
+    frame and frame.Icon and frame.Icon.Bar and frame.Icon.Bar._popaurasDurationObject,
+    frame and frame.Icon and frame.Icon.bar and frame.Icon.bar._popaurasDurationObject,
     frame and frame.cooldownInfo and frame.cooldownInfo.durationObject,
     frame and frame.Icon and frame.Icon.cooldownInfo and frame.Icon.cooldownInfo.durationObject,
   }
@@ -460,68 +508,93 @@ end
 
 HookCooldownWidget = function(frame)
   local widget = GetFrameCooldownWidget(frame)
-  if not widget or widget._popaurasDurationHooked then
-    return
-  end
+  if widget and not widget._popaurasDurationHooked then
+    widget._popaurasDurationHooked = true
+    widget._popaurasOwnerFrame = frame
 
-  widget._popaurasDurationHooked = true
-  widget._popaurasOwnerFrame = frame
+    if widget.SetCooldownFromDurationObject then
+      hooksecurefunc(widget, "SetCooldownFromDurationObject", function(self, durationObject)
+        local owner = self._popaurasOwnerFrame or frame
+        if not owner or durationObject == nil then
+          return
+        end
 
-  if widget.SetCooldownFromDurationObject then
-    hooksecurefunc(widget, "SetCooldownFromDurationObject", function(self, durationObject)
-      local owner = self._popaurasOwnerFrame or frame
-      if not owner or durationObject == nil then
-        return
-      end
+        local isOnGCD = SafeBoolean(owner.isOnGCD)
+        local isOnActualCooldown = SafeBoolean(owner.isOnActualCooldown)
+        if isOnActualCooldown == false then
+          return
+        end
+        if isOnGCD == true and isOnActualCooldown ~= true then
+          return
+        end
 
-      local isOnGCD = SafeBoolean(owner.isOnGCD)
-      local isOnActualCooldown = SafeBoolean(owner.isOnActualCooldown)
-      if isOnActualCooldown == false then
-        return
-      end
-      if isOnGCD == true and isOnActualCooldown ~= true then
-        return
-      end
+        owner._popaurasDurationObject = durationObject
+        self._popaurasDurationObject = durationObject
+      end)
+    end
 
-      owner._popaurasDurationObject = durationObject
-      self._popaurasDurationObject = durationObject
-    end)
-  end
-
-  if widget.Clear then
-    hooksecurefunc(widget, "Clear", function(self)
-      local owner = self._popaurasOwnerFrame or frame
-      if owner then
-        owner._popaurasDurationObject = nil
-      end
-      self._popaurasDurationObject = nil
-    end)
-  end
-
-  if widget.SetCooldown then
-    hooksecurefunc(widget, "SetCooldown", function(self, startTime, duration)
-      if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration)) then
-        return
-      end
-
-      if type(startTime) == "number" and type(duration) == "number" and startTime == 0 and duration == 0 then
+    if widget.Clear then
+      hooksecurefunc(widget, "Clear", function(self)
         local owner = self._popaurasOwnerFrame or frame
         if owner then
           owner._popaurasDurationObject = nil
         end
         self._popaurasDurationObject = nil
-      end
-    end)
+      end)
+    end
+
+    if widget.SetCooldown then
+      hooksecurefunc(widget, "SetCooldown", function(self, startTime, duration)
+        if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration)) then
+          return
+        end
+
+        if type(startTime) == "number" and type(duration) == "number" and startTime == 0 and duration == 0 then
+          local owner = self._popaurasOwnerFrame or frame
+          if owner then
+            owner._popaurasDurationObject = nil
+          end
+          self._popaurasDurationObject = nil
+        end
+      end)
+    end
+
+    if widget.HookScript then
+      widget:HookScript("OnHide", function(self)
+        local owner = self._popaurasOwnerFrame or frame
+        if owner then
+          owner._popaurasDurationObject = nil
+        end
+        self._popaurasDurationObject = nil
+      end)
+    end
   end
 
-  if widget.HookScript then
-    widget:HookScript("OnHide", function(self)
-      local owner = self._popaurasOwnerFrame or frame
-      if owner then
-        owner._popaurasDurationObject = nil
-      end
-      self._popaurasDurationObject = nil
-    end)
+  local timerBar = GetFrameTimerBar(frame)
+  if timerBar and not timerBar._popaurasTimerDurationHooked then
+    timerBar._popaurasTimerDurationHooked = true
+    timerBar._popaurasOwnerFrame = frame
+
+    if timerBar.SetTimerDuration then
+      hooksecurefunc(timerBar, "SetTimerDuration", function(self, durationObject)
+        local owner = self._popaurasOwnerFrame or frame
+        if not owner then
+          return
+        end
+        owner._popaurasDurationObject = durationObject
+        self._popaurasDurationObject = durationObject
+      end)
+    end
+
+    if timerBar.HookScript then
+      timerBar:HookScript("OnHide", function(self)
+        local owner = self._popaurasOwnerFrame or frame
+        if owner then
+          owner._popaurasDurationObject = nil
+        end
+        self._popaurasDurationObject = nil
+      end)
+    end
   end
 end
 
@@ -566,9 +639,9 @@ local function BuildFrameCooldownState(frame)
   end
 
   local isShown = frame.IsShown and frame:IsShown() or false
-  local rawActive = frame.isActive == true
-    or (frame.cooldownInfo and frame.cooldownInfo.isActive == true)
-    or (frame.Icon and frame.Icon.cooldownInfo and frame.Icon.cooldownInfo.isActive == true)
+  local rawActive = SafeBoolean(frame.isActive) == true
+    or SafeBoolean(frame.cooldownInfo and frame.cooldownInfo.isActive) == true
+    or SafeBoolean(frame.Icon and frame.Icon.cooldownInfo and frame.Icon.cooldownInfo.isActive) == true
   local isOnActualCooldown = SafeBoolean(frame.isOnActualCooldown)
   if isOnActualCooldown == nil then
     isOnActualCooldown = SafeBoolean(frame.cooldownInfo and frame.cooldownInfo.isOnActualCooldown)
@@ -700,6 +773,19 @@ function CooldownManager:UpdateCachedAuraStateFromFrame(frame)
     local changed = previousState ~= nil
     self.auraStateCache[cooldownID] = nil
     self.auraFrameRefs[cooldownID] = nil
+    frame._popaurasDurationObject = nil
+    if frame.Bar then
+      frame.Bar._popaurasDurationObject = nil
+    end
+    if frame.bar then
+      frame.bar._popaurasDurationObject = nil
+    end
+    if frame.Icon and frame.Icon.Bar then
+      frame.Icon.Bar._popaurasDurationObject = nil
+    end
+    if frame.Icon and frame.Icon.bar then
+      frame.Icon.bar._popaurasDurationObject = nil
+    end
     return changed
   end
 end
@@ -948,12 +1034,23 @@ local function BuildAuraStateForCooldownID(self, cooldownID, unit)
   if cached and cached.auraInstanceID ~= nil then
     local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, cached.auraInstanceID)
     if auraData then
+      local frame = self.auraFrameRefs[cooldownID]
+      local frameState = BuildFrameCooldownState(frame)
       return {
         cooldownID = cooldownID,
         unit = unit,
-        frame = self.auraFrameRefs[cooldownID],
+        frame = frame,
         auraInstanceID = cached.auraInstanceID,
         auraData = auraData,
+        duration = frameState and frameState.duration or 0,
+        expirationTime = frameState and frameState.expirationTime or 0,
+        durationObject = frameState and frameState.durationObject or nil,
+        active = frameState and frameState.active == true or false,
+        rawActive = frameState and frameState.rawActive == true or false,
+        isOnActualCooldown = frameState and frameState.isOnActualCooldown == true or false,
+        isOnGCD = frameState and frameState.isOnGCD == true or false,
+        countText = frameState and frameState.countText or nil,
+        count = frameState and frameState.count or nil,
       }
     end
   end
@@ -963,6 +1060,7 @@ local function BuildAuraStateForCooldownID(self, cooldownID, unit)
     if auraInstanceID ~= nil then
       local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, auraInstanceID)
       if auraData then
+        local frameState = BuildFrameCooldownState(frame)
         self.auraStateCache[cooldownID] = {
           auraInstanceID = auraInstanceID,
         }
@@ -973,6 +1071,15 @@ local function BuildAuraStateForCooldownID(self, cooldownID, unit)
           frame = frame,
           auraInstanceID = auraInstanceID,
           auraData = auraData,
+          duration = frameState and frameState.duration or 0,
+          expirationTime = frameState and frameState.expirationTime or 0,
+          durationObject = frameState and frameState.durationObject or nil,
+          active = frameState and frameState.active == true or false,
+          rawActive = frameState and frameState.rawActive == true or false,
+          isOnActualCooldown = frameState and frameState.isOnActualCooldown == true or false,
+          isOnGCD = frameState and frameState.isOnGCD == true or false,
+          countText = frameState and frameState.countText or nil,
+          count = frameState and frameState.count or nil,
         }
       end
     end
@@ -1053,85 +1160,59 @@ local function ForEachFrameTree(root, callback, visited)
   end
 end
 
+local function ApplyForcedHiddenAlpha(frame)
+  if not frame or not frame.SetAlpha or frame._popaurasApplyingHiddenAlpha then
+    return
+  end
+
+  frame._popaurasApplyingHiddenAlpha = true
+  pcall(frame.SetAlpha, frame, 0)
+  frame._popaurasApplyingHiddenAlpha = false
+end
+
+local function EnsureHiddenAlphaHook(frame)
+  if not frame or frame._popaurasHiddenAlphaHooked then
+    return
+  end
+
+  frame._popaurasHiddenAlphaHooked = true
+
+  if frame.HookScript then
+    frame:HookScript("OnShow", function(self)
+      if self._popaurasForceHidden == true then
+        ApplyForcedHiddenAlpha(self)
+      end
+    end)
+  end
+
+  if frame.SetAlpha then
+    hooksecurefunc(frame, "SetAlpha", function(self, alpha)
+      if self._popaurasForceHidden == true and alpha ~= 0 then
+        ApplyForcedHiddenAlpha(self)
+      end
+    end)
+  end
+end
+
 function CooldownManager:ApplyHiddenFrame(record)
   if not record or not record.frame then
     return
   end
 
   record.alpha = record.alpha or record.frame:GetAlpha()
-  record.wasShown = record.wasShown == nil and record.frame:IsShown() or record.wasShown
   record.nodes = record.nodes or {}
-  if not record.points and record.frame.GetNumPoints and record.frame.GetPoint then
-    record.points = {}
-    local pointCount = record.frame:GetNumPoints() or 0
-    for index = 1, pointCount do
-      local point, relativeTo, relativePoint, xOfs, yOfs = record.frame:GetPoint(index)
-      record.points[#record.points + 1] = { point, relativeTo, relativePoint, xOfs, yOfs }
-    end
-  end
-  if record.width == nil and record.frame.GetWidth then
-    record.width = record.frame:GetWidth()
-  end
-  if record.height == nil and record.frame.GetHeight then
-    record.height = record.frame:GetHeight()
-  end
-  if record.parent == nil and record.frame.GetParent then
-    record.parent = record.frame:GetParent()
+  if not record.nodes[record.frame] then
+    record.nodes[record.frame] = {
+      alpha = record.alpha,
+    }
   end
 
-  ForEachFrameTree(record.frame, function(node)
-    if not record.nodes[node] then
-      local entry = {
-        alpha = node.GetAlpha and node:GetAlpha() or nil,
-        wasShown = node.IsShown and node:IsShown() or nil,
-      }
-      if node.IsMouseEnabled then
-        entry.mouseEnabled = node:IsMouseEnabled()
-      end
-      if node.GetScript then
-        entry.onEnter = node:GetScript("OnEnter")
-        entry.onLeave = node:GetScript("OnLeave")
-        entry.onMotion = node:GetScript("OnMouseMotion")
-      end
-      record.nodes[node] = entry
-    end
+  EnsureHiddenAlphaHook(record.frame)
+  record.frame._popaurasForceHidden = true
+  ApplyForcedHiddenAlpha(record.frame)
 
-    if node.EnableMouse then
-      pcall(node.EnableMouse, node, false)
-    end
-    if node.SetMouseMotionEnabled then
-      pcall(node.SetMouseMotionEnabled, node, false)
-    end
-    if node.SetScript then
-      pcall(node.SetScript, node, "OnEnter", nil)
-      pcall(node.SetScript, node, "OnLeave", nil)
-      pcall(node.SetScript, node, "OnMouseMotion", nil)
-    end
-    if node.SetAlpha then
-      pcall(node.SetAlpha, node, 0)
-    end
-    if node.Hide then
-      pcall(node.Hide, node)
-    end
-  end)
-
-  if record.frame.SetPropagateMouseMotion then
-    pcall(record.frame.SetPropagateMouseMotion, record.frame, false)
-  end
   if GameTooltip and GameTooltip.Hide then
     pcall(GameTooltip.Hide, GameTooltip)
-  end
-  if self.hiddenParent and record.frame.SetParent then
-    pcall(record.frame.SetParent, record.frame, self.hiddenParent)
-  end
-  if record.frame.ClearAllPoints then
-    pcall(record.frame.ClearAllPoints, record.frame)
-  end
-  if record.frame.SetPoint then
-    pcall(record.frame.SetPoint, record.frame, "TOPLEFT", UIParent, "BOTTOMLEFT", -5000, -5000)
-  end
-  if record.frame.SetSize then
-    pcall(record.frame.SetSize, record.frame, 1, 1)
   end
 end
 
@@ -1141,37 +1222,10 @@ function CooldownManager:RestoreHiddenRecord(record)
     return
   end
 
-  if frame.ClearAllPoints then
-    pcall(frame.ClearAllPoints, frame)
-  end
-  if frame.SetParent and record.parent then
-    pcall(frame.SetParent, frame, record.parent)
-  end
-  if record.points and #record.points > 0 and frame.SetPoint then
-    for _, pointData in ipairs(record.points) do
-      pcall(frame.SetPoint, frame, pointData[1], pointData[2], pointData[3], pointData[4], pointData[5])
-    end
-  end
-  if frame.SetSize and record.width and record.height then
-    pcall(frame.SetSize, frame, record.width, record.height)
-  end
+  frame._popaurasForceHidden = false
   for node, entry in pairs(record.nodes or {}) do
     if node.SetAlpha and entry.alpha ~= nil then
       pcall(node.SetAlpha, node, entry.alpha)
-    end
-    if node.EnableMouse and entry.mouseEnabled ~= nil then
-      pcall(node.EnableMouse, node, entry.mouseEnabled)
-    end
-    if node.SetMouseMotionEnabled then
-      pcall(node.SetMouseMotionEnabled, node, entry.mouseEnabled == true)
-    end
-    if node.SetScript then
-      pcall(node.SetScript, node, "OnEnter", entry.onEnter)
-      pcall(node.SetScript, node, "OnLeave", entry.onLeave)
-      pcall(node.SetScript, node, "OnMouseMotion", entry.onMotion)
-    end
-    if entry.wasShown and node.Show then
-      pcall(node.Show, node)
     end
   end
 end
@@ -1202,6 +1256,37 @@ local function AddHiddenCooldownID(hiddenCooldownIDs, cooldownID)
   end
 end
 
+local function AddTriggerSpellCooldownIDs(self, hiddenCooldownIDs, trigger)
+  if type(trigger) ~= "table" then
+    return
+  end
+
+  local spellIDs = {}
+  local seen = {}
+
+  local function addSpellID(spellID)
+    spellID = tonumber(spellID or 0) or 0
+    if spellID > 0 and not seen[spellID] then
+      seen[spellID] = true
+      spellIDs[#spellIDs + 1] = spellID
+    end
+  end
+
+  addSpellID(trigger.spellId)
+
+  if type(trigger.spellIDs) == "table" then
+    for _, spellID in ipairs(trigger.spellIDs) do
+      addSpellID(spellID)
+    end
+  end
+
+  for _, spellID in ipairs(spellIDs) do
+    for _, cooldownID in ipairs(self:GetCooldownIDsForSpellID(spellID)) do
+      AddHiddenCooldownID(hiddenCooldownIDs, cooldownID)
+    end
+  end
+end
+
 function CooldownManager:GetHiddenCooldownIDsForAura(aura)
   if not aura or not aura.display or aura.display.hideCDMIcon ~= true then
     return nil
@@ -1216,16 +1301,9 @@ function CooldownManager:GetHiddenCooldownIDsForAura(aura)
   end
 
   local hiddenCooldownIDs = {}
-  for trigger in ns.TriggerBase:IterateTriggers(aura) do
-    local spellID = 0
+  for _, trigger in ns.TriggerBase:IterateTriggers(aura) do
     if trigger.type == "spell_cooldown" or trigger.type == "aura" then
-      spellID = tonumber(trigger.spellId or 0) or 0
-    end
-
-    if spellID > 0 then
-      for _, cooldownID in ipairs(self:GetCooldownIDsForSpellID(spellID)) do
-        AddHiddenCooldownID(hiddenCooldownIDs, cooldownID)
-      end
+      AddTriggerSpellCooldownIDs(self, hiddenCooldownIDs, trigger)
     end
   end
 
@@ -1263,7 +1341,7 @@ function CooldownManager:ApplyVisibilityOverrides()
     end
 
     local updatedRecords = {}
-    for _, frame in ipairs(self:FindFramesByCooldownID(cooldownID)) do
+    for _, frame in ipairs(self:FindFramesByCooldownID(cooldownID, true)) do
       local record = existingByFrame[frame]
       if not record then
         record = { frame = frame }
