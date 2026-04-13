@@ -581,7 +581,6 @@ function Panel:UpdateControlStates()
   local showTimer = frame.timerControls.showCheck:GetChecked() == true
   local showStacks = frame.stacksControls.showCheck:GetChecked() == true
   local showBackground = frame.showBackgroundCheck:GetChecked() == true
-  local useClassColor = frame.textClassColorCheck and frame.textClassColorCheck:GetChecked() == true
   local readyLook = frame.readyLookCheck:GetChecked() == true
   local trigger = GetSelectedTrigger(aura)
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura")
@@ -632,7 +631,7 @@ function Panel:UpdateControlStates()
     frame.nameControls.xWrap.input, frame.nameControls.xWrap.label,
     frame.nameControls.yWrap.input, frame.nameControls.yWrap.label,
     frame.nameControls.colorWrap.button, frame.nameControls.colorWrap.label,
-  }, showName and not isGroup and not (isText and useClassColor))
+  }, showName and not isGroup)
 
   SetControlGroupEnabled({
     frame.timerControls.fontWrap.dropdown, frame.timerControls.fontWrap.label,
@@ -717,7 +716,6 @@ function Panel:ApplyCurrent()
   local selectedBarTexture = UIDropDownMenu_GetSelectedValue(frame.barTextureWrap.dropdown) or aura.display.barTexture or "FLAT"
   aura.display.barTexture = NormalizeBarTextureValue(selectedBarTexture)
   aura.display.showBackground = frame.showBackgroundCheck:GetChecked() == true
-  aura.display.useClassColor = frame.textClassColorCheck:GetChecked() == true
   aura.display.backgroundColor = Colors.Copy(frame.backgroundColorWrap.color or aura.display.backgroundColor)
 
   aura.display.spacing = CommitNumeric(frame.groupSpacingWrap.input, aura.display.spacing or 6)
@@ -741,6 +739,7 @@ function Panel:ApplyCurrent()
   end
   aura.display.iconOffsetX = CommitNumeric(frame.iconXWrap.input, aura.display.iconOffsetX or 0)
   aura.display.iconOffsetY = CommitNumeric(frame.iconYWrap.input, aura.display.iconOffsetY or 0)
+  aura.display.showOnRaidFrames = frame.showOnRaidFramesCheck:GetChecked() == true
 
   aura.text = aura.text or {}
   aura.text.nameOverride = CommitString(frame.nameControls.altNameWrap.input)
@@ -836,7 +835,7 @@ function Panel:Create(parent)
   frame.canvasSection.expandedHeightAura = 480
   frame.canvasSection.expandedHeightGroup = 352
   frame.groupSection = CreateSection(frame.content, "Group Layout", -396, 132)
-  frame.iconSection = CreateSection(frame.content, "Icon", -560, 240)
+  frame.iconSection = CreateSection(frame.content, "Icon", -560, 270)
   frame.nameSection = CreateSection(frame.content, "Name Text", -816, 290)
   frame.timerSection = CreateSection(frame.content, "Duration Text", -1122, 260)
   frame.stacksSection = CreateSection(frame.content, "Stacks Text", -1398, 220)
@@ -884,8 +883,6 @@ function Panel:Create(parent)
   frame.barTextureWrap = CreateLabeledDropdown(frame.canvasSection, "Bar Texture", 430, -276, 166, barTextureValues)
   frame.showBackgroundCheck = Frames.CreateCheckbox(frame.canvasSection, "Show Background")
   frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -364)
-  frame.textClassColorCheck = Frames.CreateCheckbox(frame.canvasSection, "Use Class Colors")
-  frame.textClassColorCheck:SetPoint("TOPLEFT", 180, -364)
   frame.backgroundColorWrap = CreateColorSwatch(frame.canvasSection, "Background", 220, -364)
   frame.backgroundColorWrap.button:ClearAllPoints()
   frame.backgroundColorWrap.button:SetPoint("TOPLEFT", 220, -364)
@@ -1013,8 +1010,10 @@ function Panel:Create(parent)
   frame.iconYWrap = CreateLabeledInput(frame.iconSection, "Icon Y", 410, -96, 60)
   frame.altIconIdWrap = CreateLabeledInput(frame.iconSection, "Alternate Icon Name / ID", 12, -158, 280)
   frame.iconSwipeColorWrap = CreateColorSwatch(frame.iconSection, "Cooldown Shade", 360, -158)
+  frame.showOnRaidFramesCheck = Frames.CreateCheckbox(frame.iconSection, "Show on Raid Frames")
+  frame.showOnRaidFramesCheck:SetPoint("TOPLEFT", 12, -196)
   frame.iconHint = Frames.CreateLabel(frame.iconSection, "Alternate icon accepts a spell name, spell ID, or raw texture file ID. Hide CDM Icon only affects mapped tracked-buff icons.", "GameFontDisableSmall")
-  frame.iconHint:SetPoint("TOPLEFT", 12, -196)
+  frame.iconHint:SetPoint("TOPLEFT", 12, -226)
   frame.iconHint:SetWidth(660)
 
   frame.soundEnabledCheck = Frames.CreateCheckbox(frame.soundSection, "Play Aura Sound")
@@ -1071,7 +1070,6 @@ function Panel:Create(parent)
     frame.readyColorWrap.label, frame.readyColorWrap.button, frame.readyColorWrap.valueText,
     frame.barTextureWrap.label, frame.barTextureWrap.dropdown,
     frame.showBackgroundCheck,
-    frame.textClassColorCheck,
     frame.backgroundColorWrap.label, frame.backgroundColorWrap.button, frame.backgroundColorWrap.valueText
   )
   RegisterSectionWidgets(frame.groupSection,
@@ -1090,6 +1088,7 @@ function Panel:Create(parent)
     frame.iconXWrap.label, frame.iconXWrap.input,
     frame.iconYWrap.label, frame.iconYWrap.input,
     frame.iconSwipeColorWrap.label, frame.iconSwipeColorWrap.button, frame.iconSwipeColorWrap.valueText,
+    frame.showOnRaidFramesCheck,
     frame.iconHint
   )
   RegisterSectionWidgets(frame.nameSection,
@@ -1198,8 +1197,8 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.iconFinishFlashCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.iconMatchSizeCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.hideCDMIconCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.showOnRaidFramesCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showBackgroundCheck, function() Panel:ApplyCurrent() end)
-  self:WireLiveCheckbox(frame.textClassColorCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupShowBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.readyLookCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.glowWhenActiveCheck, function() Panel:ApplyCurrent() end)
@@ -1295,8 +1294,6 @@ function Panel:ApplyCanvasLayout(isGroup)
 
     frame.showBackgroundCheck:ClearAllPoints()
     frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -274)
-    frame.textClassColorCheck:ClearAllPoints()
-    frame.textClassColorCheck:SetPoint("TOPLEFT", 180, -274)
     PositionColorSwatch(frame.backgroundColorWrap, 180, -274)
     return
   end
@@ -1326,8 +1323,6 @@ function Panel:ApplyCanvasLayout(isGroup)
 
   frame.showBackgroundCheck:ClearAllPoints()
   frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -364)
-  frame.textClassColorCheck:ClearAllPoints()
-  frame.textClassColorCheck:SetPoint("TOPLEFT", 180, -364)
   PositionColorSwatch(frame.backgroundColorWrap, 220, -364)
 end
 
@@ -1364,7 +1359,7 @@ function Panel:Refresh(aura)
   if isGroup then
     self.frame.hint:SetText("Dock this group to the screen, CDM, unit frames, or another group, then tune spacing below.")
   elseif isText then
-    self.frame.hint:SetText("Text aura. Configure font, color, anchoring, and optional class coloring from display settings.")
+    self.frame.hint:SetText("Text-only alert aura. Use the trigger tab for death filters, sounds, and alert duration.")
   else
     self.frame.hint:SetText("Placement and appearance for the selected aura.")
   end
@@ -1421,7 +1416,6 @@ function Panel:Refresh(aura)
   aura.display.barTexture = NormalizeBarTextureValue(aura.display.barTexture)
   SetDropdown(self.frame.barTextureWrap.dropdown, aura.display.barTexture or "FLAT")
   self.frame.showBackgroundCheck:SetChecked(aura.display.showBackground ~= false)
-  self.frame.textClassColorCheck:SetChecked(aura.display.useClassColor == true)
   SetColorSwatch(self.frame.backgroundColorWrap, aura.display.backgroundColor or { r = 0, g = 0, b = 0, a = 0.45 })
 
   self.frame.groupSpacingWrap.input:SetText(tostring(aura.display.spacing or 6))
@@ -1527,7 +1521,6 @@ function Panel:Refresh(aura)
   self.frame.barTextureWrap.label:SetShown(not isGroup and not isText)
   self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText)
   self.frame.showBackgroundCheck:SetShown(true)
-  self.frame.textClassColorCheck:SetShown(isText)
   self.frame.backgroundColorWrap.label:SetShown(true)
   self.frame.backgroundColorWrap.button:SetShown(true)
   self.frame.backgroundColorWrap.valueText:SetShown(true)
@@ -1536,6 +1529,14 @@ function Panel:Refresh(aura)
   self.frame.iconSwipeColorWrap.label:SetShown(isIconAura)
   self.frame.iconSwipeColorWrap.button:SetShown(isIconAura)
   self.frame.iconSwipeColorWrap.valueText:SetShown(isIconAura)
+  self.frame.iconMatchSizeCheck:SetShown(not isIconAura)
+  if self.frame.showIconCheck.Text then
+    self.frame.showIconCheck.Text:SetText(isIconAura and "Show Aura Icon" or "Show Icon")
+  end
+  local triggerUnit = trigger.unit or "player"
+  local showRaidFramesOption = isIconAura and (triggerUnit == "group" or triggerUnit == "nameplate")
+  self.frame.showOnRaidFramesCheck:SetShown(showRaidFramesOption)
+  self.frame.showOnRaidFramesCheck:SetChecked(aura.display.showOnRaidFrames == true)
   self.frame.groupShowBackgroundCheck:SetShown(false)
   self.frame.groupBackgroundColorWrap.label:SetShown(false)
   self.frame.groupBackgroundColorWrap.button:SetShown(false)

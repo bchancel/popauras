@@ -1705,6 +1705,7 @@ function provider:Evaluate(trigger, auraConfig)
     local ignoredReasons = {}
     local firstMissingUnit = nil
     local missingCount = 0
+    local matchedUnits = {}
 
     for _, candidateUnit in ipairs(IterateUnits(unit)) do
       checkedUnits[#checkedUnits + 1] = candidateUnit
@@ -1719,9 +1720,11 @@ function provider:Evaluate(trigger, auraConfig)
             end
           end
         elseif candidateAura then
-          aura = candidateAura
-          matchedUnit = candidateUnit
-          break
+          matchedUnits[#matchedUnits + 1] = candidateUnit
+          if not aura then
+            aura = candidateAura
+            matchedUnit = candidateUnit
+          end
         end
       else
         ignoredUnits[#ignoredUnits + 1] = candidateUnit
@@ -1756,6 +1759,14 @@ function provider:Evaluate(trigger, auraConfig)
         ns.Debug:LogTrigger(nil, trigger, state, details)
       end
       return state
+    end
+
+    if aura and #matchedUnits > 0 then
+      local found = BuildStateFromAuraData(aura, matchedUnit, helpful, GetPreferredAuraName(trigger, auraConfig), trigger)
+      if found then
+        found.matchedUnits = matchedUnits
+      end
+      return found
     end
   end
 

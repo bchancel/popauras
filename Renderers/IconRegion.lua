@@ -265,4 +265,16 @@ function IconRegion:Update(aura, state)
   else
     ns.runtime:UnregisterTimedRegion(aura.id)
   end
+
+  if aura.kind == "icon" and not aura.display.icon and aura.display.showOnRaidFrames then
+    self.frame:Hide()
+  end
+
+  if ns.RaidFrameOverlay then
+    if aura.display.showOnRaidFrames and state.show and state.active then
+      ns.RaidFrameOverlay:Update(aura.id, aura, state)
+    else
+      ns.RaidFrameOverlay:Clear(aura.id)
+    end
+  end
 end

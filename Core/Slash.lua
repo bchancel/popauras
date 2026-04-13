@@ -133,6 +133,7 @@ local function GetHelpLines()
     "/pa perf reset - clear perf samples",
     "/pa export - open the import/export tab",
     "/pa import - open the import/export tab",
+    "/pa version - show local version, or scan group versions when in a party/raid",
   }
 end
 
@@ -326,6 +327,12 @@ function Slash:Initialize()
         return
       end
       WriteChatLine("Usage: /pa perf | start | stop | report | reset")
+      return
+    end
+    if msg == "version" or msg == "ver" then
+      if ns.VersionCheck then
+        ns.VersionCheck:StartCheck()
+      end
       return
     end
     if msg == "export" or msg == "import" then

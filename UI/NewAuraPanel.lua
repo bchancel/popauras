@@ -50,7 +50,7 @@ local auraOptions = {
     title = "Text Aura",
     description = "Display configurable text with custom font, color, anchor, and trigger-driven values.",
     accent = { 0.72, 0.30, 0.92 },
-    art = "text",
+    art = "text_aura",
   },
   {
     kind = "text",
@@ -58,7 +58,7 @@ local auraOptions = {
     title = "Death Alert",
     description = "Show class-colored text when someone in your party or raid dies, with role filters and sounds.",
     accent = { 0.58, 0.24, 0.82 },
-    art = "text",
+    art = "death_alert",
   },
   {
     kind = "interrupt_tracker",
@@ -157,13 +157,13 @@ end
 local function BuildBarArt(host)
   local glow = host:CreateTexture(nil, "ARTWORK")
   glow:SetTexture("Interface\\Buttons\\WHITE8x8")
-  glow:SetSize(16, 24)
-  glow:SetPoint("LEFT", 16, 0)
+  glow:SetSize(14, 22)
+  glow:SetPoint("LEFT", 6, 0)
   glow:SetVertexColor(1, 0.58, 0.14, 0.92)
 
   local barFrame = CreateFrame("Frame", nil, host, "BackdropTemplate")
-  barFrame:SetSize(90, 18)
-  barFrame:SetPoint("LEFT", glow, "RIGHT", 4, 0)
+  barFrame:SetSize(74, 18)
+  barFrame:SetPoint("LEFT", glow, "RIGHT", 3, 0)
   barFrame:SetBackdrop({
     bgFile = "Interface\\Buttons\\WHITE8x8",
     edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -177,7 +177,7 @@ local function BuildBarArt(host)
   fill:SetVertexColor(0.92, 0.22, 0.16, 1)
   fill:SetPoint("TOPLEFT", 2, -2)
   fill:SetPoint("BOTTOMLEFT", 2, 2)
-  fill:SetWidth(78)
+  fill:SetWidth(62)
 end
 
 local function BuildInterruptArt(host)
@@ -264,76 +264,55 @@ local function BuildDynamicArt(host)
   arrow:SetTextColor(0.28, 0.96, 0.22)
 end
 
-local function BuildTextArt(host)
-  local shadow = host:CreateTexture(nil, "BACKGROUND")
-  shadow:SetTexture("Interface\\Buttons\\WHITE8x8")
-  shadow:SetSize(50, 58)
-  shadow:SetPoint("CENTER", 4, -2)
-  shadow:SetVertexColor(0, 0, 0, 0.30)
+local function BuildTextAuraArt(host)
+  local label = host:CreateFontString(nil, "OVERLAY")
+  Fonts.Apply(label, 36, "OUTLINE")
+  label:SetPoint("CENTER", 0, 2)
+  label:SetText("Abc")
+  label:SetTextColor(0.82, 0.72, 0.98)
+end
 
-  local stoneTop = CreateFrame("Frame", nil, host, "BackdropTemplate")
-  stoneTop:SetSize(38, 16)
-  stoneTop:SetPoint("CENTER", 0, 12)
-  stoneTop:SetBackdrop({
+local function BuildDeathAlertArt(host)
+  local skullFrame = CreateFrame("Frame", nil, host, "BackdropTemplate")
+  skullFrame:SetSize(38, 42)
+  skullFrame:SetPoint("CENTER", 0, 2)
+  skullFrame:SetBackdrop({
     bgFile = "Interface\\Buttons\\WHITE8x8",
     edgeFile = "Interface\\Buttons\\WHITE8x8",
     edgeSize = 1,
   })
-  stoneTop:SetBackdropColor(0.44, 0.46, 0.52, 0.98)
-  stoneTop:SetBackdropBorderColor(0.71, 0.74, 0.80, 1)
+  skullFrame:SetBackdropColor(0.18, 0.06, 0.10, 0.98)
+  skullFrame:SetBackdropBorderColor(0.52, 0.18, 0.30, 1)
 
-  local stoneBody = CreateFrame("Frame", nil, host, "BackdropTemplate")
-  stoneBody:SetSize(46, 34)
-  stoneBody:SetPoint("TOP", stoneTop, "BOTTOM", 0, -2)
-  stoneBody:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  stoneBody:SetBackdropColor(0.34, 0.36, 0.41, 0.98)
-  stoneBody:SetBackdropBorderColor(0.66, 0.69, 0.75, 1)
+  local leftEye = skullFrame:CreateTexture(nil, "ARTWORK")
+  leftEye:SetTexture("Interface\\Buttons\\WHITE8x8")
+  leftEye:SetSize(8, 8)
+  leftEye:SetPoint("CENTER", -8, 6)
+  leftEye:SetVertexColor(0.92, 0.20, 0.20, 1)
 
-  local stoneInset = stoneBody:CreateTexture(nil, "ARTWORK")
-  stoneInset:SetTexture("Interface\\Buttons\\WHITE8x8")
-  stoneInset:SetPoint("TOPLEFT", 4, -4)
-  stoneInset:SetPoint("BOTTOMRIGHT", -4, 4)
-  stoneInset:SetVertexColor(0.22, 0.24, 0.28, 0.88)
+  local rightEye = skullFrame:CreateTexture(nil, "ARTWORK")
+  rightEye:SetTexture("Interface\\Buttons\\WHITE8x8")
+  rightEye:SetSize(8, 8)
+  rightEye:SetPoint("CENTER", 8, 6)
+  rightEye:SetVertexColor(0.92, 0.20, 0.20, 1)
 
-  local base = CreateFrame("Frame", nil, host, "BackdropTemplate")
-  base:SetSize(56, 8)
-  base:SetPoint("TOP", stoneBody, "BOTTOM", 0, -4)
-  base:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  base:SetBackdropColor(0.26, 0.28, 0.32, 0.98)
-  base:SetBackdropBorderColor(0.54, 0.57, 0.63, 1)
+  local jaw = skullFrame:CreateTexture(nil, "ARTWORK")
+  jaw:SetTexture("Interface\\Buttons\\WHITE8x8")
+  jaw:SetSize(20, 4)
+  jaw:SetPoint("CENTER", 0, -10)
+  jaw:SetVertexColor(0.68, 0.22, 0.30, 0.90)
 
-  local crossVert = stoneBody:CreateTexture(nil, "OVERLAY")
-  crossVert:SetTexture("Interface\\Buttons\\WHITE8x8")
-  crossVert:SetSize(4, 14)
-  crossVert:SetPoint("TOP", stoneInset, "TOP", 0, -8)
-  crossVert:SetVertexColor(0.76, 0.80, 0.86, 0.90)
+  local crossV = host:CreateTexture(nil, "OVERLAY")
+  crossV:SetTexture("Interface\\Buttons\\WHITE8x8")
+  crossV:SetSize(4, 56)
+  crossV:SetPoint("CENTER", 0, 0)
+  crossV:SetVertexColor(0.58, 0.20, 0.28, 0.35)
 
-  local crossHorz = stoneBody:CreateTexture(nil, "OVERLAY")
-  crossHorz:SetTexture("Interface\\Buttons\\WHITE8x8")
-  crossHorz:SetSize(14, 4)
-  crossHorz:SetPoint("TOP", crossVert, "TOP", 0, -4)
-  crossHorz:SetVertexColor(0.76, 0.80, 0.86, 0.90)
-
-  local crack = stoneBody:CreateTexture(nil, "OVERLAY")
-  crack:SetTexture("Interface\\Buttons\\WHITE8x8")
-  crack:SetSize(3, 12)
-  crack:SetPoint("BOTTOM", stoneInset, "BOTTOM", 5, 7)
-  crack:SetRotation(math.rad(24))
-  crack:SetVertexColor(0.12, 0.13, 0.16, 0.95)
-
-  local moss = host:CreateTexture(nil, "ARTWORK")
-  moss:SetTexture("Interface\\Buttons\\WHITE8x8")
-  moss:SetSize(16, 4)
-  moss:SetPoint("TOPLEFT", base, "BOTTOMLEFT", 6, -2)
-  moss:SetVertexColor(0.28, 0.48, 0.22, 0.90)
+  local crossH = host:CreateTexture(nil, "OVERLAY")
+  crossH:SetTexture("Interface\\Buttons\\WHITE8x8")
+  crossH:SetSize(56, 4)
+  crossH:SetPoint("CENTER", 0, 0)
+  crossH:SetVertexColor(0.58, 0.20, 0.28, 0.35)
 end
 
 local function BuildArt(host, art)
@@ -345,8 +324,10 @@ local function BuildArt(host, art)
     BuildInterruptArt(host)
   elseif art == "group" then
     BuildGroupArt(host)
-  elseif art == "text" then
-    BuildTextArt(host)
+  elseif art == "text_aura" then
+    BuildTextAuraArt(host)
+  elseif art == "death_alert" then
+    BuildDeathAlertArt(host)
   else
     BuildDynamicArt(host)
   end
@@ -374,7 +355,7 @@ local function CreateTile(parent, option)
     edgeSize = 1,
   })
   tile:SetScript("OnClick", function()
-    ns.ui.CreateAuraDialog:Show(option.preset or option.kind)
+    ns.ui.CreateAuraDialog:Show(option.kind, option.preset)
   end)
   tile:SetScript("OnEnter", function(self)
     StyleTile(self, true)

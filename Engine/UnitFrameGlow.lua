@@ -197,6 +197,10 @@ local function FindUnitFramesForUnit(targetUnitId)
   return unique
 end
 
+function UnitFrameGlow:FindUnitFramesForUnit(unitId)
+  return FindUnitFramesForUnit(unitId)
+end
+
 function UnitFrameGlow:Apply(targetName, auraId, duration)
   local targetUnitId = FindUnitIdForName(targetName)
   if not targetUnitId then

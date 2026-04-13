@@ -13,7 +13,6 @@ local triggerTypes = {
   chat = "Chat",
   timer = "Internal Timer",
   death_alert = "Death Alert",
-  unit_info = "Unit Info",
 }
 
 local Panel = {}
@@ -68,20 +67,6 @@ local chatChannelValues = {
   { value = "OFFICER", label = "Officer" },
   { value = "EMOTE", label = "Emote" },
   { value = "TEXT_EMOTE", label = "Text Emote" },
-}
-
-local unitInfoTypeValues = {
-  { value = "health", label = "Health" },
-  { value = "power", label = "Power" },
-  { value = "secondary_power", label = "Secondary Power" },
-}
-
-local unitInfoUnitValues = {
-  { value = "player", label = "Player" },
-  { value = "target", label = "Target" },
-  { value = "focus", label = "Focus" },
-  { value = "pet", label = "Pet" },
-  { value = "specific_name", label = "Specific Name" },
 }
 
 local function GetSoundDropdownValues()
@@ -534,9 +519,6 @@ function Panel:ApplyCurrent()
   trigger.chatChannel = UIDropDownMenu_GetSelectedValue(frame.chatChannelDropDown) or trigger.chatChannel or "WHISPER"
   trigger.chatSource = tostring(frame.chatSourceInput:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
   trigger.chatDuration = NormalizeChatDuration(frame.chatDurationInput:GetText() ~= "" and frame.chatDurationInput:GetText() or trigger.chatDuration)
-  trigger.unitInfoType = UIDropDownMenu_GetSelectedValue(frame.unitInfoTypeDropDown) or trigger.unitInfoType or "health"
-  trigger.unitInfoUnit = UIDropDownMenu_GetSelectedValue(frame.unitInfoUnitDropDown) or trigger.unitInfoUnit or "player"
-  trigger.unitInfoName = tostring(frame.unitInfoNameInput:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
   trigger.debug = frame.debugCheck:GetChecked() == true
   trigger.alertDuration = tonumber(frame.deathDurationInput:GetText()) or trigger.alertDuration or 2
   trigger.maxAlertsPerCombat = NormalizeDeathAlertCap(frame.deathMaxAlertsInput:GetText() ~= "" and frame.deathMaxAlertsInput:GetText() or trigger.maxAlertsPerCombat)
@@ -632,15 +614,6 @@ function Panel:ApplyCurrent()
         GetDropdownOptionLabel(trigger.chatChannel or "WHISPER", function() return chatChannelValues end),
         trigger.chatSource ~= "" and ("  |cff66ccffFrom:|r " .. trigger.chatSource) or ""))
     end
-  elseif trigger.type == "unit_info" then
-    trigger.spellIDs = nil
-    trigger.spellNames = nil
-    trigger.spellId = nil
-    trigger.itemId = nil
-    local infoLabel = GetDropdownOptionLabel(trigger.unitInfoType or "health", function() return unitInfoTypeValues end)
-    local unitLabel = GetDropdownOptionLabel(trigger.unitInfoUnit or "player", function() return unitInfoUnitValues end)
-    local nameSuffix = (trigger.unitInfoUnit == "specific_name" and trigger.unitInfoName ~= "") and ("  |cff66ccffName:|r " .. trigger.unitInfoName) or ""
-    frame.resolvedLabel:SetText(string.format("|cff88ff88Tracking:|r %s  |cff66ccffUnit:|r %s%s", infoLabel, unitLabel, nameSuffix))
   else
     trigger.spellIDs = nil
     trigger.spellNames = nil
@@ -935,17 +908,17 @@ function Panel:Create(parent)
   frame.auraIgnoreNPCsCheck = Frames.CreateCheckbox(frame, "Ignore NPCs")
   frame.auraIgnoreNPCsCheck:SetPoint("TOPLEFT", frame.auraAliveOnlyCheck, "BOTTOMLEFT", 0, -6)
 
-  frame.showAlwaysCheck = Frames.CreateCheckbox(frame, "Always Show")
-  frame.showAlwaysCheck:SetPoint("TOPLEFT", frame.modeDropDown, "BOTTOMLEFT", 14, -10)
-  frame.showAlwaysCheck:Hide()
-
   frame.cooldownMatchLabel = Frames.CreateLabel(frame, "Match When", "GameFontNormal")
   frame.cooldownMatchLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
   frame.cooldownMatchDropDown = Frames.CreateDropdown(frame, 170)
   frame.cooldownMatchDropDown:SetPoint("TOPLEFT", frame.cooldownMatchLabel, "BOTTOMLEFT", -14, -4)
 
+  frame.showAlwaysCheck = Frames.CreateCheckbox(frame, "Always Show")
+  frame.showAlwaysCheck:SetPoint("TOPLEFT", frame.cooldownMatchDropDown, "BOTTOMLEFT", 14, -10)
+  frame.showAlwaysCheck:Hide()
+
   frame.manualCooldownLabel = Frames.CreateLabel(frame, "Manual Cooldown Seconds", "GameFontNormal")
-  frame.manualCooldownLabel:SetPoint("TOPLEFT", frame.cooldownMatchDropDown, "BOTTOMLEFT", 14, -10)
+  frame.manualCooldownLabel:SetPoint("TOPLEFT", frame.showAlwaysCheck, "BOTTOMLEFT", 0, -10)
   frame.manualCooldownInput = Frames.CreateInput(frame, 120, 24)
   frame.manualCooldownInput:SetPoint("TOPLEFT", frame.manualCooldownLabel, "BOTTOMLEFT", 0, -6)
   frame.manualCooldownHint = Frames.CreateLabel(frame, "Optional fallback for spells whose cooldown API is restricted. Used when learned from cast.", "GameFontDisableSmall")
@@ -970,19 +943,6 @@ function Panel:Create(parent)
   frame.chatHint = Frames.CreateLabel(frame, "Use comma-separated phrases in the match box. Sender matching accepts short or full player names.", "GameFontDisableSmall")
   frame.chatHint:SetPoint("TOPLEFT", frame.chatDurationInput, "BOTTOMLEFT", 0, -6)
   frame.chatHint:SetWidth(420)
-
-  frame.unitInfoTypeLabel = Frames.CreateLabel(frame, "Info Type", "GameFontNormal")
-  frame.unitInfoTypeLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
-  frame.unitInfoTypeDropDown = Frames.CreateDropdown(frame, 180)
-  frame.unitInfoTypeDropDown:SetPoint("TOPLEFT", frame.unitInfoTypeLabel, "BOTTOMLEFT", -14, -4)
-  frame.unitInfoUnitLabel = Frames.CreateLabel(frame, "Unit", "GameFontNormal")
-  frame.unitInfoUnitLabel:SetPoint("TOPLEFT", frame.unitInfoTypeDropDown, "BOTTOMLEFT", 14, -10)
-  frame.unitInfoUnitDropDown = Frames.CreateDropdown(frame, 180)
-  frame.unitInfoUnitDropDown:SetPoint("TOPLEFT", frame.unitInfoUnitLabel, "BOTTOMLEFT", -14, -4)
-  frame.unitInfoNameLabel = Frames.CreateLabel(frame, "Specific Unit Name", "GameFontNormal")
-  frame.unitInfoNameLabel:SetPoint("TOPLEFT", frame.unitInfoUnitDropDown, "BOTTOMLEFT", 14, -10)
-  frame.unitInfoNameInput = Frames.CreateInput(frame, 180, 24)
-  frame.unitInfoNameInput:SetPoint("TOPLEFT", frame.unitInfoNameLabel, "BOTTOMLEFT", 0, -6)
 
   frame.debugCheck = Frames.CreateCheckbox(frame, "Debug Trigger")
   frame.debugCheck:SetPoint("TOPLEFT", frame.chargeCooldownCheck, "BOTTOMLEFT", 0, -8)
@@ -1115,16 +1075,6 @@ function Panel:Create(parent)
   end, function()
     Panel:ApplyCurrent()
   end)
-  InitDropdownValues(frame.unitInfoTypeDropDown, function()
-    return unitInfoTypeValues
-  end, function()
-    Panel:ApplyCurrent()
-  end)
-  InitDropdownValues(frame.unitInfoUnitDropDown, function()
-    return unitInfoUnitValues
-  end, function()
-    Panel:ApplyCurrent()
-  end)
   InitDropdownValues(frame.deathTankSoundDropDown, GetSoundDropdownValues, function()
     UpdateSelectorButtonText(frame.deathTankSoundButton, frame.deathTankSoundDropDown, GetSoundDropdownValues)
     UpdateSoundPreviewButton(frame.deathTankSoundPreview, frame.deathTankSoundDropDown)
@@ -1149,7 +1099,6 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.manualCooldownInput)
   self:WireLiveInput(frame.chatSourceInput)
   self:WireLiveInput(frame.chatDurationInput)
-  self:WireLiveInput(frame.unitInfoNameInput)
   self:WireLiveInput(frame.deathDurationInput)
   self:WireLiveInput(frame.deathMaxAlertsInput)
   frame.showAlwaysCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
@@ -1230,14 +1179,6 @@ function Panel:Refresh(aura)
     else
       self.frame.resolvedLabel:SetText("|cffaaaaaaEnter one or more comma-separated phrases to watch for in chat.|r")
     end
-  elseif trigger.type == "unit_info" then
-    self.frame.argLabel:SetText("Spell / Item Name or IDs")
-    self.frame.argInput:SetText("")
-    local infoLabel = GetDropdownOptionLabel(trigger.unitInfoType or "health", function() return unitInfoTypeValues end)
-    local unitLabel = GetDropdownOptionLabel(trigger.unitInfoUnit or "player", function() return unitInfoUnitValues end)
-    local configuredName = tostring(trigger.unitInfoName or ""):gsub("^%s+", ""):gsub("%s+$", "")
-    local nameSuffix = (trigger.unitInfoUnit == "specific_name" and configuredName ~= "") and ("  |cff66ccffName:|r " .. configuredName) or ""
-    self.frame.resolvedLabel:SetText(string.format("|cff88ff88Tracking:|r %s  |cff66ccffUnit:|r %s%s", infoLabel, unitLabel, nameSuffix))
   else
     self.frame.argLabel:SetText("Spell / Item Name or IDs")
     self.frame.argInput:SetText("")
@@ -1251,7 +1192,6 @@ function Panel:Refresh(aura)
   local isAura = trigger.type == "aura"
   local isChat = trigger.type == "chat"
   local isDeathAlert = trigger.type == "death_alert"
-  local isUnitInfo = trigger.type == "unit_info"
   self.frame.modeLabel:SetShown(isSimple)
   self.frame.modeDropDown:SetShown(isSimple)
   self.frame.auraTypeLabel:SetShown(isAura)
@@ -1265,10 +1205,7 @@ function Panel:Refresh(aura)
   self.frame.auraAliveOnlyCheck:SetShown(isAura)
   self.frame.auraIgnoreNPCsCheck:SetShown(isAura and (trigger.unit or "player") == "group")
   self.frame.argLabel:SetShown(not isDeathAlert)
-  self.frame.argInput:SetShown(not isDeathAlert and not isUnitInfo)
-  if isUnitInfo then
-    self.frame.argLabel:SetShown(false)
-  end
+  self.frame.argInput:SetShown(not isDeathAlert)
   self.frame.chatChannelLabel:SetShown(isChat)
   self.frame.chatChannelDropDown:SetShown(isChat)
   self.frame.chatSourceLabel:SetShown(isChat)
@@ -1276,12 +1213,6 @@ function Panel:Refresh(aura)
   self.frame.chatDurationLabel:SetShown(isChat)
   self.frame.chatDurationInput:SetShown(isChat)
   self.frame.chatHint:SetShown(isChat)
-  self.frame.unitInfoTypeLabel:SetShown(isUnitInfo)
-  self.frame.unitInfoTypeDropDown:SetShown(isUnitInfo)
-  self.frame.unitInfoUnitLabel:SetShown(isUnitInfo)
-  self.frame.unitInfoUnitDropDown:SetShown(isUnitInfo)
-  self.frame.unitInfoNameLabel:SetShown(isUnitInfo and (trigger.unitInfoUnit or "player") == "specific_name")
-  self.frame.unitInfoNameInput:SetShown(isUnitInfo and (trigger.unitInfoUnit or "player") == "specific_name")
   UIDropDownMenu_SetSelectedValue(self.frame.auraTypeDropDown, trigger.auraType or "buff")
   UIDropDownMenu_SetText(self.frame.auraTypeDropDown, (trigger.auraType or "buff"):gsub("^%l", string.upper))
   UIDropDownMenu_SetSelectedValue(self.frame.auraFilterDropDown, trigger.auraFilter or "present")
@@ -1315,13 +1246,6 @@ function Panel:Refresh(aura)
   SetDropdownValue(self.frame.chatChannelDropDown, trigger.chatChannel or "WHISPER", function()
     return chatChannelValues
   end)
-  SetDropdownValue(self.frame.unitInfoTypeDropDown, trigger.unitInfoType or "health", function()
-    return unitInfoTypeValues
-  end)
-  SetDropdownValue(self.frame.unitInfoUnitDropDown, trigger.unitInfoUnit or "player", function()
-    return unitInfoUnitValues
-  end)
-  self.frame.unitInfoNameInput:SetText(trigger.unitInfoName or "")
   self.frame.chatSourceInput:SetText(trigger.chatSource or "")
   self.frame.chatDurationInput:SetText(isChat and tostring(NormalizeChatDuration(trigger.chatDuration)) or "")
   self.frame.deathDurationLabel:SetShown(isDeathAlert)

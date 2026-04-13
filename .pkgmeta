@@ -7,3 +7,4 @@ ignore:
   - deploy.ps1
   - README.md
   - .gitignore
+  - update_and_push.ps1

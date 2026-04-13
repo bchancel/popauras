@@ -112,6 +112,7 @@ Defaults.display = {
   growth = "DOWN",
   maintainAuraOrder = false,
   align = "LEFT",
+  showOnRaidFrames = false,
 }
 
 Defaults.load = {
@@ -301,7 +302,8 @@ function Defaults:NewAura(kind, triggerType)
   local id = string.format("pa_%d_%d", time(), math.random(1000, 9999))
   local defaultName = kind == "bar" and "New Bar"
     or kind == "icon" and "New Icon"
-    or kind == "text" and "Death Alert"
+    or (kind == "text" and triggerType == "death_alert") and "Death Alert"
+    or kind == "text" and "New Text"
     or kind == "dynamic_group" and "New Dynamic Group"
     or kind == "interrupt_tracker" and "New Interrupt Tracker"
     or "New Group"
@@ -378,7 +380,7 @@ function Defaults:NewAura(kind, triggerType)
     aura.position.height = 48
     aura.position.x = 0
     aura.position.y = 180
-    aura.text.label = "%n dead"
+    aura.text.label = triggerType == "death_alert" and "%n dead" or "%n"
   elseif kind == "interrupt_tracker" then
     aura.triggers = {}
     aura.display.icon = true

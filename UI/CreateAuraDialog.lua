@@ -18,9 +18,9 @@ local auraKinds = {
     triggerType = "spell_cooldown",
   },
   text = {
-    label = "Death Alert",
-    defaultName = "Death Alert",
-    triggerType = "death_alert",
+    label = "Text Aura",
+    defaultName = "New Text",
+    triggerType = "simple",
   },
   group = {
     label = "Group",
@@ -36,7 +36,18 @@ local auraKinds = {
   },
 }
 
-local function GetAuraKindInfo(kind)
+local presetOverrides = {
+  death_alert_text = {
+    label = "Death Alert",
+    defaultName = "Death Alert",
+    triggerType = "death_alert",
+  },
+}
+
+local function GetAuraKindInfo(kind, preset)
+  if preset and presetOverrides[preset] then
+    return presetOverrides[preset]
+  end
   return auraKinds[kind] or auraKinds.bar
 end
 
@@ -104,7 +115,7 @@ function dialog:Create()
 
   frame.createButton = Frames.CreateButton(frame, "Create", 120, 28, function()
     local kind = frame.pendingKind or "bar"
-    local info = GetAuraKindInfo(kind)
+    local info = GetAuraKindInfo(kind, frame.pendingPreset)
     local requestedName = ns.Registry:GetUniqueAuraName(frame.nameInput:GetText())
     local aura = ns.Registry:CreateAura(kind, info.triggerType)
     aura.name = requestedName
@@ -128,13 +139,14 @@ function dialog:Create()
   return frame
 end
 
-function dialog:Show(kind)
+function dialog:Show(kind, preset)
   if not self.frame then
     self:Create()
   end
 
-  local info = GetAuraKindInfo(kind)
+  local info = GetAuraKindInfo(kind, preset)
   self.frame.pendingKind = kind or "bar"
+  self.frame.pendingPreset = preset
   self.frame.kindLabel:SetText(string.format("Create %s", info.label))
   self.frame.nameInput:SetText(ns.Registry:GetUniqueAuraName(info.defaultName))
   self.frame:SetFrameStrata("FULLSCREEN_DIALOG")

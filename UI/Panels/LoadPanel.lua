@@ -622,8 +622,6 @@ function Panel:RefreshSpecSection(aura)
 
   local hasClasses = false
   local classCollapsed = self.frame.collapsedSections and self.frame.collapsedSections.class == true
-  local specCollapsed = self.frame.collapsedSections and self.frame.collapsedSections.spec == true
-  local anchor = self.frame.classSection
 
   for _, specCheck in ipairs(self.frame.specChecks or {}) do
     specCheck:Hide()
@@ -654,21 +652,23 @@ function Panel:RefreshSpecSection(aura)
     end
   end
 
-  local index = 0
+  local bottomAnchor = classCollapsed and self.frame.classHeader or self.frame.classSection
+
+  local specIndex = 0
   for _, classToken in ipairs(CLASS_ORDER) do
     if load.classes[classToken] then
       hasClasses = true
       local info = CLASS_SPECS[classToken]
-      for specIndex, specName in ipairs(info.specs) do
-        index = index + 1
-        local check = self.frame.specChecks[index]
+      for si, specName in ipairs(info.specs) do
+        specIndex = specIndex + 1
+        local check = self.frame.specChecks[specIndex]
         if not check then
           check = Frames.CreateCheckbox(self.frame.content, "")
-          self.frame.specChecks[index] = check
+          self.frame.specChecks[specIndex] = check
         end
         check:ClearAllPoints()
-        check:SetPoint("TOPLEFT", self.frame.specHeader, "BOTTOMLEFT", 0, -8 - ((index - 1) * 24))
-        local key = classToken .. ":" .. specIndex
+        check:SetPoint("TOPLEFT", self.frame.specHeader, "BOTTOMLEFT", 0, -8 - ((specIndex - 1) * 24))
+        local key = classToken .. ":" .. si
         check.Text:SetText(string.format("%s: %s", info.className, specName))
         check:SetChecked(load.specs[key] == true)
         check:SetScript("OnClick", function(selfCheck)
@@ -676,41 +676,94 @@ function Panel:RefreshSpecSection(aura)
           Panel:RefreshSpecSection(aura)
           Panel:ApplyCurrent()
         end)
-        check:SetShown(not specCollapsed)
+        check:SetShown(not classCollapsed)
       end
     end
   end
 
-  self.frame.specHeader:SetShown(hasClasses)
-  self.frame.specToggle:SetShown(hasClasses)
   self.frame.specHeader:ClearAllPoints()
-  self.frame.specHeader:SetPoint(
-    "TOPLEFT",
-    classCollapsed and self.frame.classHeader or self.frame.classSection,
-    "BOTTOMLEFT",
-    0,
-    -18
-  )
-  self.frame.specHeader:SetText(hasClasses and "Spec Filter" or "")
-  self.frame.specToggle:ClearAllPoints()
-  self.frame.specToggle:SetPoint("LEFT", self.frame.specHeader, "RIGHT", 8, 0)
-  SetCollapseButtonText(self.frame.specToggle, specCollapsed)
-
-  local specAnchor = classCollapsed and self.frame.classHeader or self.frame.classSection
-  if hasClasses then
-    specAnchor = specCollapsed and self.frame.specHeader or (self.frame.specChecks[index] or self.frame.specHeader)
+  if hasClasses and not classCollapsed then
+    self.frame.specHeader:SetPoint("TOPLEFT", self.frame.classSection, "BOTTOMLEFT", 0, -12)
+    self.frame.specHeader:SetText("Specializations")
+    self.frame.specHeader:Show()
+    self.frame.specToggle:Hide()
+    bottomAnchor = self.frame.specChecks[specIndex] or self.frame.specHeader
+  else
+    self.frame.specHeader:Hide()
+    self.frame.specToggle:Hide()
   end
-  self:RefreshTalentSection(aura, specAnchor)
+
+  self.frame.talentHeader:ClearAllPoints()
+  self.frame.talentEnabledCheck:ClearAllPoints()
+  if hasClasses and not classCollapsed then
+    self.frame.talentHeader:SetPoint("TOPLEFT", bottomAnchor, "BOTTOMLEFT", 0, -12)
+    self.frame.talentHeader:SetText("Talents")
+    self.frame.talentHeader:Show()
+    self.frame.talentEnabledCheck:SetPoint("TOPLEFT", self.frame.talentHeader, "BOTTOMLEFT", 0, -8)
+    self.frame.talentEnabledCheck:Show()
+  else
+    self.frame.talentHeader:Hide()
+    self.frame.talentEnabledCheck:Hide()
+  end
+
+  self:RefreshTalentSection(aura, bottomAnchor)
 end
 
 function Panel:RefreshTalentSection(aura, topAnchor)
   local load = aura.load or {}
   load.talents = EnsureMap(load.talents)
+  local classCollapsed = self.frame.collapsedSections and self.frame.collapsedSections.class == true
+  local hasClasses = CountEnabled(EnsureMap(load.classes)) > 0
 
   HideTalentListWidgets(self.frame)
 
+  local classBottomAnchor = topAnchor
+  local talentContentHeight = 0
+
+  if hasClasses and not classCollapsed then
+    self.frame.talentEnabledCheck:SetChecked(load.talent == true)
+    self.frame.talentPickerButton:ClearAllPoints()
+    self.frame.talentPickerButton:SetPoint("TOPLEFT", self.frame.talentEnabledCheck, "BOTTOMLEFT", 26, -6)
+
+    local talentAnchor = self.frame.talentEnabledCheck
+
+    if load.talent == true then
+      local groups, reason = BuildTalentOptions(load)
+      self.frame.talentHint:ClearAllPoints()
+      self.frame.talentHint:SetPoint("TOPLEFT", talentAnchor, "BOTTOMLEFT", 0, -10)
+      if not groups or #groups == 0 then
+        self.frame.talentHint:SetText("|cffaaaaaa" .. tostring(reason or "No talent options available.") .. "|r")
+        self.frame.talentHint:Show()
+        self.frame.talentPickerButton:Hide()
+        talentAnchor = self.frame.talentHint
+        talentContentHeight = 34
+      else
+        local selectedNames = GetSelectedTalentNames(groups, load)
+        local summaryText = #selectedNames > 0 and table.concat(selectedNames, ", ") or "No talents selected."
+        self.frame.talentHint:SetText(string.format("|cffaaaaaa%s|r", summaryText))
+        self.frame.talentHint:Show()
+        self.frame.talentPickerButton:Show()
+        self.frame.talentPickerButton:SetText("Choose Talents")
+        self.frame.talentPickerButton:SetScript("OnClick", function()
+          Panel:ShowTalentPicker(aura, groups)
+        end)
+        talentAnchor = self.frame.talentPickerButton
+        self.frame.talentHint:ClearAllPoints()
+        self.frame.talentHint:SetPoint("TOPLEFT", self.frame.talentPickerButton, "BOTTOMLEFT", 0, -8)
+        talentContentHeight = 56
+      end
+    else
+      self.frame.talentHint:Hide()
+      self.frame.talentPickerButton:Hide()
+    end
+    classBottomAnchor = self.frame.talentHint:IsShown() and self.frame.talentHint or self.frame.talentEnabledCheck
+  else
+    self.frame.talentHint:Hide()
+    self.frame.talentPickerButton:Hide()
+  end
+
   self.frame.visibilityHeader:ClearAllPoints()
-  self.frame.visibilityHeader:SetPoint("TOPLEFT", topAnchor, "BOTTOMLEFT", 0, -24)
+  self.frame.visibilityHeader:SetPoint("TOPLEFT", classBottomAnchor, "BOTTOMLEFT", 0, -24)
   self.frame.visibilitySection:ClearAllPoints()
   self.frame.visibilitySection:SetPoint("TOPLEFT", self.frame.visibilityHeader, "BOTTOMLEFT", 0, -8)
 
@@ -753,52 +806,8 @@ function Panel:RefreshTalentSection(aura, topAnchor)
   self.frame.equippedItemResolved:ClearAllPoints()
   self.frame.equippedItemResolved:SetPoint("TOPLEFT", self.frame.equippedItemInput, "BOTTOMLEFT", 0, -6)
 
-  self.frame.talentHeader:SetShown(true)
-  self.frame.talentEnabledCheck:SetShown(true)
-  self.frame.talentEnabledCheck:SetChecked(load.talent == true)
-  self.frame.talentHeader:ClearAllPoints()
-  self.frame.talentHeader:SetPoint("TOPLEFT", self.frame.equippedItemResolved, "BOTTOMLEFT", 0, -24)
-  self.frame.talentEnabledCheck:ClearAllPoints()
-  self.frame.talentEnabledCheck:SetPoint("TOPLEFT", self.frame.talentHeader, "BOTTOMLEFT", 0, -8)
-  self.frame.talentPickerButton:ClearAllPoints()
-  self.frame.talentPickerButton:SetPoint("TOPLEFT", self.frame.talentEnabledCheck, "BOTTOMLEFT", 26, -6)
-
-  local anchor = self.frame.talentEnabledCheck
-  local contentHeight = 0
-
-  if load.talent == true then
-    local groups, reason = BuildTalentOptions(load)
-    self.frame.talentHint:ClearAllPoints()
-    self.frame.talentHint:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -10)
-    if not groups or #groups == 0 then
-      self.frame.talentHint:SetText("|cffaaaaaa" .. tostring(reason or "No talent options available.") .. "|r")
-      self.frame.talentHint:Show()
-      self.frame.talentPickerButton:Hide()
-      anchor = self.frame.talentHint
-      contentHeight = 34
-    else
-      local selectedNames = GetSelectedTalentNames(groups, load)
-      local selectedCount = #selectedNames
-      local summaryText = selectedCount > 0 and table.concat(selectedNames, ", ") or "No talents selected."
-      self.frame.talentHint:SetText(string.format("|cffaaaaaa%s|r", summaryText))
-      self.frame.talentHint:Show()
-      self.frame.talentPickerButton:Show()
-      self.frame.talentPickerButton:SetText("Choose Talents")
-      self.frame.talentPickerButton:SetScript("OnClick", function()
-        Panel:ShowTalentPicker(aura, groups)
-      end)
-      anchor = self.frame.talentPickerButton
-      self.frame.talentHint:ClearAllPoints()
-      self.frame.talentHint:SetPoint("TOPLEFT", self.frame.talentPickerButton, "BOTTOMLEFT", 0, -8)
-      contentHeight = 56
-    end
-  else
-    self.frame.talentHint:Hide()
-    self.frame.talentPickerButton:Hide()
-  end
-
   self.frame.saveButton:ClearAllPoints()
-  self.frame.saveButton:SetPoint("TOPLEFT", (self.frame.talentHint:IsShown() and self.frame.talentHint or self.frame.talentEnabledCheck), "BOTTOMLEFT", 0, -18)
+  self.frame.saveButton:SetPoint("TOPLEFT", self.frame.equippedItemResolved, "BOTTOMLEFT", 0, -18)
 
   local selectedSpecCount = 0
   for _, classToken in ipairs(CLASS_ORDER) do
@@ -806,9 +815,9 @@ function Panel:RefreshTalentSection(aura, topAnchor)
       selectedSpecCount = selectedSpecCount + #(CLASS_SPECS[classToken].specs or {})
     end
   end
-  local classHeight = (self.frame.collapsedSections and self.frame.collapsedSections.class == true) and 0 or (math.ceil(#CLASS_ORDER / 2) * 24)
-  local specHeight = (self.frame.collapsedSections and self.frame.collapsedSections.spec == true) and 0 or (selectedSpecCount * 24)
-  self.frame.content:SetHeight(math.max(980, 640 + classHeight + specHeight + contentHeight))
+  local classHeight = classCollapsed and 0 or (math.ceil(#CLASS_ORDER / 2) * 24)
+  local specHeight = classCollapsed and 0 or (selectedSpecCount * 24)
+  self.frame.content:SetHeight(math.max(980, 640 + classHeight + specHeight + talentContentHeight))
 end
 
 function Panel:ShowTalentPicker(aura, groups)
