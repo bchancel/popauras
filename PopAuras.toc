@@ -2,7 +2,7 @@
 ## Title: PopAuras
 ## Notes: Midnight-safe WeakAuras-like addon focused on reliable bars and icons
 ## Author: Popabeast-Sargeras
-## Version: 0.3.3
+## Version: 0.3.4
 ## SavedVariables: PopAurasDB
 
 PopAuras.lua
