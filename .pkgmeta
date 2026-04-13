@@ -1,0 +1,9 @@
+package-as: PopAuras
+
+enable-nolib-creation: no
+
+ignore:
+  - AGENTS.md
+  - deploy.ps1
+  - README.md
+  - .gitignore
