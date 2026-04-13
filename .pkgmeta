@@ -1,6 +1,7 @@
 package-as: PopAuras
 
 enable-nolib-creation: no
+changelog-format: markdown
 
 ignore:
   - AGENTS.md

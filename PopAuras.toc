@@ -1,4 +1,4 @@
-## Interface: 120001
+## Interface: 120001, 120005
 ## Title: PopAuras
 ## Notes: Midnight-safe WeakAuras-like addon focused on reliable bars and icons
 ## Author: Popabeast-Sargeras
