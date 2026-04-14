@@ -209,7 +209,7 @@ function provider:HandleEvent(event, ...)
   end
 
   local destGUID = UnitGUID(unit)
-  if not destGUID then
+  if not destGUID or issecretvalue(destGUID) then
     return {}
   end
 
