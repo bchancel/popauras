@@ -278,79 +278,85 @@ local function TogglePerfOverlay()
   end
 end
 
+local function HandleSlashCommand(msg)
+  msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+  if msg == "debug" then
+    if ns.Debug and ns.Debug.ToggleWindow then
+      ns.Debug:ToggleWindow()
+    end
+    return
+  end
+  if msg == "memory" then
+    WriteChatLine(GetMemoryReportLine())
+    return
+  end
+  if msg == "help" then
+    WriteChatLines(GetHelpLines())
+    return
+  end
+  if msg == "perf" or msg:find("^perf%s") then
+    local command = msg:match("^perf%s*(.-)%s*$") or ""
+    if command == "" then
+      TogglePerfOverlay()
+      return
+    end
+    if command == "start" or command == "on" then
+      StartPerfCapture()
+      RefreshPerfOverlay()
+      return
+    end
+    if command == "stop" or command == "off" then
+      StopPerfCapture()
+      RefreshPerfOverlay()
+      return
+    end
+    if command == "reset" then
+      if ns.Profiler and ns.Profiler.Reset then
+        ns.Profiler:Reset()
+        WriteChatLine("PopAuras perf data reset.")
+      end
+      RefreshPerfOverlay()
+      return
+    end
+    if command == "report" then
+      WriteChatLines(GetPerfReportLines())
+      return
+    end
+    WriteChatLine("Usage: /pa perf | start | stop | report | reset")
+    return
+  end
+  if msg == "version" or msg == "ver" then
+    if ns.VersionCheck then
+      ns.VersionCheck:StartCheck()
+    end
+    return
+  end
+  if msg == "export" or msg == "import" then
+    if InCombatLockdown and InCombatLockdown() then
+      QueueOpenAfterCombat("config", "import_export")
+    else
+      OpenMainWindow("config", "import_export")
+    end
+    return
+  end
+  if InCombatLockdown and InCombatLockdown() then
+    if ns.ui.MainWindow and ns.ui.MainWindow.IsOpen and not ns.ui.MainWindow:IsOpen() then
+      QueueOpenAfterCombat("config", ns.db and ns.db.ui and ns.db.ui.activeTab or nil)
+    else
+      ns.ui.MainWindow:Toggle()
+    end
+  else
+    ns.ui.MainWindow:Toggle()
+  end
+end
+
 function Slash:Initialize()
   SLASH_POPAURAS1 = "/pa"
   SLASH_POPAURAS2 = "/popauras"
 
   SlashCmdList.POPAURAS = function(msg)
-    msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
-    if msg == "debug" then
-      if ns.Debug and ns.Debug.ToggleWindow then
-        ns.Debug:ToggleWindow()
-      end
-      return
-    end
-    if msg == "memory" then
-      WriteChatLine(GetMemoryReportLine())
-      return
-    end
-    if msg == "help" then
-      WriteChatLines(GetHelpLines())
-      return
-    end
-    if msg == "perf" or msg:find("^perf%s") then
-      local command = msg:match("^perf%s*(.-)%s*$") or ""
-      if command == "" then
-        TogglePerfOverlay()
-        return
-      end
-      if command == "start" or command == "on" then
-        StartPerfCapture()
-        RefreshPerfOverlay()
-        return
-      end
-      if command == "stop" or command == "off" then
-        StopPerfCapture()
-        RefreshPerfOverlay()
-        return
-      end
-      if command == "reset" then
-        if ns.Profiler and ns.Profiler.Reset then
-          ns.Profiler:Reset()
-          WriteChatLine("PopAuras perf data reset.")
-        end
-        RefreshPerfOverlay()
-        return
-      end
-      if command == "report" then
-        WriteChatLines(GetPerfReportLines())
-        return
-      end
-      WriteChatLine("Usage: /pa perf | start | stop | report | reset")
-      return
-    end
-    if msg == "version" or msg == "ver" then
-      if ns.VersionCheck then
-        ns.VersionCheck:StartCheck()
-      end
-      return
-    end
-    if msg == "export" or msg == "import" then
-      if InCombatLockdown and InCombatLockdown() then
-        QueueOpenAfterCombat("config", "import_export")
-      else
-        OpenMainWindow("config", "import_export")
-      end
-      return
-    end
-    if InCombatLockdown and InCombatLockdown() then
-      if ns.ui.MainWindow and ns.ui.MainWindow.IsOpen and not ns.ui.MainWindow:IsOpen() then
-        QueueOpenAfterCombat("config", ns.db and ns.db.ui and ns.db.ui.activeTab or nil)
-      else
-        ns.ui.MainWindow:Toggle()
-      end
-    else
-      ns.ui.MainWindow:Toggle()
-    end
+    C_Timer.After(0, function()
+      HandleSlashCommand(msg)
+    end)
   end
 end
