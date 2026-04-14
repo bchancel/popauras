@@ -40,5 +40,13 @@ function ActionEngine:ResolveTemplate(template, state)
   end
   template = template:gsub("%%n", state and state.name or "")
   template = template:gsub("%%m", state and state.message or "")
+  template = template:gsub("%%s", state and state.statusText or "")
+  template = template:gsub("%%u", function()
+    local unit = state and state.unit
+    if unit and type(unit) == "string" and UnitExists(unit) then
+      return UnitName(unit) or ""
+    end
+    return ""
+  end)
   return template
 end

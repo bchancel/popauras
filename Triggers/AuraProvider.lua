@@ -1706,6 +1706,7 @@ function provider:Evaluate(trigger, auraConfig)
     local firstMissingUnit = nil
     local missingCount = 0
     local matchedUnits = {}
+    local missingUnits = {}
 
     for _, candidateUnit in ipairs(IterateUnits(unit)) do
       checkedUnits[#checkedUnits + 1] = candidateUnit
@@ -1715,6 +1716,7 @@ function provider:Evaluate(trigger, auraConfig)
         if filterMode == "missing" then
           if not candidateAura then
             missingCount = missingCount + 1
+            missingUnits[#missingUnits + 1] = candidateUnit
             if not firstMissingUnit then
               firstMissingUnit = candidateUnit
             end
@@ -1738,6 +1740,7 @@ function provider:Evaluate(trigger, auraConfig)
       local state
       if firstMissingUnit then
         state = BuildMissingState(trigger, auraConfig, helpful, unit, firstMissingUnit, missingCount)
+        state.matchedUnits = missingUnits
       elseif aliveOnly and #eligibleUnits == 0 then
         state = BuildFilteredOutState(unit)
       else
@@ -1905,6 +1908,7 @@ function provider:Evaluate(trigger, auraConfig)
       missing = BuildFilteredOutState(unit)
     elseif filterMode == "missing" then
       missing = BuildMissingState(trigger, auraConfig, helpful, unit, unit, 1)
+      missing.matchedUnits = { unit }
     else
       local shouldShowMissing = trigger.showAlways == true
       missing = ns.Schema.NormalizeRuntimeState({

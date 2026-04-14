@@ -167,8 +167,9 @@ function Panel:Create(parent)
   frame.unitInput:SetPoint("TOPLEFT", frame.unitLabel, "BOTTOMLEFT", 0, -6)
   self:WireLiveInput(frame.unitInput)
 
-  frame.unitHint = Frames.CreateLabel(frame, "|cffaaaaaaUse %n for the trigger source name (e.g. whisper sender).|r", "GameFontHighlightSmall")
+  frame.unitHint = Frames.CreateLabel(frame, "|cffaaaaaa%u = trigger unit (party/raid member)  |  %n = trigger name (spell or sender)  |  %s = status text|r", "GameFontHighlightSmall")
   frame.unitHint:SetPoint("TOPLEFT", frame.unitInput, "BOTTOMLEFT", 0, -4)
+  frame.unitHint:SetWidth(500)
 
   frame.durationLabel = Frames.CreateLabel(frame, "Glow Duration (seconds)", "GameFontNormal")
   frame.durationLabel:SetPoint("TOPLEFT", frame.unitHint, "BOTTOMLEFT", 0, -12)

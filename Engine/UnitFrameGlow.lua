@@ -245,12 +245,54 @@ function UnitFrameGlow:CancelForAura(auraId)
   activeGlows[auraId] = nil
 end
 
-ns.ActionEngine:RegisterHandler("glow_unit_frame", function(action, aura, state)
-  local resolved = ns.ActionEngine:ResolveTemplate(action.unit or "%n", state)
-  local targetName = NormalizePlayerName(resolved)
-  if not targetName then
+function UnitFrameGlow:ApplyByUnit(targetUnitId, auraId, duration)
+  if not targetUnitId or not UnitExists(targetUnitId) then
     return
   end
+
+  local unitFrames = FindUnitFramesForUnit(targetUnitId)
+  if not unitFrames then
+    return
+  end
+
+  self:CancelForAura(auraId)
+
+  local glowedFrames = {}
+  for _, frame in ipairs(unitFrames) do
+    if StartGlow(frame) then
+      glowedFrames[#glowedFrames + 1] = frame
+    end
+  end
+
+  if #glowedFrames == 0 then
+    return
+  end
+
+  activeGlows[auraId] = glowedFrames
+
+  if duration and duration > 0 then
+    C_Timer.After(duration, function()
+      self:CancelForAura(auraId)
+    end)
+  end
+end
+
+ns.ActionEngine:RegisterHandler("glow_unit_frame", function(action, aura, state)
+  local template = action.unit or "%n"
+  local resolved = ns.ActionEngine:ResolveTemplate(template, state)
+  local targetName = NormalizePlayerName(resolved)
   local duration = tonumber(action.duration or 0) or 0
-  UnitFrameGlow:Apply(targetName, aura.id, duration)
+
+  if targetName then
+    local unitId = FindUnitIdForName(targetName)
+    if unitId then
+      UnitFrameGlow:ApplyByUnit(unitId, aura.id, duration)
+      return
+    end
+  end
+
+  local stateUnit = state and state.unit
+  if stateUnit and type(stateUnit) == "string" and UnitExists(stateUnit) then
+    UnitFrameGlow:ApplyByUnit(stateUnit, aura.id, duration)
+  end
 end)
