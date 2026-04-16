@@ -1,3 +1,6 @@
+# v0.3.7
+- Version bump
+
 # v0.3.6
 - Aura and item triggers can now accept item names instead of requiring item IDs
 - Load conditions can resolve "Only load if item equipped" by item name
