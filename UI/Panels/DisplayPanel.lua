@@ -585,6 +585,8 @@ function Panel:UpdateControlStates()
   local trigger = GetSelectedTrigger(aura)
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura")
   local showIconCooldownControls = not isGroup and not isText and isIconAura and frame.iconSection.collapsed ~= true
+  local showRaidFrameSection = not isGroup and not isText and isIconAura and frame.raidFrameSection:IsShown()
+  local showRaidFrameControls = showRaidFrameSection and frame.showOnRaidFramesCheck:GetChecked() == true and frame.raidFrameSection.collapsed ~= true
   local soundEnabled = frame.soundEnabledCheck:GetChecked() == true
 
   SetControlGroupEnabled({
@@ -621,6 +623,18 @@ function Panel:UpdateControlStates()
     frame.iconFinishFlashCheck,
     frame.iconSwipeColorWrap.button, frame.iconSwipeColorWrap.label,
   }, not isGroup and not isText and isIconAura)
+
+  SetControlGroupEnabled({ frame.showOnRaidFramesCheck }, showRaidFrameSection)
+  SetControlGroupEnabled({
+    frame.raidFrameGlowCheck,
+    frame.raidFrameDurationCheck,
+    frame.raidFrameStacksCheck,
+    frame.raidFrameSizeWrap.input, frame.raidFrameSizeWrap.label,
+    frame.raidFrameAnchorWrap.dropdown, frame.raidFrameAnchorWrap.label,
+    frame.raidFrameXWrap.input, frame.raidFrameXWrap.label,
+    frame.raidFrameYWrap.input, frame.raidFrameYWrap.label,
+    frame.raidFrameHint,
+  }, showRaidFrameControls)
 
   SetControlGroupEnabled({
     frame.nameControls.fontWrap.dropdown, frame.nameControls.fontWrap.label,
@@ -740,6 +754,13 @@ function Panel:ApplyCurrent()
   aura.display.iconOffsetX = CommitNumeric(frame.iconXWrap.input, aura.display.iconOffsetX or 0)
   aura.display.iconOffsetY = CommitNumeric(frame.iconYWrap.input, aura.display.iconOffsetY or 0)
   aura.display.showOnRaidFrames = frame.showOnRaidFramesCheck:GetChecked() == true
+  aura.display.raidFrameIconSize = CommitInteger(frame.raidFrameSizeWrap.input, aura.display.raidFrameIconSize or 18)
+  aura.display.raidFrameAnchor = UIDropDownMenu_GetSelectedValue(frame.raidFrameAnchorWrap.dropdown) or aura.display.raidFrameAnchor or "BOTTOM"
+  aura.display.raidFrameOffsetX = CommitNumeric(frame.raidFrameXWrap.input, aura.display.raidFrameOffsetX or 0)
+  aura.display.raidFrameOffsetY = CommitNumeric(frame.raidFrameYWrap.input, aura.display.raidFrameOffsetY or 11)
+  aura.display.raidFrameShowGlow = frame.raidFrameGlowCheck:GetChecked() == true
+  aura.display.raidFrameShowDuration = frame.raidFrameDurationCheck:GetChecked() == true
+  aura.display.raidFrameShowStacks = frame.raidFrameStacksCheck:GetChecked() == true
 
   aura.text = aura.text or {}
   aura.text.nameOverride = CommitString(frame.nameControls.altNameWrap.input)
@@ -836,10 +857,11 @@ function Panel:Create(parent)
   frame.canvasSection.expandedHeightGroup = 352
   frame.groupSection = CreateSection(frame.content, "Group Layout", -396, 132)
   frame.iconSection = CreateSection(frame.content, "Icon", -560, 270)
-  frame.nameSection = CreateSection(frame.content, "Name Text", -816, 290)
-  frame.timerSection = CreateSection(frame.content, "Duration Text", -1122, 260)
-  frame.stacksSection = CreateSection(frame.content, "Stacks Text", -1398, 220)
-  frame.soundSection = CreateSection(frame.content, "Sound", -1634, 164)
+  frame.raidFrameSection = CreateSection(frame.content, "Raid Frames", -846, 188)
+  frame.nameSection = CreateSection(frame.content, "Name Text", -1050, 290)
+  frame.timerSection = CreateSection(frame.content, "Duration Text", -1356, 260)
+  frame.stacksSection = CreateSection(frame.content, "Stacks Text", -1632, 220)
+  frame.soundSection = CreateSection(frame.content, "Sound", -1868, 164)
 
   local function HookSection(section, key)
     section.header:EnableMouse(true)
@@ -854,6 +876,7 @@ function Panel:Create(parent)
   HookSection(frame.canvasSection, "canvas")
   HookSection(frame.groupSection, "group")
   HookSection(frame.iconSection, "icon")
+  HookSection(frame.raidFrameSection, "raidFrames")
   HookSection(frame.nameSection, "name")
   HookSection(frame.timerSection, "timer")
   HookSection(frame.stacksSection, "stacks")
@@ -1010,11 +1033,25 @@ function Panel:Create(parent)
   frame.iconYWrap = CreateLabeledInput(frame.iconSection, "Icon Y", 410, -96, 60)
   frame.altIconIdWrap = CreateLabeledInput(frame.iconSection, "Alternate Icon Name / ID", 12, -158, 280)
   frame.iconSwipeColorWrap = CreateColorSwatch(frame.iconSection, "Cooldown Shade", 360, -158)
-  frame.showOnRaidFramesCheck = Frames.CreateCheckbox(frame.iconSection, "Show on Raid Frames")
-  frame.showOnRaidFramesCheck:SetPoint("TOPLEFT", 12, -196)
   frame.iconHint = Frames.CreateLabel(frame.iconSection, "Alternate icon accepts a spell name, spell ID, or raw texture file ID. Hide CDM Icon only affects mapped tracked-buff icons.", "GameFontDisableSmall")
-  frame.iconHint:SetPoint("TOPLEFT", 12, -226)
+  frame.iconHint:SetPoint("TOPLEFT", 12, -196)
   frame.iconHint:SetWidth(660)
+
+  frame.showOnRaidFramesCheck = Frames.CreateCheckbox(frame.raidFrameSection, "Show on Raid Frames")
+  frame.showOnRaidFramesCheck:SetPoint("TOPLEFT", 12, -34)
+  frame.raidFrameGlowCheck = Frames.CreateCheckbox(frame.raidFrameSection, "Glow")
+  frame.raidFrameGlowCheck:SetPoint("TOPLEFT", 200, -34)
+  frame.raidFrameDurationCheck = Frames.CreateCheckbox(frame.raidFrameSection, "Duration")
+  frame.raidFrameDurationCheck:SetPoint("TOPLEFT", 284, -34)
+  frame.raidFrameStacksCheck = Frames.CreateCheckbox(frame.raidFrameSection, "Stacks")
+  frame.raidFrameStacksCheck:SetPoint("TOPLEFT", 392, -34)
+  frame.raidFrameSizeWrap = CreateLabeledInput(frame.raidFrameSection, "Icon Size", 12, -86, 54)
+  frame.raidFrameAnchorWrap = CreateLabeledDropdown(frame.raidFrameSection, "Anchor", 110, -86, 150, iconAnchorValues)
+  frame.raidFrameXWrap = CreateLabeledInput(frame.raidFrameSection, "Offset X", 310, -86, 60)
+  frame.raidFrameYWrap = CreateLabeledInput(frame.raidFrameSection, "Offset Y", 410, -86, 60)
+  frame.raidFrameHint = Frames.CreateLabel(frame.raidFrameSection, "Places compact aura icons on detected party or raid unit frames without rebuilding them every refresh. Anchor and offsets are applied per unit frame.", "GameFontDisableSmall")
+  frame.raidFrameHint:SetPoint("TOPLEFT", 12, -150)
+  frame.raidFrameHint:SetWidth(660)
 
   frame.soundEnabledCheck = Frames.CreateCheckbox(frame.soundSection, "Play Aura Sound")
   frame.soundEnabledCheck:SetPoint("TOPLEFT", 12, -34)
@@ -1088,8 +1125,18 @@ function Panel:Create(parent)
     frame.iconXWrap.label, frame.iconXWrap.input,
     frame.iconYWrap.label, frame.iconYWrap.input,
     frame.iconSwipeColorWrap.label, frame.iconSwipeColorWrap.button, frame.iconSwipeColorWrap.valueText,
-    frame.showOnRaidFramesCheck,
     frame.iconHint
+  )
+  RegisterSectionWidgets(frame.raidFrameSection,
+    frame.showOnRaidFramesCheck,
+    frame.raidFrameGlowCheck,
+    frame.raidFrameDurationCheck,
+    frame.raidFrameStacksCheck,
+    frame.raidFrameSizeWrap.label, frame.raidFrameSizeWrap.input,
+    frame.raidFrameAnchorWrap.label, frame.raidFrameAnchorWrap.dropdown,
+    frame.raidFrameXWrap.label, frame.raidFrameXWrap.input,
+    frame.raidFrameYWrap.label, frame.raidFrameYWrap.input,
+    frame.raidFrameHint
   )
   RegisterSectionWidgets(frame.nameSection,
     frame.nameControls.showCheck,
@@ -1146,6 +1193,9 @@ function Panel:Create(parent)
   frame.altIconIdWrap.input:SetMaxLetters(64)
   ConfigureNumericInput(frame.iconXWrap.input, 10)
   ConfigureNumericInput(frame.iconYWrap.input, 10)
+  ConfigureNumericInput(frame.raidFrameSizeWrap.input, 3)
+  ConfigureNumericInput(frame.raidFrameXWrap.input, 10)
+  ConfigureNumericInput(frame.raidFrameYWrap.input, 10)
   frame.nameControls.altNameWrap.input:SetMaxLetters(64)
   ConfigureNumericInput(frame.nameControls.sizeWrap.input, 3)
   ConfigureNumericInput(frame.nameControls.xWrap.input, 10)
@@ -1161,6 +1211,7 @@ function Panel:Create(parent)
     frame.canvasSection,
     frame.groupSection,
     frame.iconSection,
+    frame.raidFrameSection,
     frame.nameSection,
     frame.timerSection,
     frame.stacksSection,
@@ -1180,6 +1231,9 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.altIconIdWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.iconXWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.iconYWrap.input, function() Panel:ApplyCurrent() end)
+  self:WireLiveInput(frame.raidFrameSizeWrap.input, function() Panel:ApplyCurrent() end)
+  self:WireLiveInput(frame.raidFrameXWrap.input, function() Panel:ApplyCurrent() end)
+  self:WireLiveInput(frame.raidFrameYWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.nameControls.altNameWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.nameControls.sizeWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.nameControls.xWrap.input, function() Panel:ApplyCurrent() end)
@@ -1198,6 +1252,9 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.iconMatchSizeCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.hideCDMIconCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showOnRaidFramesCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.raidFrameGlowCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.raidFrameDurationCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.raidFrameStacksCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupShowBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.readyLookCheck, function() Panel:ApplyCurrent() end)
@@ -1219,6 +1276,7 @@ function Panel:Create(parent)
   InitDropdownWithCallback(frame.barTextureWrap.dropdown, barTextureValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.groupGrowthWrap.dropdown, { "DOWN", "UP", "RIGHT", "LEFT" }, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.iconAnchorWrap.dropdown, iconAnchorValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.raidFrameAnchorWrap.dropdown, iconAnchorValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.soundFileWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.soundChannelWrap.dropdown, GetSoundChannelDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.nameControls.fontWrap.dropdown, fontStyleValues, function() Panel:ApplyCurrent() end)
@@ -1436,6 +1494,13 @@ function Panel:Refresh(aura)
   self.frame.iconXWrap.input:SetText(tostring(aura.display.iconOffsetX or 0))
   self.frame.iconYWrap.input:SetText(tostring(aura.display.iconOffsetY or 0))
   SetColorSwatch(self.frame.iconSwipeColorWrap, aura.display.iconSwipeColor or { r = 0, g = 0, b = 0, a = 0.60 })
+  self.frame.showOnRaidFramesCheck:SetChecked(aura.display.showOnRaidFrames == true)
+  self.frame.raidFrameGlowCheck:SetChecked(aura.display.raidFrameShowGlow == true)
+  self.frame.raidFrameDurationCheck:SetChecked(aura.display.raidFrameShowDuration == true)
+  self.frame.raidFrameStacksCheck:SetChecked(aura.display.raidFrameShowStacks == true)
+  self.frame.raidFrameSizeWrap.input:SetText(tostring(aura.display.raidFrameIconSize or 18))
+  self.frame.raidFrameXWrap.input:SetText(tostring(aura.display.raidFrameOffsetX or 0))
+  self.frame.raidFrameYWrap.input:SetText(tostring(aura.display.raidFrameOffsetY or 11))
   self.frame.soundEnabledCheck:SetChecked(aura.display.soundEnabled == true)
 
   SetDropdown(self.frame.orientationWrap.dropdown, aura.display.orientation or "HORIZONTAL")
@@ -1444,6 +1509,7 @@ function Panel:Refresh(aura)
   SetDropdown(self.frame.parentPointWrap.dropdown, aura.position.relativePoint or "CENTER")
   SetDropdown(self.frame.groupGrowthWrap.dropdown, aura.display.growth or "DOWN")
   SetDropdown(self.frame.iconAnchorWrap.dropdown, aura.display.iconAnchor or "LEFT")
+  SetDropdown(self.frame.raidFrameAnchorWrap.dropdown, aura.display.raidFrameAnchor or "BOTTOM")
   self.frame.soundReadyCheck:SetChecked(aura.display.soundMode == "ready")
   SetDropdown(self.frame.soundFileWrap.dropdown, aura.display.soundFile or "None")
   UpdateSelectorButtonText(self.frame.soundFileButton, self.frame.soundFileWrap.dropdown)
@@ -1485,6 +1551,7 @@ function Panel:Refresh(aura)
 
   self.frame.groupSection:SetShown(isGroup)
   self.frame.iconSection:SetShown(not isGroup and not isText)
+  self.frame.raidFrameSection:SetShown(false)
   self.frame.nameSection:SetShown(not isGroup)
   self.frame.timerSection:SetShown(not isGroup and not isText)
   self.frame.stacksSection:SetShown(not isGroup and not isText)
@@ -1498,6 +1565,7 @@ function Panel:Refresh(aura)
   SetSectionCollapsed(self.frame.canvasSection, self.frame.collapsedSections.canvas)
   SetSectionCollapsed(self.frame.groupSection, self.frame.collapsedSections.group)
   SetSectionCollapsed(self.frame.iconSection, self.frame.collapsedSections.icon)
+  SetSectionCollapsed(self.frame.raidFrameSection, self.frame.collapsedSections.raidFrames)
   SetSectionCollapsed(self.frame.nameSection, self.frame.collapsedSections.name)
   SetSectionCollapsed(self.frame.timerSection, self.frame.collapsedSections.timer)
   SetSectionCollapsed(self.frame.stacksSection, self.frame.collapsedSections.stacks)
@@ -1535,8 +1603,7 @@ function Panel:Refresh(aura)
   end
   local triggerUnit = trigger.unit or "player"
   local showRaidFramesOption = isIconAura and (triggerUnit == "group" or triggerUnit == "nameplate")
-  self.frame.showOnRaidFramesCheck:SetShown(showRaidFramesOption)
-  self.frame.showOnRaidFramesCheck:SetChecked(aura.display.showOnRaidFrames == true)
+  self.frame.raidFrameSection:SetShown(showRaidFramesOption)
   self.frame.groupShowBackgroundCheck:SetShown(false)
   self.frame.groupBackgroundColorWrap.label:SetShown(false)
   self.frame.groupBackgroundColorWrap.button:SetShown(false)

@@ -41,21 +41,20 @@ Interrupts.FILTERS = {
   } },
   { class = "DEMONHUNTER", name = "Demon Hunter", spells = {
     { id = 183752, label = "Disrupt", cd = 15, icon = 1305153 },
-    { id = 202137, label = "Sigil of Silence", cd = 120, icon = 1413864 },
   } },
   { class = "DRUID", name = "Druid", spells = {
     { id = 106839, label = "Skull Bash", cd = 15, icon = 236946 },
     { id = 78675, label = "Solar Beam", cd = 60, icon = 252188 },
   } },
   { class = "EVOKER", name = "Evoker", spells = {
-    { id = 351338, label = "Quell", cd = 20, icon = 4622469 },
+    { id = 351338, label = "Quell", cd = 18, icon = 4622469 },
   } },
   { class = "HUNTER", name = "Hunter", spells = {
     { id = 147362, label = "Counter Shot", cd = 24, icon = 249170 },
     { id = 187707, label = "Muzzle", cd = 15, icon = 1376045 },
   } },
   { class = "MAGE", name = "Mage", spells = {
-    { id = 2139, label = "Counterspell", cd = 24, icon = 135856 },
+    { id = 2139, label = "Counterspell", cd = 20, icon = 135856 },
   } },
   { class = "MONK", name = "Monk", spells = {
     { id = 116705, label = "Spear Hand Strike", cd = 15, icon = 608940 },
@@ -74,7 +73,7 @@ Interrupts.FILTERS = {
   } },
   { class = "WARLOCK", name = "Warlock", spells = {
     { id = 19647, ids = { 19647, 132409 }, label = "Spell Lock", cd = 24, icon = 136174 },
-    { id = 119914, label = "Axe Toss (Felguard)", cd = 30, icon = 236316 },
+    { id = 119914, label = "Axe Toss", cd = 30, icon = 236316 },
   } },
   { class = "WARRIOR", name = "Warrior", spells = {
     { id = 6552, label = "Pummel", cd = 15, icon = 132938 },
@@ -94,17 +93,17 @@ Interrupts.SPEC_PRIMARY = {
   [103] = { class = "DRUID", spellID = 106839, cd = 15 },
   [104] = { class = "DRUID", spellID = 106839, cd = 15 },
 
-  [1467] = { class = "EVOKER", spellID = 351338, cd = 20 },
-  [1468] = { class = "EVOKER", spellID = 351338, cd = 20 },
-  [1473] = { class = "EVOKER", spellID = 351338, cd = 20 },
+  [1467] = { class = "EVOKER", spellID = 351338, cd = 18 },
+  [1468] = { class = "EVOKER", spellID = 351338, cd = 18 },
+  [1473] = { class = "EVOKER", spellID = 351338, cd = 18 },
 
   [253] = { class = "HUNTER", spellID = 147362, cd = 24 },
   [254] = { class = "HUNTER", spellID = 147362, cd = 24 },
   [255] = { class = "HUNTER", spellID = 187707, cd = 15 },
 
-  [62] = { class = "MAGE", spellID = 2139, cd = 24 },
-  [63] = { class = "MAGE", spellID = 2139, cd = 24 },
-  [64] = { class = "MAGE", spellID = 2139, cd = 24 },
+  [62] = { class = "MAGE", spellID = 2139, cd = 20 },
+  [63] = { class = "MAGE", spellID = 2139, cd = 20 },
+  [64] = { class = "MAGE", spellID = 2139, cd = 20 },
 
   [268] = { class = "MONK", spellID = 116705, cd = 15 },
   [269] = { class = "MONK", spellID = 116705, cd = 15 },
@@ -132,10 +131,28 @@ Interrupts.SPEC_PRIMARY = {
   [73] = { class = "WARRIOR", spellID = 6552, cd = 15 },
 }
 
+Interrupts.SPEC_NO_INTERRUPT = {
+  [65] = true,
+  [105] = true,
+  [256] = true,
+  [257] = true,
+}
+
+Interrupts.CLASS_HAS_NO_KICK_VARIANTS = {
+  DRUID = true,
+  PALADIN = true,
+  PRIEST = true,
+}
+
 Interrupts.SPELL_ALIASES = {
   [89766] = 119914,
   [1276467] = 132409,
   [132409] = 132409,
+}
+
+Interrupts.CD_REDUCTION_TALENTS = {
+  [412713] = { affects = 351338, pctReduction = 10, name = "Interwoven Threads" },
+  [391271] = { affects = 6552, pctReduction = 10, name = "Seasoned Soldier" },
 }
 
 Interrupts.BUILTIN_SOUNDS = {
@@ -329,17 +346,79 @@ function Interrupts:ResolveSpellID(spellID)
   return self.SPELL_INDEX[resolved] and resolved or nil
 end
 
+local function GetActiveTalentSpellSet()
+  if not (C_ClassTalents and C_ClassTalents.GetActiveConfigID and C_Traits and C_Traits.GetConfigInfo) then
+    return {}
+  end
+
+  local configID = C_ClassTalents.GetActiveConfigID()
+  if not configID then
+    return {}
+  end
+
+  local configInfo = C_Traits.GetConfigInfo(configID)
+  if not configInfo or type(configInfo.treeIDs) ~= "table" then
+    return {}
+  end
+
+  local activeTalents = {}
+  for _, treeID in ipairs(configInfo.treeIDs) do
+    for _, nodeID in ipairs(C_Traits.GetTreeNodes(treeID) or {}) do
+      local nodeInfo = C_Traits.GetNodeInfo(configID, nodeID)
+      if nodeInfo and nodeInfo.activeEntry and (nodeInfo.activeRank or 0) > 0 then
+        local entryInfo = C_Traits.GetEntryInfo and C_Traits.GetEntryInfo(configID, nodeInfo.activeEntry.entryID) or nil
+        local definitionInfo = entryInfo and entryInfo.definitionID and C_Traits.GetDefinitionInfo and C_Traits.GetDefinitionInfo(entryInfo.definitionID) or nil
+        local talentSpellID = definitionInfo and tonumber(definitionInfo.spellID or 0) or 0
+        if talentSpellID > 0 then
+          activeTalents[talentSpellID] = true
+        end
+      end
+    end
+  end
+
+  return activeTalents
+end
+
+local function ApplyTalentCooldownAdjustments(spellID, baseCd, talentMap)
+  local adjustedCd = tonumber(baseCd or 0) or 0
+  spellID = tonumber(spellID or 0) or 0
+  if spellID <= 0 or adjustedCd <= 0 then
+    return adjustedCd
+  end
+
+  talentMap = type(talentMap) == "table" and talentMap or {}
+  for talentSpellID, talent in pairs(Interrupts.CD_REDUCTION_TALENTS or {}) do
+    if talentMap[tonumber(talentSpellID or 0) or 0] and talent and talent.affects == spellID then
+      if talent.pctReduction then
+        adjustedCd = math.floor(adjustedCd * (1 - (talent.pctReduction / 100)) + 0.5)
+      elseif talent.reduction then
+        adjustedCd = adjustedCd - talent.reduction
+      end
+    end
+  end
+
+  return math.max(1, adjustedCd)
+end
+
 function Interrupts:GetPlayerInterrupt()
   local _, classToken = UnitClass("player")
   local specIndex = GetSpecialization and GetSpecialization() or nil
   local specID = specIndex and GetSpecializationInfo and select(1, GetSpecializationInfo(specIndex)) or nil
+  if not specID and classToken and self.CLASS_HAS_NO_KICK_VARIANTS and self.CLASS_HAS_NO_KICK_VARIANTS[classToken] then
+    return nil
+  end
+  if specID and self.SPEC_NO_INTERRUPT and self.SPEC_NO_INTERRUPT[specID] then
+    return nil
+  end
   local primary = specID and self.SPEC_PRIMARY[specID] or nil
+  local activeTalents = GetActiveTalentSpellSet()
   if primary then
     local spellInfo = self:GetSpellInfo(primary.spellID)
+    local adjustedCd = ApplyTalentCooldownAdjustments(primary.spellID, primary.cd, activeTalents)
     return {
       class = primary.class,
       spellID = primary.spellID,
-      cd = primary.cd,
+      cd = adjustedCd,
       icon = spellInfo and spellInfo.icon or nil,
       label = spellInfo and spellInfo.label or (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(primary.spellID)) or "Interrupt",
     }
@@ -358,7 +437,7 @@ function Interrupts:GetPlayerInterrupt()
   return {
     class = classToken,
     spellID = fallback.id,
-    cd = fallback.cd,
+    cd = ApplyTalentCooldownAdjustments(fallback.id, fallback.cd, activeTalents),
     icon = fallback.icon,
     label = fallback.label,
   }

@@ -230,12 +230,63 @@ function Tracker:RefreshLocalPlayer()
   end
 
   local member = self:GetOrCreateMember(name)
-  local changed = CopyEntry(member, {
-    class = info and info.class or classToken,
-    spellID = info and info.spellID or nil,
-    baseCd = info and info.cd or nil,
-    isLocal = true,
-  })
+  local changed = false
+  local nextClass = info and info.class or classToken
+  local nextSpellID = info and info.spellID or nil
+  local nextBaseCd = info and info.cd or nil
+
+  if member.class ~= nextClass then
+    member.class = nextClass
+    changed = true
+  end
+  if member.spellID ~= nextSpellID then
+    member.spellID = nextSpellID
+    changed = true
+    if (tonumber(member.cdEnd or 0) or 0) ~= 0 then
+      member.cdEnd = 0
+      changed = true
+    end
+    if member.pendingKick ~= false then
+      member.pendingKick = false
+      changed = true
+    end
+    if member.pendingToken ~= nil then
+      member.pendingToken = nil
+      changed = true
+    end
+    if member.kickResult ~= nil then
+      member.kickResult = nil
+      changed = true
+    end
+  end
+  if member.baseCd ~= nextBaseCd then
+    member.baseCd = nextBaseCd
+    changed = true
+  end
+  if member.isLocal ~= true then
+    member.isLocal = true
+    changed = true
+  end
+
+  if nextSpellID == nil then
+    if (tonumber(member.cdEnd or 0) or 0) ~= 0 then
+      member.cdEnd = 0
+      changed = true
+    end
+    if member.pendingKick ~= false then
+      member.pendingKick = false
+      changed = true
+    end
+    if member.pendingToken ~= nil then
+      member.pendingToken = nil
+      changed = true
+    end
+    if member.kickResult ~= nil then
+      member.kickResult = nil
+      changed = true
+    end
+  end
+
   if changed then
     self:MarkDirty()
   end
@@ -589,6 +640,11 @@ function Tracker:HandleEvent(event, ...)
     C_Timer.After(0.2, function()
       Tracker:BroadcastHello()
     end)
+  elseif event == "ACTIVE_COMBAT_CONFIG_CHANGED" or event == "TRAIT_CONFIG_UPDATED" then
+    self:RefreshLocalPlayer()
+    C_Timer.After(0.2, function()
+      Tracker:BroadcastHello()
+    end)
   elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
     local unit = ...
     if not unit or unit == "player" then
@@ -666,6 +722,8 @@ function Tracker:InitializeEventFrame()
   frame:RegisterEvent("PLAYER_ENTERING_WORLD")
   frame:RegisterEvent("GROUP_ROSTER_UPDATE")
   frame:RegisterEvent("SPELLS_CHANGED")
+  frame:RegisterEvent("ACTIVE_COMBAT_CONFIG_CHANGED")
+  frame:RegisterEvent("TRAIT_CONFIG_UPDATED")
   frame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
   frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
   frame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")

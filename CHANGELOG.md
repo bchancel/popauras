@@ -1,3 +1,14 @@
+# v0.3.6
+- Aura and item triggers can now accept item names instead of requiring item IDs
+- Load conditions can resolve "Only load if item equipped" by item name
+- Copied auras are less likely to stay hidden from stale class/spec/talent load filters
+- Raid frame auras got a dedicated display section with icon size, anchor, offset, glow, duration, and stack options
+- Reduced raid frame aura overhead by narrowing aura refreshes and reusing raid frame icon widgets
+- Ready item/spell cooldown icons no longer show `0.0` while off cooldown
+- Aura timing now prefers the live aura timer over CDM timing when both exist
+- Updated interrupt tracker compatibility for current Retail interrupt data and talent-based cooldown adjustments
+- Aura list rows in the config window now show green outlines for preview-enabled auras and red outlines for debug-enabled auras
+
 # v0.3.4
 - Show aura icons on raid frames for group/party triggers ("Show on Raid Frames" option)
 - Icon auras can hide the center-screen icon while still showing on raid frames

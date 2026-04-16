@@ -1,6 +1,7 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
+local Items = ns.util.Items
 
 local Panel = {}
 ns.panels.LoadPanel = Panel
@@ -45,25 +46,6 @@ local INSTANCE_TYPE_OPTIONS = {
   { value = "pvp", label = "Battleground" },
 }
 
-local EQUIPMENT_SLOTS = {
-  INVSLOT_HEAD or 1,
-  INVSLOT_NECK or 2,
-  INVSLOT_SHOULDER or 3,
-  INVSLOT_CHEST or 5,
-  INVSLOT_WAIST or 6,
-  INVSLOT_LEGS or 7,
-  INVSLOT_FEET or 8,
-  INVSLOT_WRIST or 9,
-  INVSLOT_HAND or 10,
-  INVSLOT_FINGER1 or 11,
-  INVSLOT_FINGER2 or 12,
-  INVSLOT_TRINKET1 or 13,
-  INVSLOT_TRINKET2 or 14,
-  INVSLOT_BACK or 15,
-  INVSLOT_MAINHAND or 16,
-  INVSLOT_OFFHAND or 17,
-}
-
 local function IsVisibilityEnabled(visibility, key)
   if type(visibility) ~= "table" then
     return true
@@ -93,44 +75,32 @@ local function GetInstanceTypeLabel(current)
 end
 
 local function NormalizeText(value)
+  if Items and Items.NormalizeText then
+    return Items.NormalizeText(value)
+  end
   value = tostring(value or "")
   value = value:gsub("^%s+", ""):gsub("%s+$", "")
   return value
 end
 
-local function FindEquippedItemByName(itemName)
-  local needle = string.lower(NormalizeText(itemName))
-  if needle == "" then
-    return 0, nil
-  end
-
-  for _, slotId in ipairs(EQUIPMENT_SLOTS) do
-    local itemId = GetInventoryItemID and GetInventoryItemID("player", slotId) or nil
-    if itemId and itemId > 0 then
-      local equippedName = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemId) or nil
-      if equippedName and string.lower(equippedName) == needle then
-        return itemId, equippedName
-      end
-    end
-  end
-
-  return 0, nil
-end
-
 local function GetEquippedItemResolvedText(itemId, itemName)
-  itemId = tonumber(itemId or 0) or 0
-  itemName = NormalizeText(itemName)
-
-  if itemId > 0 then
-    local resolvedName = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemId) or itemName
-    if resolvedName ~= "" then
-      return string.format("|cff88ff88Equipped Item:|r %s (%d)", resolvedName, itemId)
-    end
-    return string.format("|cff88ff88Equipped Item ID:|r %d", itemId)
+  local resolvedId = tonumber(itemId or 0) or 0
+  local resolvedName = NormalizeText(itemName)
+  if Items and Items.ResolveItemReference then
+    resolvedId, resolvedName = Items:ResolveItemReference(itemId, itemName)
   end
 
-  if itemName ~= "" then
-    return string.format("|cff88ff88Equipped Item Name:|r %s", itemName)
+  if resolvedId > 0 then
+    local itemLabel = Items and Items.GetItemName and Items:GetItemName(resolvedId) or resolvedName
+    itemLabel = NormalizeText(itemLabel)
+    if itemLabel ~= "" then
+      return string.format("|cff88ff88Equipped Item:|r %s (%d)", itemLabel, resolvedId)
+    end
+    return string.format("|cff88ff88Equipped Item ID:|r %d", resolvedId)
+  end
+
+  if resolvedName ~= "" then
+    return string.format("|cff88ff88Equipped Item Name:|r %s", resolvedName)
   end
 
   return "|cffaaaaaaNo equipped item requirement.|r"
@@ -142,13 +112,20 @@ local function ResolveItemFilterInput(input)
     return 0, ""
   end
 
+  if Items and Items.ResolveInput then
+    local itemId, itemName = Items:ResolveInput(input)
+    if itemId > 0 then
+      return itemId, itemName or ""
+    end
+    return 0, input
+  end
+
   local numeric = tonumber(input)
   if numeric then
     return math.floor(numeric + 0.5), ""
   end
 
-  local itemId = FindEquippedItemByName(input)
-  return itemId or 0, input
+  return 0, input
 end
 
 local function SetCollapseButtonText(button, collapsed)
@@ -214,6 +191,80 @@ local function GetSingleEnabledKey(map, predicate)
     end
   end
   return match
+end
+
+local function ParseSpecKey(specKey)
+  local classToken, specIndex = tostring(specKey or ""):match("^([^:]+):(%d+)$")
+  specIndex = tonumber(specIndex or 0) or 0
+  if not classToken or classToken == "" or specIndex <= 0 then
+    return nil, nil
+  end
+  return classToken, specIndex
+end
+
+local function PruneSpecSelections(load)
+  load = load or {}
+  load.classes = EnsureMap(load.classes)
+  load.specs = EnsureMap(load.specs)
+
+  local changed = false
+  local restrictByClass = CountEnabled(load.classes) > 0
+  for specKey, enabled in pairs(load.specs) do
+    if enabled then
+      local classToken, specIndex = ParseSpecKey(specKey)
+      local classInfo = classToken and CLASS_SPECS[classToken] or nil
+      local isValidSpec = classInfo and specIndex > 0 and specIndex <= #(classInfo.specs or {})
+      if not isValidSpec or (restrictByClass and not load.classes[classToken]) then
+        load.specs[specKey] = nil
+        changed = true
+      end
+    end
+  end
+  return changed
+end
+
+local function ClearTalentSelections(load)
+  if type(load) ~= "table" then
+    return false
+  end
+
+  local talents = EnsureMap(load.talents)
+  if next(talents) == nil then
+    load.talents = talents
+    return false
+  end
+
+  load.talents = {}
+  return true
+end
+
+local function BuildTalentKeyLookup(groups)
+  local lookup = {}
+  for _, group in ipairs(groups or {}) do
+    for _, item in ipairs(group.items or {}) do
+      if item.key then
+        lookup[item.key] = true
+      end
+    end
+  end
+  return lookup
+end
+
+local function PruneTalentSelections(load, groups)
+  if type(load) ~= "table" or type(groups) ~= "table" or #groups == 0 then
+    return false
+  end
+
+  load.talents = EnsureMap(load.talents)
+  local available = BuildTalentKeyLookup(groups)
+  local changed = false
+  for talentKey, enabled in pairs(load.talents) do
+    if enabled and not available[talentKey] then
+      load.talents[talentKey] = nil
+      changed = true
+    end
+  end
+  return changed
 end
 
 local function ResolveEntryInfo(configID, entryID)
@@ -595,6 +646,7 @@ function Panel:ApplyCurrent()
   for classToken, check in pairs(self.frame.classChecks) do
     aura.load.classes[classToken] = check:GetChecked() == true or nil
   end
+  PruneSpecSelections(aura.load)
   for key, check in pairs(self.frame.visibilityChecks or {}) do
     aura.load.visibility[key] = check:GetChecked() == true
   end
@@ -606,6 +658,10 @@ function Panel:ApplyCurrent()
   local equippedItemId, equippedItemName = ResolveItemFilterInput(self.frame.equippedItemInput:GetText())
   aura.load.equippedItemId = equippedItemId or 0
   aura.load.equippedItemName = equippedItemName or ""
+  if aura.load.talent == true then
+    local groups = BuildTalentOptions(aura.load)
+    PruneTalentSelections(aura.load, groups)
+  end
   self.frame.levelInput:SetText(aura.load.level > 0 and tostring(aura.load.level) or "")
   self.frame.instanceIdInput:SetText(aura.load.instanceId > 0 and tostring(aura.load.instanceId) or "")
   self.frame.encounterIdInput:SetText(aura.load.encounterId > 0 and tostring(aura.load.encounterId) or "")
@@ -619,6 +675,7 @@ function Panel:RefreshSpecSection(aura)
   load.classes = EnsureMap(load.classes)
   load.specs = EnsureMap(load.specs)
   load.talents = EnsureMap(load.talents)
+  PruneSpecSelections(load)
 
   local hasClasses = false
   local classCollapsed = self.frame.collapsedSections and self.frame.collapsedSections.class == true
@@ -673,6 +730,7 @@ function Panel:RefreshSpecSection(aura)
         check:SetChecked(load.specs[key] == true)
         check:SetScript("OnClick", function(selfCheck)
           load.specs[key] = selfCheck:GetChecked() == true or nil
+          ClearTalentSelections(load)
           Panel:RefreshSpecSection(aura)
           Panel:ApplyCurrent()
         end)
@@ -1111,6 +1169,7 @@ function Panel:Refresh(aura)
   aura.load.classes = EnsureMap(aura.load.classes)
   aura.load.specs = EnsureMap(aura.load.specs)
   aura.load.talents = EnsureMap(aura.load.talents)
+  PruneSpecSelections(aura.load)
   local visibilitySelection = GetVisibilitySelection(aura.load or {})
   self.frame.enabledCheck:SetChecked(aura.enabled ~= false)
   self.frame.levelInput:SetText((aura.load.level and aura.load.level > 0) and tostring(aura.load.level) or "")
@@ -1130,6 +1189,8 @@ function Panel:Refresh(aura)
     check:SetChecked(aura.load.classes[classToken] == true)
     check:SetScript("OnClick", function(selfCheck)
       aura.load.classes[classToken] = selfCheck:GetChecked() == true or nil
+      PruneSpecSelections(aura.load)
+      ClearTalentSelections(aura.load)
       Panel:RefreshSpecSection(aura)
       Panel:ApplyCurrent()
     end)

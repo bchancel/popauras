@@ -238,6 +238,9 @@ function MainWindow:Create()
     if ns.runtime and ns.runtime.RefreshAura then
       ns.runtime:RefreshAura(aura.id)
     end
+    if ns.ui and ns.ui.AuraTree and ns.ui.AuraTree.Refresh then
+      ns.ui.AuraTree:Refresh()
+    end
   end)
 
   frame.triggerDebugCheck = Frames.CreateCheckbox(frame.editor, "")
@@ -268,6 +271,9 @@ function MainWindow:Create()
 
     if ns.runtime and ns.runtime.RefreshAura then
       ns.runtime:RefreshAura(aura.id)
+    end
+    if ns.ui and ns.ui.AuraTree and ns.ui.AuraTree.Refresh then
+      ns.ui.AuraTree:Refresh()
     end
   end)
 

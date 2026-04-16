@@ -113,6 +113,13 @@ Defaults.display = {
   maintainAuraOrder = false,
   align = "LEFT",
   showOnRaidFrames = false,
+  raidFrameIconSize = 18,
+  raidFrameAnchor = "BOTTOM",
+  raidFrameOffsetX = 0,
+  raidFrameOffsetY = 11,
+  raidFrameShowGlow = false,
+  raidFrameShowDuration = false,
+  raidFrameShowStacks = false,
 }
 
 Defaults.load = {
@@ -204,6 +211,7 @@ local function ApplyTriggerTypeDefaults(trigger)
     end
   elseif triggerType == "item_cooldown" then
     trigger.itemId = tonumber(trigger.itemId or 0) or 0
+    trigger.itemName = trigger.itemName or ""
     trigger.cooldownMatch = trigger.cooldownMatch or "cooldown"
     if trigger.showAlways == nil then
       trigger.showAlways = false

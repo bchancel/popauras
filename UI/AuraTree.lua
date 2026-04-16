@@ -16,6 +16,9 @@ AuraTree.dragStartX = nil
 AuraTree.dragStartY = nil
 AuraTree.dragMoved = false
 
+local DEBUG_OUTLINE_COLOR = { 0.92, 0.24, 0.22, 0.98 }
+local PREVIEW_OUTLINE_COLOR = { 0.24, 0.84, 0.38, 0.98 }
+
 local function ShowTooltip(owner, title, body)
   GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
   GameTooltip:SetText(title)
@@ -60,6 +63,24 @@ local function IsAuraLoadedForList(aura)
     return true
   end
   return ns.LoadEvaluator:Matches(aura) == true
+end
+
+local function AuraHasPreviewEnabled(aura)
+  return aura and aura.display and aura.display.previewAnimate == true
+end
+
+local function AuraHasDebugEnabled(aura)
+  if not aura or type(aura.triggers) ~= "table" then
+    return false
+  end
+
+  for _, trigger in ipairs(aura.triggers) do
+    if type(trigger) == "table" and trigger.debug == true then
+      return true
+    end
+  end
+
+  return false
 end
 
 local function NormalizeSearchQuery(value)
@@ -639,6 +660,32 @@ function AuraTree:Refresh()
     row.button.text:SetShadowOffset(1, -1)
     row.button.text:SetShadowColor(0, 0, 0, 0.9)
 
+    row.previewOutline = CreateFrame("Frame", nil, row.button, "BackdropTemplate")
+    row.previewOutline:SetPoint("TOPLEFT", -1, 1)
+    row.previewOutline:SetPoint("BOTTOMRIGHT", 1, -1)
+    row.previewOutline:SetFrameStrata("FULLSCREEN_DIALOG")
+    row.previewOutline:SetFrameLevel(row.button:GetFrameLevel() + 2)
+    row.previewOutline:EnableMouse(false)
+    row.previewOutline:SetBackdrop({
+      edgeFile = "Interface\\Buttons\\WHITE8x8",
+      edgeSize = 1,
+    })
+    row.previewOutline:SetBackdropBorderColor(unpack(PREVIEW_OUTLINE_COLOR))
+    row.previewOutline:Hide()
+
+    row.debugOutline = CreateFrame("Frame", nil, row.button, "BackdropTemplate")
+    row.debugOutline:SetPoint("TOPLEFT", -3, 3)
+    row.debugOutline:SetPoint("BOTTOMRIGHT", 3, -3)
+    row.debugOutline:SetFrameStrata("FULLSCREEN_DIALOG")
+    row.debugOutline:SetFrameLevel(row.button:GetFrameLevel() + 3)
+    row.debugOutline:EnableMouse(false)
+    row.debugOutline:SetBackdrop({
+      edgeFile = "Interface\\Buttons\\WHITE8x8",
+      edgeSize = 1,
+    })
+    row.debugOutline:SetBackdropBorderColor(unpack(DEBUG_OUTLINE_COLOR))
+    row.debugOutline:Hide()
+
     row.topDottedLine = row.button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.topDottedLine:SetPoint("TOPLEFT", 6, -1)
     row.topDottedLine:SetPoint("TOPRIGHT", -6, -1)
@@ -894,12 +941,19 @@ function AuraTree:Refresh()
 
     local contentAlpha = isLoaded and 1 or 0.52
     local buttonAlpha = isLoaded and 0.98 or 0.72
+    local statusAlpha = isLoaded and 1 or 0.68
+    local hasPreviewOutline = AuraHasPreviewEnabled(aura)
+    local hasDebugOutline = AuraHasDebugEnabled(aura)
     row.button:SetAlpha(buttonAlpha)
     row.button.text:SetAlpha(contentAlpha)
     row.topDottedLine:SetShown(not isLoaded)
     row.bottomDottedLine:SetShown(not isLoaded)
     row.topDottedLine:SetAlpha(contentAlpha)
     row.bottomDottedLine:SetAlpha(contentAlpha)
+    row.previewOutline:SetShown(hasPreviewOutline)
+    row.previewOutline:SetAlpha(statusAlpha)
+    row.debugOutline:SetShown(hasDebugOutline)
+    row.debugOutline:SetAlpha(statusAlpha)
 
     local isGroup = aura.kind == "group" or aura.kind == "dynamic_group"
     local inGroup = aura.parentId ~= nil

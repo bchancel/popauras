@@ -1,6 +1,7 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
+local Items = ns.util.Items
 local SoundPicker = ns.util.SoundPicker
 local Tables = ns.util.Tables
 
@@ -326,12 +327,22 @@ local function ResolveSpellId(input)
 end
 
 local function ResolveItemId(input)
-  input = tostring(input or ""):gsub("^%s+", ""):gsub("%s+$", "")
-  local numeric = tonumber(input)
-  if not numeric then
-    return nil, "Items currently require a numeric item ID."
+  input = Items and Items.NormalizeText and Items.NormalizeText(input) or tostring(input or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if input == "" then
+    return 0, ""
   end
-  return numeric, (C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(numeric)) or ("Item " .. numeric)
+
+  if Items and Items.ResolveInput then
+    return Items:ResolveInput(input)
+  end
+
+  local numeric = tonumber(input)
+  if numeric then
+    local itemId = math.max(0, math.floor(numeric + 0.5))
+    return itemId, "Item " .. tostring(itemId)
+  end
+
+  return 0, input
 end
 
 local function ResolveSpellList(input)
@@ -540,6 +551,7 @@ function Panel:ApplyCurrent()
     trigger.spellNames = names
     trigger.spellId = spellIDs[1]
     trigger.itemId = nil
+    trigger.itemName = nil
     local resolved = string.format("|cff88ff88Resolved:|r %s", result)
     if trigger.type == "spell_cooldown" and ns.CooldownManager and ns.CooldownManager.FindCooldownIDForSpellID then
       local mapped = {}
@@ -570,16 +582,23 @@ function Panel:ApplyCurrent()
     trigger.spellNames = names
     trigger.spellId = spellIDs and spellIDs[1] or nil
     trigger.itemId = nil
+    trigger.itemName = nil
     frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s", result))
   elseif trigger.type == "item_cooldown" then
-    local itemId, result = ResolveItemId(input)
-    if not itemId then
-      frame.resolvedLabel:SetText("|cffff4444" .. result .. "|r")
+    input = Items and Items.NormalizeText and Items.NormalizeText(input) or tostring(input or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if input == "" then
+      frame.resolvedLabel:SetText("|cffff4444Enter an item name or item ID.|r")
       return
     end
-    trigger.itemId = itemId
+    local itemId, result = ResolveItemId(input)
+    trigger.itemId = itemId or 0
+    trigger.itemName = trigger.itemId > 0 and (result or input) or input
     trigger.spellId = nil
-    frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s (%d)", result or "Item", itemId))
+    if trigger.itemId > 0 then
+      frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s (%d)", result or "Item", trigger.itemId))
+    else
+      frame.resolvedLabel:SetText(string.format("|cffffcc66Saved item name:|r %s  |cffaaaaaaItem ID will resolve when cached or equipped.|r", trigger.itemName))
+    end
   elseif trigger.type == "cast" then
     local spellIDs, result, names = ResolveSpellList(input)
     if spellIDs then
@@ -594,17 +613,20 @@ function Panel:ApplyCurrent()
       frame.resolvedLabel:SetText("|cffaaaaaaTracking any cast for selected unit.|r")
     end
     trigger.itemId = nil
+    trigger.itemName = nil
   elseif trigger.type == "death_alert" then
     trigger.spellIDs = nil
     trigger.spellNames = nil
     trigger.spellId = nil
     trigger.itemId = nil
+    trigger.itemName = nil
     frame.resolvedLabel:SetText("|cff88ff88Tracks party or raid member deaths only.|r")
   elseif trigger.type == "chat" then
     trigger.spellIDs = nil
     trigger.spellNames = nil
     trigger.spellId = nil
     trigger.itemId = nil
+    trigger.itemName = nil
     trigger.chatMessage = tostring(input or ""):gsub("^%s+", ""):gsub("%s+$", "")
     if trigger.chatMessage == "" then
       frame.resolvedLabel:SetText("|cffaaaaaaEnter one or more comma-separated phrases to watch for in chat.|r")
@@ -619,6 +641,7 @@ function Panel:ApplyCurrent()
     trigger.spellNames = nil
     trigger.spellId = nil
     trigger.itemId = nil
+    trigger.itemName = nil
     frame.resolvedLabel:SetText("|cffaaaaaaNo spell/item lookup needed for this trigger.|r")
   end
 
@@ -1160,13 +1183,16 @@ function Panel:Refresh(aura)
     end
   elseif trigger.type == "item_cooldown" then
     self.frame.argLabel:SetText("Item Name or ID")
-    local itemId = trigger.itemId
-    local itemName = itemId and C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemId)
-    self.frame.argInput:SetText(itemName or tostring(itemId or ""))
-    if itemId then
-      self.frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s (%d)", itemName or "Item", itemId))
+    local itemId = tonumber(trigger.itemId or 0) or 0
+    local itemName = itemId > 0 and Items and Items.GetItemName and Items:GetItemName(itemId) or nil
+    local configuredName = Items and Items.NormalizeText and Items.NormalizeText(trigger.itemName) or tostring(trigger.itemName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    self.frame.argInput:SetText(itemName or configuredName or (itemId > 0 and tostring(itemId) or ""))
+    if itemId > 0 then
+      self.frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s (%d)", itemName or configuredName or "Item", itemId))
+    elseif configuredName ~= "" then
+      self.frame.resolvedLabel:SetText(string.format("|cffffcc66Saved item name:|r %s  |cffaaaaaaItem ID will resolve when cached or equipped.|r", configuredName))
     else
-      self.frame.resolvedLabel:SetText("|cffaaaaaaEnter a numeric item ID.|r")
+      self.frame.resolvedLabel:SetText("|cffaaaaaaEnter an item name or item ID.|r")
     end
   elseif trigger.type == "chat" then
     self.frame.argLabel:SetText("Matching Text")

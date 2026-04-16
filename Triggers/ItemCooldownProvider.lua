@@ -7,6 +7,7 @@ local provider = ns.TriggerBase:CreateProvider("item_cooldown", {
     "PLAYER_ENTERING_WORLD",
   },
 })
+local Items = ns.util.Items
 
 function provider:GetAffectedAuras(event)
   if event ~= "BAG_UPDATE_COOLDOWN" then
@@ -71,13 +72,22 @@ local function ShouldPersistDisplay(trigger, aura)
 end
 
 function provider:Evaluate(trigger, aura)
-  local itemId = tonumber(trigger.itemId or 0)
+  local itemId = tonumber(trigger.itemId or 0) or 0
+  local itemName = Items and Items.NormalizeText and Items.NormalizeText(trigger.itemName) or tostring(trigger.itemName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if itemId <= 0 and Items and Items.ResolveItemReference then
+    local resolvedId, resolvedName = Items:ResolveItemReference(itemId, itemName)
+    itemId = tonumber(resolvedId or 0) or 0
+    if itemId > 0 then
+      trigger.itemId = itemId
+      trigger.itemName = resolvedName or itemName
+    end
+  end
   if itemId == 0 then
     return ns.Schema.NormalizeRuntimeState({ show = false, active = false, source = "item_cooldown" })
   end
 
   local info = GetItemCooldownInfo(itemId)
-  local name = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemId) or ("Item " .. itemId)
+  local name = Items and Items.GetItemName and Items:GetItemName(itemId) or (C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemId)) or ("Item " .. itemId)
   local icon = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemId)
   local duration = 0
   local expirationTime = 0

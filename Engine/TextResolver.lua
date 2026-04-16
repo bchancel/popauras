@@ -5,6 +5,17 @@ ns.TextResolver = TextResolver
 
 local REAL_TIME_MODIFIER = Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime or nil
 local DURATION_REMAINING_CACHE_INTERVAL = 0.05
+local READY_TIMER_SOURCES = {
+  item_cooldown = true,
+  spell_cooldown = true,
+  api = true,
+  api_duration = true,
+  cdm = true,
+  cdm_aura = true,
+  charges = true,
+  learned_cast = true,
+  learned_cast_deferred = true,
+}
 
 local function SafeDurationNumber(value)
   if type(value) == "number" and not (issecretvalue and issecretvalue(value)) then
@@ -68,6 +79,11 @@ function TextResolver:IsReadyState(state, remainingFromObject)
   return state.isReady == true and state.active ~= true and not hasRunningTimer
 end
 
+local function ShouldHideReadyTimerByDefault(state)
+  local source = tostring(state and state.source or "")
+  return READY_TIMER_SOURCES[source] == true
+end
+
 function TextResolver:GetDurationObjectRemaining(state, now)
   state = state or {}
   local queryTime = now or GetDurationClockTime()
@@ -114,12 +130,13 @@ function TextResolver:GetTimerText(state, aura, remainingFromObject)
   if remainingFromObject == nil then
     remainingFromObject = self:GetDurationObjectRemaining(state)
   end
+  local readyState = self:IsReadyState(state, remainingFromObject)
 
-  if display.readyLook and self:IsReadyState(state, remainingFromObject) then
+  if display.readyLook and readyState then
     return display.readyText or "Ready"
   end
 
-  if display.hideReadyTimer and self:IsReadyState(state, remainingFromObject) then
+  if readyState and (display.hideReadyTimer or ShouldHideReadyTimerByDefault(state)) then
     return ""
   end
 

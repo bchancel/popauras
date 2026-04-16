@@ -2,9 +2,12 @@ local _, ns = ...
 
 local LoadEvaluator = {}
 ns.LoadEvaluator = LoadEvaluator
+local Items = ns.util.Items
 
 LoadEvaluator.activeTalentKeys = nil
 LoadEvaluator.activeTalentConfigID = nil
+LoadEvaluator.availableTalentKeys = nil
+LoadEvaluator.availableTalentConfigID = nil
 LoadEvaluator.currentEncounterId = 0
 
 local function GetPlayerSpecIndex()
@@ -58,9 +61,51 @@ local function GetActiveTalentKeys()
   return results
 end
 
+local function GetAvailableTalentKeys()
+  if not C_ClassTalents or not C_ClassTalents.GetActiveConfigID or not C_Traits then
+    return {}
+  end
+
+  local configID = C_ClassTalents.GetActiveConfigID()
+  if not configID then
+    return {}
+  end
+
+  if LoadEvaluator.availableTalentConfigID == configID and type(LoadEvaluator.availableTalentKeys) == "table" then
+    return LoadEvaluator.availableTalentKeys
+  end
+
+  local configInfo = C_Traits.GetConfigInfo(configID)
+  if not configInfo or type(configInfo.treeIDs) ~= "table" then
+    return {}
+  end
+
+  local results = {}
+  for _, treeID in ipairs(configInfo.treeIDs) do
+    for _, nodeID in ipairs(C_Traits.GetTreeNodes(treeID) or {}) do
+      local nodeInfo = C_Traits.GetNodeInfo(configID, nodeID)
+      if nodeInfo then
+        if type(nodeInfo.entryIDs) == "table" and #nodeInfo.entryIDs > 1 then
+          for _, entryID in ipairs(nodeInfo.entryIDs) do
+            results[string.format("%s:%s", tostring(nodeID), tostring(entryID))] = true
+          end
+        else
+          results[tostring(nodeID)] = true
+        end
+      end
+    end
+  end
+
+  LoadEvaluator.availableTalentConfigID = configID
+  LoadEvaluator.availableTalentKeys = results
+  return results
+end
+
 function LoadEvaluator:InvalidateCache()
   self.activeTalentKeys = nil
   self.activeTalentConfigID = nil
+  self.availableTalentKeys = nil
+  self.availableTalentConfigID = nil
 end
 
 function LoadEvaluator:SetCurrentEncounterId(encounterId)
@@ -146,6 +191,9 @@ local EQUIPMENT_SLOTS = {
 }
 
 local function NormalizeText(value)
+  if Items and Items.NormalizeText then
+    return Items.NormalizeText(value)
+  end
   value = tostring(value or "")
   value = value:gsub("^%s+", ""):gsub("%s+$", "")
   return value
@@ -157,11 +205,20 @@ local function IsItemEquippedByName(itemName)
     return true
   end
 
+  if Items and Items.ResolveItemReference then
+    local resolvedId = Items:ResolveItemReference(0, itemName)
+    resolvedId = tonumber(resolvedId or 0) or 0
+    if resolvedId > 0 then
+      return IsItemEquippedByID(resolvedId)
+    end
+  end
+
   local needle = string.lower(itemName)
   for _, slotId in ipairs(EQUIPMENT_SLOTS) do
     local itemId = GetInventoryItemID and GetInventoryItemID("player", slotId) or nil
-    if itemId and itemId > 0 then
-      local equippedName = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemId) or nil
+    itemId = tonumber(itemId or 0) or 0
+    if itemId > 0 then
+      local equippedName = Items and Items.GetItemName and Items:GetItemName(itemId) or (C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemId)) or nil
       if equippedName and string.lower(equippedName) == needle then
         return true
       end
@@ -233,15 +290,25 @@ function LoadEvaluator:Matches(aura)
 
   if TableHasAnyEnabled(load.specs) then
     local specKey = string.format("%s:%d", classToken or "", specIndex or 0)
-    if not TableHasEnabled(load.specs, specKey) then
+    local hasRelevantSpecFilter = false
+    local prefix = tostring(classToken or "") .. ":"
+    for configuredSpecKey, enabled in pairs(load.specs) do
+      if enabled and tostring(configuredSpecKey):sub(1, #prefix) == prefix then
+        hasRelevantSpecFilter = true
+        break
+      end
+    end
+    if hasRelevantSpecFilter and not TableHasEnabled(load.specs, specKey) then
       return false
     end
   end
 
   if load.talent == true and TableHasAnyEnabled(load.talents) then
     local activeTalents = GetActiveTalentKeys()
+    local availableTalents = GetAvailableTalentKeys()
+    local hasAvailableTalents = next(availableTalents) ~= nil
     for talentKey, enabled in pairs(load.talents) do
-      if enabled and not activeTalents[talentKey] then
+      if enabled and (not hasAvailableTalents or availableTalents[talentKey]) and not activeTalents[talentKey] then
         return false
       end
     end

@@ -28,6 +28,8 @@ local CACHE_PRUNE_INTERVAL = 5
 local REAL_TIME_MODIFIER = Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime or nil
 local spellIDsCache = setmetatable({}, { __mode = "k" })
 local spellNamesCache = setmetatable({}, { __mode = "k" })
+local spellNamesExactCache = setmetatable({}, { __mode = "k" })
+local AuraDataMatchesType
 
 local function GetLearnedTargetDurations()
   ns.session = ns.session or {}
@@ -98,6 +100,39 @@ local function GetSpellNames(trigger)
     end
   end
   spellNamesCache[trigger] = {
+    signature = signature,
+    names = names,
+  }
+  return names
+end
+
+local function GetExactSpellNames(trigger)
+  trigger = trigger or {}
+  local signatureParts = {}
+  if type(trigger.spellNames) == "table" then
+    for _, value in ipairs(trigger.spellNames) do
+      signatureParts[#signatureParts + 1] = tostring(value or "")
+    end
+  end
+  local signature = table.concat(signatureParts, ",")
+  local cached = spellNamesExactCache[trigger]
+  if cached and cached.signature == signature then
+    return cached.names
+  end
+
+  local names = {}
+  local seen = {}
+  if type(trigger.spellNames) == "table" then
+    for _, value in ipairs(trigger.spellNames) do
+      local spellName = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+      local key = spellName ~= "" and spellName:lower() or nil
+      if key and not seen[key] then
+        seen[key] = true
+        names[#names + 1] = spellName
+      end
+    end
+  end
+  spellNamesExactCache[trigger] = {
     signature = signature,
     names = names,
   }
@@ -371,7 +406,7 @@ local function ScanLegacyUnitAuras(unit, isHelpful, spellIDs, spellNames, collec
   return nil, summary
 end
 
-local function ScanModernUnitAuras(unit, isHelpful, spellIDs, spellNames, collectOnly, maxSummary)
+local function ScanModernUnitAurasWithFilter(unit, filter, spellIDs, spellNames, collectOnly, maxSummary)
   if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then
     return nil, {}
   end
@@ -386,7 +421,6 @@ local function ScanModernUnitAuras(unit, isHelpful, spellIDs, spellNames, collec
   end
 
   local summary = {}
-  local filter = isHelpful and "HELPFUL" or "HARMFUL"
   local index = 1
   while true do
     local aura = C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
@@ -408,7 +442,12 @@ local function ScanModernUnitAuras(unit, isHelpful, spellIDs, spellNames, collec
   return nil, summary
 end
 
-local function FindAura(unit, spellIDs, spellNames, isHelpful)
+local function ScanModernUnitAuras(unit, isHelpful, spellIDs, spellNames, collectOnly, maxSummary)
+  local filter = isHelpful and "HELPFUL" or "HARMFUL"
+  return ScanModernUnitAurasWithFilter(unit, filter, spellIDs, spellNames, collectOnly, maxSummary)
+end
+
+local function FindAura(unit, spellIDs, spellNames, isHelpful, exactSpellNames)
   if not unit or type(spellIDs) ~= "table" or #spellIDs == 0 then
     if type(spellNames) ~= "table" or #spellNames == 0 then
       return nil
@@ -416,9 +455,56 @@ local function FindAura(unit, spellIDs, spellNames, isHelpful)
   end
 
   local filter = isHelpful and "HELPFUL" or "HARMFUL"
+  if unit == "player" and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+    for _, spellId in ipairs(spellIDs) do
+      local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellId)
+      if ok and aura and (AuraDataMatchesType == nil or AuraDataMatchesType(aura, unit, isHelpful)) then
+        return aura
+      end
+    end
+  end
+
+  local exactNames = {}
+  local seenExactNames = {}
+  for _, spellName in ipairs(exactSpellNames or {}) do
+    local key = SafeLower(spellName)
+    if key and not seenExactNames[key] then
+      seenExactNames[key] = true
+      exactNames[#exactNames + 1] = spellName
+    end
+  end
+  if C_Spell and C_Spell.GetSpellName then
+    for _, spellId in ipairs(spellIDs) do
+      local spellName = C_Spell.GetSpellName(spellId)
+      local key = SafeLower(spellName)
+      if key and not seenExactNames[key] then
+        seenExactNames[key] = true
+        exactNames[#exactNames + 1] = spellName
+      end
+    end
+  end
+
+  if unit == "player" and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellName then
+    for _, spellName in ipairs(exactNames) do
+      local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellName, spellName)
+      if ok and aura and (AuraDataMatchesType == nil or AuraDataMatchesType(aura, unit, isHelpful)) then
+        return aura
+      end
+    end
+  end
+
   if AuraUtil and AuraUtil.FindAuraBySpellID then
     for _, spellId in ipairs(spellIDs) do
       local aura = AuraUtil.FindAuraBySpellID(spellId, unit, filter)
+      if aura then
+        return aura
+      end
+    end
+  end
+
+  if AuraUtil and AuraUtil.FindAuraByName then
+    for _, spellName in ipairs(exactNames) do
+      local aura = AuraUtil.FindAuraByName(spellName, unit, filter)
       if aura then
         return aura
       end
@@ -435,12 +521,26 @@ local function FindAura(unit, spellIDs, spellNames, isHelpful)
     return modernAura
   end
 
+  if unit == "player" then
+    local unfilteredAura = ScanModernUnitAurasWithFilter(unit, nil, spellIDs, spellNames, false)
+    if unfilteredAura and (AuraDataMatchesType == nil or AuraDataMatchesType(unfilteredAura, unit, isHelpful)) then
+      return unfilteredAura
+    end
+  end
+
   return nil
 end
 
 local function BuildAuraSummary(unit, isHelpful)
   local legacySummary = select(2, ScanLegacyUnitAuras(unit, isHelpful, {}, {}, true, 8))
   local modernSummary = select(2, ScanModernUnitAuras(unit, isHelpful, {}, {}, true, 8))
+  if unit == "player" then
+    local modernAnySummary = select(2, ScanModernUnitAurasWithFilter(unit, nil, {}, {}, true, 8))
+    return string.format("legacy=[%s] modern=[%s] modernAny=[%s]",
+      table.concat(legacySummary or {}, ", "),
+      table.concat(modernSummary or {}, ", "),
+      table.concat(modernAnySummary or {}, ", "))
+  end
   return string.format("legacy=[%s] modern=[%s]",
     table.concat(legacySummary or {}, ", "),
     table.concat(modernSummary or {}, ", "))
@@ -1046,6 +1146,10 @@ local function ApplyCDMAuraTiming(state, cdmState)
   end
 
   local now = GetTime()
+  local currentDuration = tonumber(state.duration or 0) or 0
+  local currentExpiration = tonumber(state.expirationTime or 0) or 0
+  local stateHasTimer = state.durationObject ~= nil
+    or (currentDuration > 0 and currentExpiration > now)
   local durationObject = cdmState.durationObject
   local duration = tonumber(cdmState.duration or 0) or 0
   local expirationTime = tonumber(cdmState.expirationTime or 0) or 0
@@ -1056,13 +1160,17 @@ local function ApplyCDMAuraTiming(state, cdmState)
     return state, false
   end
 
-  state.duration = hasNumericTiming and duration or 0
-  state.expirationTime = hasNumericTiming and expirationTime or 0
-  state.durationObject = durationObject
-  state.progressType = "timed"
-  state.value = state.duration
-  state.total = state.duration
-  state.source = "cdm_aura"
+  local usedCDMTiming = false
+  if not stateHasTimer then
+    state.duration = hasNumericTiming and duration or 0
+    state.expirationTime = hasNumericTiming and expirationTime or 0
+    state.durationObject = durationObject
+    state.progressType = "timed"
+    state.value = state.duration
+    state.total = state.duration
+    state.source = "cdm_aura"
+    usedCDMTiming = true
+  end
 
   local countText = cdmState.countText
   local count = tonumber(cdmState.count or "") or tonumber(countText or "")
@@ -1073,7 +1181,7 @@ local function ApplyCDMAuraTiming(state, cdmState)
     state.stackText = countText
   end
 
-  return ns.Schema.NormalizeRuntimeState(state), true
+  return ns.Schema.NormalizeRuntimeState(state), usedCDMTiming
 end
 
 local function CloneRuntimeState(state)
@@ -1276,6 +1384,106 @@ function provider:GetAffectedAurasForSpellIDs(spellIDs, unit, auraType)
   end)
 end
 
+function provider:GetAffectedAurasForAuraChanges(spellIDs, spellNames, unit, auraType)
+  local wanted = {}
+  local wantedNames = {}
+
+  for _, spellID in ipairs(spellIDs or {}) do
+    spellID = tonumber(spellID or 0) or 0
+    if spellID > 0 then
+      wanted[spellID] = true
+      local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID) or nil
+      local loweredName = SafeLower(spellName)
+      if loweredName then
+        wantedNames[loweredName] = true
+      end
+    end
+  end
+
+  for _, spellName in ipairs(spellNames or {}) do
+    local loweredName = SafeLower(spellName)
+    if loweredName then
+      wantedNames[loweredName] = true
+    end
+  end
+
+  if next(wanted) == nil and next(wantedNames) == nil then
+    return {}
+  end
+
+  return ns.Registry:CollectAuraIds(function(aura)
+    if not AuraTriggerMatches(aura, unit, auraType) then
+      return false
+    end
+
+    for _, trigger in IterateAuraTriggers(aura) do
+      if (not unit or TriggerUsesUnit(trigger.unit, unit))
+        and (not auraType or (trigger.auraType or "buff") == auraType) then
+        for _, spellID in ipairs(GetSpellIDs(trigger)) do
+          if wanted[spellID] then
+            return true
+          end
+        end
+        for _, triggerSpellName in ipairs(GetSpellNames(trigger)) do
+          if wantedNames[triggerSpellName] then
+            return true
+          end
+        end
+      end
+    end
+    return false
+  end)
+end
+
+local function CollectChangedAuraSpells(unit, unitAuraUpdateInfo)
+  if type(unitAuraUpdateInfo) ~= "table" or unitAuraUpdateInfo.isFullUpdate == true then
+    return nil, nil, true
+  end
+
+  if type(unitAuraUpdateInfo.removedAuraInstanceIDs) == "table" and #unitAuraUpdateInfo.removedAuraInstanceIDs > 0 then
+    return nil, nil, true
+  end
+
+  local spellIDs = {}
+  local spellNames = {}
+  local seenIDs = {}
+  local seenNames = {}
+
+  local function RememberAuraData(auraData)
+    if type(auraData) ~= "table" then
+      return
+    end
+
+    local spellID = SafeSpellID(auraData.spellId)
+    if spellID and not seenIDs[spellID] then
+      seenIDs[spellID] = true
+      spellIDs[#spellIDs + 1] = spellID
+    end
+
+    local spellName = SafeLower(auraData.name)
+    if spellName and not seenNames[spellName] then
+      seenNames[spellName] = true
+      spellNames[#spellNames + 1] = spellName
+    end
+  end
+
+  for _, auraData in ipairs(unitAuraUpdateInfo.addedAuras or {}) do
+    RememberAuraData(auraData)
+  end
+
+  if unitAuraUpdateInfo.updatedAuraInstanceIDs and C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+    for _, auraInstanceID in ipairs(unitAuraUpdateInfo.updatedAuraInstanceIDs) do
+      RememberAuraData(C_UnitAuras.GetAuraDataByAuraInstanceID(unit, auraInstanceID))
+    end
+  end
+
+  if #spellIDs == 0 and #spellNames == 0 then
+    return nil, nil, true
+  end
+
+  return spellIDs, spellNames, false
+end
+
 function provider:GetAffectedAuras(event, ...)
   if event == "GROUP_ROSTER_UPDATE" then
     return self:GetAffectedAurasForUnit("group")
@@ -1299,7 +1507,15 @@ function provider:GetAffectedAuras(event, ...)
 
   if event == "UNIT_AURA" then
     local unit = ...
-    if unit == "player" or unit == "target" or IsGroupUnitToken(unit) then
+    local unitAuraUpdateInfo = select(2, ...)
+    if unit == "player" or IsGroupUnitToken(unit) then
+      local changedSpellIDs, changedSpellNames, needsFullRefresh = CollectChangedAuraSpells(unit, unitAuraUpdateInfo)
+      if not needsFullRefresh then
+        return self:GetAffectedAurasForAuraChanges(changedSpellIDs, changedSpellNames, unit)
+      end
+      return self:GetAffectedAurasForUnit(unit)
+    end
+    if unit == "target" then
       return self:GetAffectedAurasForUnit(unit)
     end
     return {}
@@ -1421,7 +1637,7 @@ local function RememberTargetAuraState(auraConfig, state, extra)
   SetCachedTargetEntry(auraConfig, targetGUID, cache)
 end
 
-local function AuraDataMatchesType(auraData, unit, helpful)
+AuraDataMatchesType = function(auraData, unit, helpful)
   if type(auraData) ~= "table" then
     return false
   end
@@ -1550,9 +1766,17 @@ function provider:HandleEvent(event, ...)
   if event == "UNIT_AURA" then
     local unit, unitAuraUpdateInfo = ...
     if unit == "player" then
+      local changedSpellIDs, changedSpellNames, needsFullRefresh = CollectChangedAuraSpells(unit, unitAuraUpdateInfo)
+      if not needsFullRefresh then
+        return self:GetAffectedAurasForAuraChanges(changedSpellIDs, changedSpellNames, unit)
+      end
       return self:GetAffectedAurasForUnit("player")
     end
     if IsGroupUnitToken(unit) then
+      local changedSpellIDs, changedSpellNames, needsFullRefresh = CollectChangedAuraSpells(unit, unitAuraUpdateInfo)
+      if not needsFullRefresh then
+        return self:GetAffectedAurasForAuraChanges(changedSpellIDs, changedSpellNames, unit)
+      end
       return self:GetAffectedAurasForUnit(unit)
     end
     if unit ~= "target" then
@@ -1697,6 +1921,7 @@ function provider:Evaluate(trigger, auraConfig)
   local matchedUnit = unit
   local spellIDs = GetSpellIDs(trigger)
   local spellNames = GetSpellNames(trigger)
+  local exactSpellNames = GetExactSpellNames(trigger)
 
   if unit == "group" then
     local checkedUnits = {}
@@ -1712,7 +1937,7 @@ function provider:Evaluate(trigger, auraConfig)
       checkedUnits[#checkedUnits + 1] = candidateUnit
       if UnitPassesAuraFilters(candidateUnit, trigger, aliveOnly) then
         eligibleUnits[#eligibleUnits + 1] = candidateUnit
-        local candidateAura = FindAura(candidateUnit, spellIDs, spellNames, helpful)
+        local candidateAura = FindAura(candidateUnit, spellIDs, spellNames, helpful, exactSpellNames)
         if filterMode == "missing" then
           if not candidateAura then
             missingCount = missingCount + 1
@@ -1890,7 +2115,7 @@ function provider:Evaluate(trigger, auraConfig)
     checkedUnits[#checkedUnits + 1] = candidateUnit
     if UnitPassesAuraFilters(candidateUnit, trigger, aliveOnly) then
       hasEligibleUnit = true
-      aura = FindAura(candidateUnit, spellIDs, spellNames, helpful)
+      aura = FindAura(candidateUnit, spellIDs, spellNames, helpful, exactSpellNames)
       if aura then
         matchedUnit = candidateUnit
         break
@@ -1938,7 +2163,9 @@ function provider:Evaluate(trigger, auraConfig)
       if #ignoredReasons > 0 then
         details = string.format("%s ignoredWhy=%s", details, table.concat(ignoredReasons, ";"))
       end
-      if unit == "target" then
+      if unit == "player" then
+        details = string.format("%s | %s", details, BuildAuraSummary("player", helpful))
+      elseif unit == "target" then
         details = string.format("%s | %s", details, BuildAuraSummary("target", helpful))
       end
       ns.Debug:LogTrigger(nil, trigger, missing, details)
