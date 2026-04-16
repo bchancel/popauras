@@ -2,7 +2,7 @@
 ## Title: PopAuras
 ## Notes: Midnight-safe WeakAuras-like addon focused on reliable bars and icons
 ## Author: Popabeast-Sargeras
-## Version: 0.3.5
+## Version: 0.3.6
 ## X-Curse-Project-ID: 1510249
 ## SavedVariables: PopAurasDB
 
@@ -17,6 +17,7 @@ Util\Anchors.lua
 Util\Frames.lua
 Util\SoundPicker.lua
 Util\Spells.lua
+Util\Items.lua
 
 Data\Defaults.lua
 Data\Interrupts.lua
