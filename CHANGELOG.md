@@ -1,3 +1,12 @@
+# v0.3.9
+- Fixed exported/imported icon auras sometimes restoring at the generic 220 width instead of icon size
+- Shared aura imports now apply automatically after accepting the transfer
+- Import/Export tab no longer shows the "Import Replace" button
+- Improved unit frame glow support for Blizzard frames and custom frame addons
+- Added debug logging for Glow Unit Frame actions when trigger debug is enabled
+- Chat glow alerts can now handle multiple matching senders at the same time and glow all matched units
+- Added lightweight unit frame lookup caching to reduce repeated glow scan cost
+
 # v0.3.8
 - Main `/pa` configuration window now recenters when reopened
 - Removed the config window drag clamp so it can be moved off-screen freely

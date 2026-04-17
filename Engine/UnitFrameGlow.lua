@@ -439,11 +439,53 @@ function UnitFrameGlow:ApplyByUnit(targetUnitId, auraId, duration)
   end
 end
 
+function UnitFrameGlow:ApplyByUnits(targetUnitIds, auraId, duration)
+  if type(targetUnitIds) ~= "table" or #targetUnitIds == 0 then
+    return
+  end
+
+  self:CancelForAura(auraId)
+
+  local seenFrames = {}
+  local glowedFrames = {}
+  for _, unitId in ipairs(targetUnitIds) do
+    if type(unitId) == "string" and unitId ~= "" and UnitExists(unitId) then
+      local unitFrames = FindUnitFramesForUnit(unitId)
+      for _, frame in ipairs(unitFrames or {}) do
+        if not seenFrames[frame] and StartGlow(frame) then
+          seenFrames[frame] = true
+          glowedFrames[#glowedFrames + 1] = frame
+        end
+      end
+    end
+  end
+
+  if #glowedFrames == 0 then
+    return
+  end
+
+  activeGlows[auraId] = glowedFrames
+
+  if duration and duration > 0 then
+    C_Timer.After(duration, function()
+      self:CancelForAura(auraId)
+    end)
+  end
+end
+
 ns.ActionEngine:RegisterHandler("glow_unit_frame", function(action, aura, state)
   local template = action.unit or "%n"
   local resolved = ns.ActionEngine:ResolveTemplate(template, state)
   local targetName = NormalizePlayerName(resolved)
   local duration = tonumber(action.duration or 0) or 0
+
+  if type(state and state.matchedUnits) == "table" and #state.matchedUnits > 0 then
+    DebugLogAction(aura, string.format("matchedUnits=%d duration=%.2f", #state.matchedUnits, duration))
+    UnitFrameGlow:ApplyByUnits(state.matchedUnits, aura.id, duration)
+    local active = activeGlows[aura.id]
+    DebugLogAction(aura, string.format("glowApplied matchedUnits activeFrames=%d", active and #active or 0))
+    return
+  end
 
   if targetName then
     local unitId = FindUnitIdForName(targetName)

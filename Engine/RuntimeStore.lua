@@ -316,8 +316,13 @@ function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
 
   if ns.ActionEngine then
     local becameShown = state.show and (not previousState or not previousState.show)
+    local repeatedActionEvent = state.show
+      and previousState
+      and previousState.show
+      and state.actionEventKey ~= nil
+      and state.actionEventKey ~= previousState.actionEventKey
     local becameHidden = not state.show and previousState and previousState.show
-    if becameShown then
+    if becameShown or repeatedActionEvent then
       ns.ActionEngine:Fire(aura, "on_activate", state)
     elseif becameHidden then
       ns.ActionEngine:Fire(aura, "on_deactivate", state)

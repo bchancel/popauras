@@ -29,12 +29,14 @@ function Schema.NormalizeRuntimeState(state)
   local isReady = state.isReady == true
   local isEnabled = state.isEnabled ~= false
   local unit = state.unit
+  local matchedUnits = type(state.matchedUnits) == "table" and state.matchedUnits or nil
   local auraInstanceID = state.auraInstanceID
   local spellId = state.spellId
   local itemId = state.itemId
   local source = state.source or ""
   local statusText = state.statusText or ""
   local message = state.message or ""
+  local actionEventKey = state.actionEventKey
   local debugExtra = state.debugExtra
   local color = state.color
   local desaturate = state.desaturate == true
@@ -59,12 +61,14 @@ function Schema.NormalizeRuntimeState(state)
   state.isReady = isReady
   state.isEnabled = isEnabled
   state.unit = unit
+  state.matchedUnits = matchedUnits
   state.auraInstanceID = auraInstanceID
   state.spellId = spellId
   state.itemId = itemId
   state.source = source
   state.statusText = statusText
   state.message = message
+  state.actionEventKey = actionEventKey
   state.debugExtra = debugExtra
   state.color = color
   state.desaturate = desaturate

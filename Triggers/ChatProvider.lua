@@ -20,6 +20,7 @@ local provider = ns.TriggerBase:CreateProvider("chat", {
     "CHAT_MSG_TEXT_EMOTE",
   },
   alerts = {},
+  alertSequence = 0,
 })
 
 local CHANNEL_BY_EVENT = {
@@ -99,6 +100,44 @@ local function GetDisplaySender(sender)
     return sender
   end
   return "Chat"
+end
+
+local function ResolveSenderUnitId(sender)
+  local fullSender, shortSender = NormalizeSender(sender)
+  if not shortSender then
+    return nil
+  end
+
+  if UnitExists("player") then
+    local playerName = NormalizeLower(UnitName("player"))
+    if playerName == shortSender then
+      return "player"
+    end
+  end
+
+  if IsInRaid and IsInRaid() then
+    for index = 1, (GetNumGroupMembers and GetNumGroupMembers() or 0) do
+      local unitId = "raid" .. index
+      if UnitExists(unitId) then
+        local unitName = NormalizeLower(UnitName(unitId))
+        if unitName == shortSender or unitName == fullSender then
+          return unitId
+        end
+      end
+    end
+  else
+    for index = 1, 4 do
+      local unitId = "party" .. index
+      if UnitExists(unitId) then
+        local unitName = NormalizeLower(UnitName(unitId))
+        if unitName == shortSender or unitName == fullSender then
+          return unitId
+        end
+      end
+    end
+  end
+
+  return nil
 end
 
 local function TriggerMatchesChat(trigger, channel, message, sender)
@@ -181,11 +220,18 @@ end
 
 function provider:PruneAlerts()
   local now = GetTime()
-  for key, alert in pairs(self.alerts) do
-    if type(alert) ~= "table"
-      or (alert.expirationTime or 0) <= now
-      or not ns.Registry:GetAura(alert.auraId) then
+  for key, alertSet in pairs(self.alerts) do
+    if type(alertSet) ~= "table" or not ns.Registry:GetAura(alertSet.auraId) then
       self.alerts[key] = nil
+    else
+      for senderKey, alert in pairs(alertSet.entries or {}) do
+        if type(alert) ~= "table" or (alert.expirationTime or 0) <= now then
+          alertSet.entries[senderKey] = nil
+        end
+      end
+      if next(alertSet.entries or {}) == nil then
+        self.alerts[key] = nil
+      end
     end
   end
 end
@@ -209,17 +255,30 @@ function provider:HandleEvent(event, ...)
       for triggerIndex, trigger in ns.TriggerBase:IterateTriggers(aura, "chat") do
         if TriggerMatchesChat(trigger, channel, message, sender) then
           local senderName = GetDisplaySender(sender)
+          local senderKey = NormalizeLower(sender) or senderName:lower()
           local safeMessage = type(message) == "string" and not (issecretvalue and issecretvalue(message)) and message or ""
           local duration = math.max(0.5, math.min(60, tonumber(trigger.chatDuration or 4) or 4))
-          self.alerts[GetAlertKey(auraId, triggerIndex)] = {
-            auraId = auraId,
-            triggerIndex = triggerIndex,
+          local alertKey = GetAlertKey(auraId, triggerIndex)
+          local alertSet = self.alerts[alertKey]
+          if type(alertSet) ~= "table" then
+            alertSet = {
+              auraId = auraId,
+              triggerIndex = triggerIndex,
+              entries = {},
+            }
+            self.alerts[alertKey] = alertSet
+          end
+          self.alertSequence = (tonumber(self.alertSequence or 0) or 0) + 1
+          alertSet.entries[senderKey] = {
             sender = senderName,
+            senderRaw = sender,
+            unit = ResolveSenderUnitId(sender),
             message = safeMessage,
             channel = channel,
             startedAt = now,
             duration = duration,
             expirationTime = now + duration,
+            sequence = self.alertSequence,
           }
           if not affectedSeen[auraId] then
             affectedSeen[auraId] = true
@@ -239,29 +298,57 @@ function provider:Evaluate(trigger, aura, triggerIndex)
     return ns.Schema.NormalizeRuntimeState({ show = false, active = false, source = "chat" })
   end
 
-  local alert = self.alerts[GetAlertKey(auraId, triggerIndex)]
-  if not alert then
+  local alertSet = self.alerts[GetAlertKey(auraId, triggerIndex)]
+  if not alertSet or type(alertSet.entries) ~= "table" then
     return ns.Schema.NormalizeRuntimeState({ show = false, active = false, source = "chat" })
   end
 
-  local remaining = math.max(0, (alert.expirationTime or 0) - GetTime())
-  if remaining <= 0 then
+  local now = GetTime()
+  local matchedUnits = {}
+  local seenUnits = {}
+  local newestAlert = nil
+  local latestExpiration = 0
+  local latestSequence = 0
+
+  for senderKey, alert in pairs(alertSet.entries) do
+    local remaining = math.max(0, (alert.expirationTime or 0) - now)
+    if remaining <= 0 then
+      alertSet.entries[senderKey] = nil
+    else
+      if not newestAlert or (tonumber(alert.sequence or 0) or 0) >= latestSequence then
+        newestAlert = alert
+        latestSequence = tonumber(alert.sequence or 0) or 0
+      end
+      latestExpiration = math.max(latestExpiration, tonumber(alert.expirationTime or 0) or 0)
+      if type(alert.unit) == "string" and alert.unit ~= "" and not seenUnits[alert.unit] then
+        seenUnits[alert.unit] = true
+        matchedUnits[#matchedUnits + 1] = alert.unit
+      end
+    end
+  end
+
+  if next(alertSet.entries) == nil or not newestAlert then
     self.alerts[GetAlertKey(auraId, triggerIndex)] = nil
     return ns.Schema.NormalizeRuntimeState({ show = false, active = false, source = "chat" })
   end
+
+  local remaining = math.max(0, latestExpiration - now)
 
   return ns.Schema.NormalizeRuntimeState({
     show = true,
     active = true,
     icon = 134400,
-    name = alert.sender or "Chat",
-    duration = alert.duration,
-    expirationTime = alert.expirationTime,
+    name = newestAlert.sender or "Chat",
+    unit = newestAlert.unit,
+    matchedUnits = matchedUnits,
+    duration = remaining,
+    expirationTime = latestExpiration,
     progressType = "timed",
     value = remaining,
-    total = alert.duration,
+    total = remaining,
     source = "chat",
-    statusText = alert.channel or "CHAT",
-    message = alert.message or "",
+    statusText = newestAlert.channel or "CHAT",
+    message = newestAlert.message or "",
+    actionEventKey = latestSequence,
   })
 end
