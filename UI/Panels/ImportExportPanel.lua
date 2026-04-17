@@ -121,15 +121,6 @@ function Panel:Create(parent)
   frame.importButton:SetPoint("LEFT", frame.createLinkButton, "RIGHT", 16, 0)
   StylePanelButton(frame.importButton)
 
-  frame.replaceButton = Frames.CreateButton(frame, "Import Replace", 120, 22, function()
-    local ok, err = ns.Import:Apply(frame.box:GetText(), true)
-    if not ok then
-      print("|cffff4444PopAuras:|r " .. tostring(err))
-    end
-  end)
-  frame.replaceButton:SetPoint("LEFT", frame.importButton, "RIGHT", 8, 0)
-  StylePanelButton(frame.replaceButton)
-
   self.frame = frame
 
   frame.sendTargetInput:SetScript("OnEnterPressed", function(selfInput)

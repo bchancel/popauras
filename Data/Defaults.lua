@@ -288,6 +288,19 @@ function Defaults:ApplyAuraDefaults(aura)
   aura.children = type(aura.children) == "table" and aura.children or {}
   aura.enabled = aura.enabled ~= false
 
+  for index, action in ipairs(aura.actions) do
+    if type(action) ~= "table" then
+      aura.actions[index] = Tables.DeepCopy(self.baseAction)
+    else
+      Tables.MergeDefaults(action, self.baseAction)
+      action.type = action.type or self.baseAction.type
+      action.event = action.event or self.baseAction.event
+      action.unit = action.unit or self.baseAction.unit
+      action.duration = tonumber(action.duration or self.baseAction.duration) or self.baseAction.duration
+      action.enabled = action.enabled ~= false
+    end
+  end
+
   if aura.kind == "interrupt_tracker" then
     aura.interrupt = Tables.MergeDefaults(type(aura.interrupt) == "table" and aura.interrupt or {}, self.interruptTracker)
   end

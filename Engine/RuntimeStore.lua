@@ -9,6 +9,7 @@ RuntimeStore.regions = {}
 RuntimeStore.activationOrder = {}
 RuntimeStore.activationCounter = 0
 RuntimeStore.timedRegions = {}
+RuntimeStore.timedStateAuras = {}
 RuntimeStore.timerElapsed = 0
 
 local TIMED_UPDATE_INTERVAL = 0.05
@@ -156,7 +157,14 @@ function RuntimeStore:EnsureTimerDriver()
       end
     end
 
-    if next(self.timedRegions) == nil then
+    for auraId, expirationTime in pairs(self.timedStateAuras) do
+      if type(expirationTime) ~= "number" or expirationTime <= now then
+        self.timedStateAuras[auraId] = nil
+        self:RefreshAura(auraId, true)
+      end
+    end
+
+    if next(self.timedRegions) == nil and next(self.timedStateAuras) == nil then
       driver:Hide()
     end
     ProfileFinish("runtime:timer_driver", profileStart)
@@ -178,13 +186,38 @@ function RuntimeStore:RegisterTimedRegion(auraId, region)
   end
 end
 
+function RuntimeStore:RegisterTimedStateAura(auraId, expirationTime)
+  if not auraId or type(expirationTime) ~= "number" or expirationTime <= GetTime() then
+    self.timedStateAuras[auraId] = nil
+    return
+  end
+
+  self:EnsureTimerDriver()
+  self.timedStateAuras[auraId] = expirationTime
+  self.timerElapsed = 0
+  if self.timerFrame then
+    self.timerFrame:Show()
+  end
+end
+
+function RuntimeStore:UnregisterTimedStateAura(auraId)
+  if not auraId then
+    return
+  end
+
+  self.timedStateAuras[auraId] = nil
+  if self.timerFrame and next(self.timedRegions) == nil and next(self.timedStateAuras) == nil then
+    self.timerFrame:Hide()
+  end
+end
+
 function RuntimeStore:UnregisterTimedRegion(auraId)
   if not auraId then
     return
   end
 
   self.timedRegions[auraId] = nil
-  if self.timerFrame and next(self.timedRegions) == nil then
+  if self.timerFrame and next(self.timedRegions) == nil and next(self.timedStateAuras) == nil then
     self.timerFrame:Hide()
   end
 end
@@ -202,6 +235,7 @@ function RuntimeStore:ReleaseMissingRegions()
       self.states[auraId] = nil
       self.presentations[auraId] = nil
       self.activationOrder[auraId] = nil
+      self.timedStateAuras[auraId] = nil
     end
   end
 end
@@ -273,6 +307,12 @@ function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
   end
 
   PlayAuraActivationSound(aura, previousState, state)
+
+  if state.show == true and state.progressType == "timed" and type(state.expirationTime) == "number" and state.expirationTime > GetTime() then
+    self:RegisterTimedStateAura(auraId, state.expirationTime)
+  else
+    self:UnregisterTimedStateAura(auraId)
+  end
 
   if ns.ActionEngine then
     local becameShown = state.show and (not previousState or not previousState.show)

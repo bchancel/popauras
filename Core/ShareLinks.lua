@@ -345,8 +345,23 @@ local function ShowImportString(encoded, owner)
     panel:SetImportText(encoded, true)
   end
 
-  WriteChatLine(string.format("|cff66ccffPopAuras:|r Loaded shared import%s. Review it on the Import/Export tab, then choose Import Add or Import Replace.",
+  WriteChatLine(string.format("|cff66ccffPopAuras:|r Loaded shared import%s. Review it on the Import/Export tab, then choose Import Add.",
     owner and owner ~= "" and (" from " .. owner) or ""))
+end
+
+local function ApplySharedImport(encoded, owner)
+  local ok, err = ns.Import:Apply(encoded, false)
+  if not ok then
+    WriteChatLine(string.format("|cffff4444PopAuras:|r Failed to import shared aura%s: %s",
+      owner and owner ~= "" and (" from " .. owner) or "",
+      tostring(err)))
+    ShowImportString(encoded, owner)
+    return false
+  end
+
+  WriteChatLine(string.format("|cff66ccffPopAuras:|r Imported shared aura%s.",
+    owner and owner ~= "" and (" from " .. owner) or ""))
+  return true
 end
 
 local function SendChunkedExport(target, shareKey, encoded)
@@ -757,7 +772,7 @@ function ShareLinks:HandleAddonMessage(message, sender)
     total,
     total,
     true)
-  ShowImportString(encoded, sender)
+  ApplySharedImport(encoded, sender)
 end
 
 function ShareLinks:Initialize()
