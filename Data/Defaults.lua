@@ -261,6 +261,24 @@ function Defaults:ApplyAuraDefaults(aura)
     return aura
   end
 
+  if aura.kind == "icon" then
+    aura.display = type(aura.display) == "table" and aura.display or {}
+    aura.position = type(aura.position) == "table" and aura.position or {}
+
+    if aura.display.width == nil then
+      aura.display.width = 56
+    end
+    if aura.display.height == nil then
+      aura.display.height = 56
+    end
+    if aura.position.width == nil then
+      aura.position.width = 56
+    end
+    if aura.position.height == nil then
+      aura.position.height = 56
+    end
+  end
+
   aura.load = Tables.MergeDefaults(type(aura.load) == "table" and aura.load or {}, self.load)
   aura.display = Tables.MergeDefaults(type(aura.display) == "table" and aura.display or {}, self.display)
   aura.position = Tables.MergeDefaults(type(aura.position) == "table" and aura.position or {}, self.position)
