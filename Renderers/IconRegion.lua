@@ -266,7 +266,7 @@ function IconRegion:Update(aura, state)
     ns.runtime:UnregisterTimedRegion(aura.id)
   end
 
-  if aura.kind == "icon" and not aura.display.icon and aura.display.showOnRaidFrames then
+  if aura.kind == "icon" and aura.display.icon ~= true then
     self.frame:Hide()
   end
 

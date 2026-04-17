@@ -1,3 +1,13 @@
+# v0.3.8
+- Main `/pa` configuration window now recenters when reopened
+- Removed the config window drag clamp so it can be moved off-screen freely
+- Fixed icon auras showing on screen when "Show Aura Icon" is off but unit frame glow is enabled
+- Chat triggers can now watch multiple channels at once
+- Chat trigger channel groups now treat Party/Party Leader, Raid/Raid Leader/Raid Warning, and Instance/Instance Leader as shared selections
+- Simplified chat trigger channel options by removing duplicate leader-only checkboxes
+- Reworked chat trigger layout to fit cleanly in the Trigger panel
+- Added an "Exact Match" option for chat trigger text matching
+
 # v0.3.7
 - Version bump
 

@@ -98,21 +98,25 @@ local function ApplyWindowDragClamp(frame)
     return
   end
 
-  frame:SetClampedToScreen(true)
+  frame:SetClampedToScreen(false)
   if not frame.SetClampRectInsets then
     return
   end
 
-  local width = math.max(0, frame:GetWidth() or 0)
-  local height = math.max(0, frame:GetHeight() or 0)
-  local visibleHeaderWidth = math.min(width, 240)
-  local visibleHeaderHeight = math.min(height, 38)
-  local horizontalInset = math.max(0, (width - visibleHeaderWidth) / 2)
-  local bottomInset = math.max(0, height - visibleHeaderHeight)
+  frame:SetClampRectInsets(0, 0, 0, 0)
+end
 
-  -- Keep a slim top-center strip of the header on screen so the window can be
-  -- dragged mostly off-screen without becoming unrecoverable.
-  frame:SetClampRectInsets(horizontalInset, horizontalInset, 0, bottomInset)
+local function ResetWindowPosition(frame)
+  if not frame then
+    return
+  end
+
+  frame:ClearAllPoints()
+  frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  ns.db.ui.window.point = "CENTER"
+  ns.db.ui.window.relativePoint = "CENTER"
+  ns.db.ui.window.x = 0
+  ns.db.ui.window.y = 0
 end
 
 function MainWindow:Create()
@@ -445,6 +449,7 @@ function MainWindow:OpenNewAuraPicker()
   if not self.frame then
     self:Create()
   end
+  ResetWindowPosition(self.frame)
   ns.db.ui.editorMode = "new_aura"
   if not self.frame:IsShown() then
     self.frame:Show()
@@ -459,6 +464,7 @@ function MainWindow:Toggle()
   if self.frame:IsShown() then
     self.frame:Hide()
   else
+    ResetWindowPosition(self.frame)
     self.frame:Show()
     self:Refresh()
   end

@@ -59,9 +59,7 @@ local chatChannelValues = {
   { value = "SAY", label = "Say" },
   { value = "YELL", label = "Yell" },
   { value = "PARTY", label = "Party" },
-  { value = "PARTY_LEADER", label = "Party Leader" },
   { value = "RAID", label = "Raid" },
-  { value = "RAID_LEADER", label = "Raid Leader" },
   { value = "RAID_WARNING", label = "Raid Warning" },
   { value = "INSTANCE_CHAT", label = "Instance" },
   { value = "GUILD", label = "Guild" },
@@ -69,6 +67,175 @@ local chatChannelValues = {
   { value = "EMOTE", label = "Emote" },
   { value = "TEXT_EMOTE", label = "Text Emote" },
 }
+
+local function GetNormalizedChatChannels(trigger)
+  local channels = {}
+  local seen = {}
+
+  if type(trigger and trigger.chatChannels) == "table" then
+    for _, value in ipairs(trigger.chatChannels) do
+      local channel = tostring(value or "")
+      if channel == "PARTY_LEADER" then
+        channel = "PARTY"
+      elseif channel == "RAID_LEADER" then
+        channel = "RAID"
+      elseif channel == "INSTANCE_CHAT_LEADER" then
+        channel = "INSTANCE_CHAT"
+      end
+      if channel ~= "" and not seen[channel] then
+        seen[channel] = true
+        channels[#channels + 1] = channel
+      end
+    end
+  end
+
+  if #channels == 0 then
+    local channel = tostring(trigger and trigger.chatChannel or "WHISPER")
+    if channel == "PARTY_LEADER" then
+      channel = "PARTY"
+    elseif channel == "RAID_LEADER" then
+      channel = "RAID"
+    elseif channel == "INSTANCE_CHAT_LEADER" then
+      channel = "INSTANCE_CHAT"
+    end
+    if channel ~= "" then
+      channels[1] = channel
+    end
+  end
+
+  return channels
+end
+
+local function GetChatChannelLabel(channel)
+  for _, option in ipairs(chatChannelValues) do
+    if option.value == channel then
+      return option.label
+    end
+  end
+  return tostring(channel or "")
+end
+
+local function GetChatChannelSummary(trigger)
+  local channels = GetNormalizedChatChannels(trigger)
+  if #channels == 0 then
+    return "Whisper"
+  end
+
+  local labels = {}
+  for _, channel in ipairs(channels) do
+    labels[#labels + 1] = GetChatChannelLabel(channel)
+  end
+  return table.concat(labels, ", ")
+end
+
+local function UpdateChatTriggerLayout(frame)
+  if not frame then
+    return
+  end
+
+  frame.argInput:ClearAllPoints()
+  frame.argInput:SetPoint("TOPLEFT", frame.argLabel, "BOTTOMLEFT", 0, -6)
+  frame.argInput:SetWidth(220)
+
+  if frame.chatExactCheck then
+    frame.chatExactCheck:ClearAllPoints()
+    frame.chatExactCheck:SetPoint("LEFT", frame.argInput, "RIGHT", 18, 0)
+  end
+
+  frame.resolvedLabel:ClearAllPoints()
+  frame.resolvedLabel:SetPoint("TOPLEFT", frame.argInput, "BOTTOMLEFT", 0, -6)
+
+  if frame.chatChannelLabel then
+    frame.chatChannelLabel:ClearAllPoints()
+    frame.chatChannelLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
+  end
+
+  if frame.chatChannelCheckList and #frame.chatChannelCheckList > 0 then
+    local columnWidth = 112
+    local rowHeight = 34
+    for index, check in ipairs(frame.chatChannelCheckList) do
+      check:ClearAllPoints()
+      local row = math.floor((index - 1) / 4)
+      local column = (index - 1) % 4
+      check:SetPoint("TOPLEFT", frame.chatChannelLabel, "BOTTOMLEFT", column * columnWidth, -6 - (row * rowHeight))
+    end
+  end
+
+  if frame.chatChannelHint and frame.chatChannelCheckList and #frame.chatChannelCheckList > 0 then
+    local lastRowStart = math.max(1, #frame.chatChannelCheckList - 3)
+    local lastCheck = frame.chatChannelCheckList[lastRowStart]
+    frame.chatChannelHint:ClearAllPoints()
+    frame.chatChannelHint:SetPoint("TOPLEFT", lastCheck, "BOTTOMLEFT", 0, -8)
+    frame.chatChannelHint:SetWidth(420)
+  end
+
+  if frame.chatSourceLabel and frame.chatChannelHint then
+    frame.chatSourceLabel:ClearAllPoints()
+    frame.chatSourceLabel:SetPoint("TOPLEFT", frame.chatChannelHint, "BOTTOMLEFT", 0, -10)
+  end
+
+  if frame.chatSourceInput and frame.chatSourceLabel then
+    frame.chatSourceInput:ClearAllPoints()
+    frame.chatSourceInput:SetPoint("TOPLEFT", frame.chatSourceLabel, "BOTTOMLEFT", 0, -6)
+  end
+
+  if frame.chatDurationLabel and frame.chatSourceInput then
+    frame.chatDurationLabel:ClearAllPoints()
+    frame.chatDurationLabel:SetPoint("TOPLEFT", frame.chatSourceInput, "BOTTOMLEFT", 0, -10)
+  end
+
+  if frame.chatDurationInput and frame.chatDurationLabel then
+    frame.chatDurationInput:ClearAllPoints()
+    frame.chatDurationInput:SetPoint("TOPLEFT", frame.chatDurationLabel, "BOTTOMLEFT", 0, -6)
+  end
+
+  if frame.chatHint and frame.chatDurationInput then
+    frame.chatHint:ClearAllPoints()
+    frame.chatHint:SetPoint("TOPLEFT", frame.chatDurationInput, "BOTTOMLEFT", 0, -6)
+  end
+end
+
+local function ReadSelectedChatChannels(frame)
+  local channels = {}
+  local hasAny = false
+
+  for _, option in ipairs(chatChannelValues) do
+    local check = frame.chatChannelChecks and frame.chatChannelChecks[option.value]
+    if check and check:GetChecked() == true then
+      if option.value == "ANY" then
+        hasAny = true
+      end
+      channels[#channels + 1] = option.value
+    end
+  end
+
+  if hasAny then
+    return { "ANY" }
+  end
+  if #channels == 0 then
+    return { "WHISPER" }
+  end
+  return channels
+end
+
+local function ApplyChatChannelSelection(frame, trigger)
+  if not frame or not frame.chatChannelChecks then
+    return
+  end
+
+  local selected = {}
+  for _, channel in ipairs(GetNormalizedChatChannels(trigger)) do
+    selected[channel] = true
+  end
+  local hasAny = selected.ANY == true
+
+  for _, option in ipairs(chatChannelValues) do
+    local check = frame.chatChannelChecks[option.value]
+    if check then
+      check:SetChecked(hasAny and option.value == "ANY" or selected[option.value] == true)
+    end
+  end
+end
 
 local function GetSoundDropdownValues()
   if ns.Interrupts and ns.Interrupts.GetSoundOptions then
@@ -527,7 +694,9 @@ function Panel:ApplyCurrent()
   trigger.groupRange = NormalizeAuraGroupRange(UIDropDownMenu_GetSelectedValue(frame.auraRangeDropDown) or trigger.groupRange or "any")
   trigger.aliveOnly = frame.auraAliveOnlyCheck:GetChecked() == true
   trigger.ignoreNPCs = frame.auraIgnoreNPCsCheck:GetChecked() == true
-  trigger.chatChannel = UIDropDownMenu_GetSelectedValue(frame.chatChannelDropDown) or trigger.chatChannel or "WHISPER"
+  trigger.chatChannels = ReadSelectedChatChannels(frame)
+  trigger.chatChannel = trigger.chatChannels[1] or trigger.chatChannel or "WHISPER"
+  trigger.chatExact = frame.chatExactCheck:GetChecked() == true
   trigger.chatSource = tostring(frame.chatSourceInput:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
   trigger.chatDuration = NormalizeChatDuration(frame.chatDurationInput:GetText() ~= "" and frame.chatDurationInput:GetText() or trigger.chatDuration)
   trigger.debug = frame.debugCheck:GetChecked() == true
@@ -633,7 +802,7 @@ function Panel:ApplyCurrent()
     else
       frame.resolvedLabel:SetText(string.format("|cff88ff88Watching:|r %s  |cff66ccffChannel:|r %s%s",
         trigger.chatMessage,
-        GetDropdownOptionLabel(trigger.chatChannel or "WHISPER", function() return chatChannelValues end),
+        GetChatChannelSummary(trigger),
         trigger.chatSource ~= "" and ("  |cff66ccffFrom:|r " .. trigger.chatSource) or ""))
     end
   else
@@ -753,6 +922,9 @@ function Panel:Create(parent)
   frame.argLabel:SetPoint("TOPLEFT", frame.opDropDown, "BOTTOMLEFT", 14, -16)
   frame.argInput = Frames.CreateInput(frame, 140, 24)
   frame.argInput:SetPoint("TOPLEFT", frame.argLabel, "BOTTOMLEFT", 0, -6)
+  frame.chatExactCheck = Frames.CreateCheckbox(frame, "Exact Match")
+  frame.chatExactCheck:SetPoint("LEFT", frame.argInput, "RIGHT", 18, 0)
+  frame.chatExactCheck:Hide()
 
   frame.resolvedLabel = Frames.CreateLabel(frame, "", "GameFontHighlightSmall")
   frame.resolvedLabel:SetPoint("TOPLEFT", frame.argInput, "BOTTOMLEFT", 0, -6)
@@ -951,12 +1123,27 @@ function Panel:Create(parent)
   frame.chargeCooldownCheck = Frames.CreateCheckbox(frame, "Show cooldown while charges remain")
   frame.chargeCooldownCheck:SetPoint("TOPLEFT", frame.manualCooldownHint, "BOTTOMLEFT", 0, -12)
 
-  frame.chatChannelLabel = Frames.CreateLabel(frame, "Chat Channel", "GameFontNormal")
+  frame.chatChannelLabel = Frames.CreateLabel(frame, "Chat Channels", "GameFontNormal")
   frame.chatChannelLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
-  frame.chatChannelDropDown = Frames.CreateDropdown(frame, 180)
-  frame.chatChannelDropDown:SetPoint("TOPLEFT", frame.chatChannelLabel, "BOTTOMLEFT", -14, -4)
+  frame.chatChannelChecks = {}
+  frame.chatChannelCheckList = {}
+  for index, option in ipairs(chatChannelValues) do
+    local check = Frames.CreateCheckbox(frame, option.label)
+    if index == 1 then
+      check:SetPoint("TOPLEFT", frame.chatChannelLabel, "BOTTOMLEFT", 0, -6)
+    elseif index % 2 == 0 then
+      check:SetPoint("TOPLEFT", frame.chatChannelCheckList[index - 1], "TOPRIGHT", 150, 0)
+    else
+      check:SetPoint("TOPLEFT", frame.chatChannelCheckList[index - 2], "BOTTOMLEFT", 0, -6)
+    end
+    frame.chatChannelChecks[option.value] = check
+    frame.chatChannelCheckList[#frame.chatChannelCheckList + 1] = check
+  end
+  frame.chatChannelHint = Frames.CreateLabel(frame, "Select one or more channels. Any Channel overrides the rest.", "GameFontDisableSmall")
+  frame.chatChannelHint:SetPoint("TOPLEFT", frame.chatChannelCheckList[#frame.chatChannelCheckList - 1], "BOTTOMLEFT", 0, -8)
+  frame.chatChannelHint:SetWidth(420)
   frame.chatSourceLabel = Frames.CreateLabel(frame, "From Player (optional)", "GameFontNormal")
-  frame.chatSourceLabel:SetPoint("TOPLEFT", frame.chatChannelDropDown, "BOTTOMLEFT", 14, -10)
+  frame.chatSourceLabel:SetPoint("TOPLEFT", frame.chatChannelHint, "BOTTOMLEFT", 0, -10)
   frame.chatSourceInput = Frames.CreateInput(frame, 180, 24)
   frame.chatSourceInput:SetPoint("TOPLEFT", frame.chatSourceLabel, "BOTTOMLEFT", 0, -6)
   frame.chatDurationLabel = Frames.CreateLabel(frame, "Display Seconds", "GameFontNormal")
@@ -966,6 +1153,7 @@ function Panel:Create(parent)
   frame.chatHint = Frames.CreateLabel(frame, "Use comma-separated phrases in the match box. Sender matching accepts short or full player names.", "GameFontDisableSmall")
   frame.chatHint:SetPoint("TOPLEFT", frame.chatDurationInput, "BOTTOMLEFT", 0, -6)
   frame.chatHint:SetWidth(420)
+  UpdateChatTriggerLayout(frame)
 
   frame.debugCheck = Frames.CreateCheckbox(frame, "Debug Trigger")
   frame.debugCheck:SetPoint("TOPLEFT", frame.chargeCooldownCheck, "BOTTOMLEFT", 0, -8)
@@ -1093,11 +1281,41 @@ function Panel:Create(parent)
       UIDropDownMenu_AddButton(info, level)
     end
   end)
-  InitDropdownValues(frame.chatChannelDropDown, function()
-    return chatChannelValues
-  end, function()
-    Panel:ApplyCurrent()
-  end)
+  for _, option in ipairs(chatChannelValues) do
+    local check = frame.chatChannelChecks[option.value]
+    check:SetScript("OnClick", function(selfCheck)
+      if option.value == "ANY" and selfCheck:GetChecked() == true then
+        for _, other in ipairs(chatChannelValues) do
+          if other.value ~= "ANY" then
+            local otherCheck = frame.chatChannelChecks[other.value]
+            if otherCheck then
+              otherCheck:SetChecked(false)
+            end
+          end
+        end
+      elseif option.value ~= "ANY" and selfCheck:GetChecked() == true then
+        local anyCheck = frame.chatChannelChecks.ANY
+        if anyCheck then
+          anyCheck:SetChecked(false)
+        end
+      elseif option.value ~= "ANY" then
+        local hasSpecific = false
+        for _, other in ipairs(chatChannelValues) do
+          if other.value ~= "ANY" then
+            local otherCheck = frame.chatChannelChecks[other.value]
+            if otherCheck and otherCheck:GetChecked() == true then
+              hasSpecific = true
+              break
+            end
+          end
+        end
+        if not hasSpecific then
+          selfCheck:SetChecked(true)
+        end
+      end
+      Panel:ApplyCurrent()
+    end)
+  end
   InitDropdownValues(frame.deathTankSoundDropDown, GetSoundDropdownValues, function()
     UpdateSelectorButtonText(frame.deathTankSoundButton, frame.deathTankSoundDropDown, GetSoundDropdownValues)
     UpdateSoundPreviewButton(frame.deathTankSoundPreview, frame.deathTankSoundDropDown)
@@ -1124,6 +1342,7 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.chatDurationInput)
   self:WireLiveInput(frame.deathDurationInput)
   self:WireLiveInput(frame.deathMaxAlertsInput)
+  frame.chatExactCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.showAlwaysCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraAliveOnlyCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraIgnoreNPCsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
@@ -1200,7 +1419,7 @@ function Panel:Refresh(aura)
     if trigger.chatMessage and trigger.chatMessage ~= "" then
       self.frame.resolvedLabel:SetText(string.format("|cff88ff88Watching:|r %s  |cff66ccffChannel:|r %s%s",
         trigger.chatMessage,
-        GetDropdownOptionLabel(trigger.chatChannel or "WHISPER", function() return chatChannelValues end),
+        GetChatChannelSummary(trigger),
         trigger.chatSource and trigger.chatSource ~= "" and ("  |cff66ccffFrom:|r " .. trigger.chatSource) or ""))
     else
       self.frame.resolvedLabel:SetText("|cffaaaaaaEnter one or more comma-separated phrases to watch for in chat.|r")
@@ -1232,8 +1451,13 @@ function Panel:Refresh(aura)
   self.frame.auraIgnoreNPCsCheck:SetShown(isAura and (trigger.unit or "player") == "group")
   self.frame.argLabel:SetShown(not isDeathAlert)
   self.frame.argInput:SetShown(not isDeathAlert)
+  self.frame.chatExactCheck:SetShown(isChat)
+  self.frame.chatExactCheck:SetChecked(trigger.chatExact == true)
   self.frame.chatChannelLabel:SetShown(isChat)
-  self.frame.chatChannelDropDown:SetShown(isChat)
+  self.frame.chatChannelHint:SetShown(isChat)
+  for _, check in ipairs(self.frame.chatChannelCheckList or {}) do
+    check:SetShown(isChat)
+  end
   self.frame.chatSourceLabel:SetShown(isChat)
   self.frame.chatSourceInput:SetShown(isChat)
   self.frame.chatDurationLabel:SetShown(isChat)
@@ -1269,11 +1493,10 @@ function Panel:Refresh(aura)
   self.frame.showAlwaysCheck:SetChecked(trigger.showAlways == true)
   self.frame.chargeCooldownCheck:SetShown(isSpellCooldown)
   self.frame.chargeCooldownCheck:SetChecked(trigger.showChargeCooldown ~= false)
-  SetDropdownValue(self.frame.chatChannelDropDown, trigger.chatChannel or "WHISPER", function()
-    return chatChannelValues
-  end)
+  ApplyChatChannelSelection(self.frame, trigger)
   self.frame.chatSourceInput:SetText(trigger.chatSource or "")
   self.frame.chatDurationInput:SetText(isChat and tostring(NormalizeChatDuration(trigger.chatDuration)) or "")
+  UpdateChatTriggerLayout(self.frame)
   self.frame.deathDurationLabel:SetShown(isDeathAlert)
   self.frame.deathDurationInput:SetShown(isDeathAlert)
   self.frame.deathMaxAlertsLabel:SetShown(isDeathAlert)

@@ -234,6 +234,9 @@ local function ApplyTriggerTypeDefaults(trigger)
     trigger.soundHealer = trigger.soundHealer or "None"
     trigger.soundDPS = trigger.soundDPS or "None"
   elseif triggerType == "chat" then
+    if type(trigger.chatChannels) ~= "table" or #trigger.chatChannels == 0 then
+      trigger.chatChannels = { trigger.chatChannel or "WHISPER" }
+    end
     trigger.chatChannel = trigger.chatChannel or "WHISPER"
     trigger.chatMessage = trigger.chatMessage or ""
     trigger.chatSource = trigger.chatSource or ""

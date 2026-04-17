@@ -13,6 +13,7 @@ local provider = ns.TriggerBase:CreateProvider("chat", {
     "CHAT_MSG_RAID_LEADER",
     "CHAT_MSG_RAID_WARNING",
     "CHAT_MSG_INSTANCE_CHAT",
+    "CHAT_MSG_INSTANCE_CHAT_LEADER",
     "CHAT_MSG_GUILD",
     "CHAT_MSG_OFFICER",
     "CHAT_MSG_EMOTE",
@@ -31,10 +32,27 @@ local CHANNEL_BY_EVENT = {
   CHAT_MSG_RAID_LEADER = "RAID_LEADER",
   CHAT_MSG_RAID_WARNING = "RAID_WARNING",
   CHAT_MSG_INSTANCE_CHAT = "INSTANCE_CHAT",
+  CHAT_MSG_INSTANCE_CHAT_LEADER = "INSTANCE_CHAT_LEADER",
   CHAT_MSG_GUILD = "GUILD",
   CHAT_MSG_OFFICER = "OFFICER",
   CHAT_MSG_EMOTE = "EMOTE",
   CHAT_MSG_TEXT_EMOTE = "TEXT_EMOTE",
+}
+
+local CHANNEL_ALIASES = {
+  PARTY = {
+    PARTY = true,
+    PARTY_LEADER = true,
+  },
+  RAID = {
+    RAID = true,
+    RAID_LEADER = true,
+    RAID_WARNING = true,
+  },
+  INSTANCE_CHAT = {
+    INSTANCE_CHAT = true,
+    INSTANCE_CHAT_LEADER = true,
+  },
 }
 
 local function NormalizeLower(value)
@@ -88,9 +106,33 @@ local function TriggerMatchesChat(trigger, channel, message, sender)
     return false
   end
 
-  local triggerChannel = tostring(trigger.chatChannel or "WHISPER")
-  if triggerChannel ~= "ANY" and triggerChannel ~= channel then
-    return false
+  local allowedChannels = {}
+  if type(trigger.chatChannels) == "table" then
+    for _, value in ipairs(trigger.chatChannels) do
+      local normalized = tostring(value or "")
+      if normalized ~= "" then
+        allowedChannels[normalized] = true
+      end
+    end
+  end
+  if next(allowedChannels) == nil then
+    allowedChannels[tostring(trigger.chatChannel or "WHISPER")] = true
+  end
+
+  if not allowedChannels.ANY then
+    local matchesChannel = allowedChannels[channel] == true
+    if not matchesChannel then
+      for allowedChannel in pairs(allowedChannels) do
+        local aliases = CHANNEL_ALIASES[allowedChannel]
+        if aliases and aliases[channel] == true then
+          matchesChannel = true
+          break
+        end
+      end
+    end
+    if not matchesChannel then
+      return false
+    end
   end
 
   local phrases = SplitList(trigger.chatMessage)
@@ -101,7 +143,13 @@ local function TriggerMatchesChat(trigger, channel, message, sender)
 
   local matchedPhrase = false
   for _, phrase in ipairs(phrases) do
-    if normalizedMessage:find(phrase, 1, true) then
+    local isMatch
+    if trigger.chatExact == true then
+      isMatch = normalizedMessage == phrase
+    else
+      isMatch = normalizedMessage:find(phrase, 1, true) ~= nil
+    end
+    if isMatch then
       matchedPhrase = true
       break
     end
