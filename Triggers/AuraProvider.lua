@@ -180,6 +180,28 @@ local function SafeAuraString(value)
   return nil
 end
 
+local function AuraWasCastByPlayer(auraData)
+  if type(auraData) ~= "table" then
+    return false
+  end
+
+  local sourceUnit = SafeAuraString(auraData.sourceUnit) or SafeAuraString(auraData.unitCaster)
+  if sourceUnit == "player" or sourceUnit == "pet" or sourceUnit == "vehicle" then
+    return true
+  end
+  if sourceUnit and UnitIsUnit then
+    return UnitIsUnit(sourceUnit, "player") or UnitIsUnit(sourceUnit, "pet") or UnitIsUnit(sourceUnit, "vehicle")
+  end
+  return false
+end
+
+local function AuraMatchesCasterFilter(trigger, auraData)
+  if not trigger or trigger.castByMe ~= true then
+    return true
+  end
+  return AuraWasCastByPlayer(auraData)
+end
+
 local function PickDisplayValue(...)
   for index = 1, select("#", ...) do
     local value = select(index, ...)
@@ -366,7 +388,7 @@ local function GetSecretSafeAuraStacks(unit, auraInstanceID, auraData)
   return stacks, stackText, stackDisplayValue, hasStackDisplayValue
 end
 
-local function ScanLegacyUnitAuras(unit, isHelpful, spellIDs, spellNames, collectOnly, maxSummary)
+local function ScanLegacyUnitAuras(unit, isHelpful, spellIDs, spellNames, collectOnly, maxSummary, trigger)
   local wantedIDs = {}
   for _, spellId in ipairs(spellIDs or {}) do
     wantedIDs[spellId] = true
@@ -390,7 +412,7 @@ local function ScanLegacyUnitAuras(unit, isHelpful, spellIDs, spellNames, collec
       summary[#summary + 1] = string.format("%s(%s)", tostring(name), tostring(safeSpellId or "?"))
     end
     if not collectOnly and ((safeSpellId and wantedIDs[safeSpellId]) or (lowerName and wantedNames[lowerName])) then
-      return {
+      local auraData = {
         name = name,
         icon = icon,
         applications = applications,
@@ -398,7 +420,10 @@ local function ScanLegacyUnitAuras(unit, isHelpful, spellIDs, spellNames, collec
         expirationTime = expirationTime,
         sourceUnit = sourceUnit,
         spellId = safeSpellId,
-      }, summary
+      }
+      if AuraMatchesCasterFilter(trigger, auraData) then
+        return auraData, summary
+      end
     end
     index = index + 1
   end
@@ -406,7 +431,7 @@ local function ScanLegacyUnitAuras(unit, isHelpful, spellIDs, spellNames, collec
   return nil, summary
 end
 
-local function ScanModernUnitAurasWithFilter(unit, filter, spellIDs, spellNames, collectOnly, maxSummary)
+local function ScanModernUnitAurasWithFilter(unit, filter, spellIDs, spellNames, collectOnly, maxSummary, trigger)
   if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then
     return nil, {}
   end
@@ -434,7 +459,9 @@ local function ScanModernUnitAurasWithFilter(unit, filter, spellIDs, spellNames,
       summary[#summary + 1] = string.format("%s(%s)", tostring(lowerName and auraName or "?"), tostring(auraSpellId or "?"))
     end
     if not collectOnly and ((auraSpellId and wantedIDs[auraSpellId]) or (lowerName and wantedNames[lowerName])) then
-      return aura, summary
+      if AuraMatchesCasterFilter(trigger, aura) then
+        return aura, summary
+      end
     end
     index = index + 1
   end
@@ -442,12 +469,63 @@ local function ScanModernUnitAurasWithFilter(unit, filter, spellIDs, spellNames,
   return nil, summary
 end
 
-local function ScanModernUnitAuras(unit, isHelpful, spellIDs, spellNames, collectOnly, maxSummary)
+local function ScanModernUnitAuras(unit, isHelpful, spellIDs, spellNames, collectOnly, maxSummary, trigger)
   local filter = isHelpful and "HELPFUL" or "HARMFUL"
-  return ScanModernUnitAurasWithFilter(unit, filter, spellIDs, spellNames, collectOnly, maxSummary)
+  return ScanModernUnitAurasWithFilter(unit, filter, spellIDs, spellNames, collectOnly, maxSummary, trigger)
 end
 
-local function FindAura(unit, spellIDs, spellNames, isHelpful, exactSpellNames)
+local function BuildAuraLookupInfo(auraData, path, helpful, lookupLabel, lookupValue, rejectedByType)
+  local parts = {
+    string.format("path=%s", tostring(path or "")),
+    string.format("requestedType=%s", helpful and "buff" or "debuff"),
+  }
+
+  if lookupLabel and lookupValue ~= nil and lookupValue ~= "" then
+    parts[#parts + 1] = string.format("%s=%s", tostring(lookupLabel), tostring(lookupValue))
+  end
+
+  local liveSpellId = SafeSpellID(auraData and auraData.spellId)
+  if liveSpellId and liveSpellId > 0 then
+    parts[#parts + 1] = string.format("liveSpellId=%s", tostring(liveSpellId))
+  end
+
+  local liveName = SafeAuraString(auraData and auraData.name)
+  if liveName and liveName ~= "" then
+    parts[#parts + 1] = string.format("liveName=%s", tostring(liveName))
+  end
+
+  local sourceUnit = SafeAuraString(auraData and auraData.sourceUnit)
+  if sourceUnit and sourceUnit ~= "" then
+    parts[#parts + 1] = string.format("sourceUnit=%s", tostring(sourceUnit))
+  end
+
+  local fromPlayer = SafeAuraBoolean(auraData and auraData.isFromPlayerOrPlayerPet)
+  if fromPlayer ~= nil then
+    parts[#parts + 1] = string.format("fromPlayer=%s", tostring(fromPlayer))
+  end
+
+  local isHelpfulValue = SafeAuraBoolean(auraData and auraData.isHelpful)
+  if isHelpfulValue ~= nil then
+    parts[#parts + 1] = string.format("isHelpful=%s", tostring(isHelpfulValue))
+  end
+
+  local isHarmfulValue = SafeAuraBoolean(auraData and auraData.isHarmful)
+  if isHarmfulValue ~= nil then
+    parts[#parts + 1] = string.format("isHarmful=%s", tostring(isHarmfulValue))
+  end
+
+  if rejectedByType == true then
+    parts[#parts + 1] = "rejectedByType=true"
+  end
+
+  return {
+    message = table.concat(parts, " "),
+    rejectedByType = rejectedByType == true,
+    rejectedBySource = false,
+  }
+end
+
+local function FindAura(unit, spellIDs, spellNames, isHelpful, exactSpellNames, trigger)
   if not unit or type(spellIDs) ~= "table" or #spellIDs == 0 then
     if type(spellNames) ~= "table" or #spellNames == 0 then
       return nil
@@ -455,11 +533,18 @@ local function FindAura(unit, spellIDs, spellNames, isHelpful, exactSpellNames)
   end
 
   local filter = isHelpful and "HELPFUL" or "HARMFUL"
-  if unit == "player" and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+  local requirePlayerCaster = trigger and trigger.castByMe == true
+  local rejectedLookupInfo = nil
+  if not requirePlayerCaster and unit == "player" and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
     for _, spellId in ipairs(spellIDs) do
       local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellId)
-      if ok and aura and (AuraDataMatchesType == nil or AuraDataMatchesType(aura, unit, isHelpful)) then
-        return aura
+      if ok and aura then
+        local matchesType = AuraDataMatchesType == nil or AuraDataMatchesType(aura, unit, isHelpful)
+        local lookupInfo = BuildAuraLookupInfo(aura, "player_spell_id", isHelpful, "querySpellId", spellId, not matchesType)
+        if matchesType then
+          return aura, lookupInfo
+        end
+        rejectedLookupInfo = rejectedLookupInfo or lookupInfo
       end
     end
   end
@@ -484,51 +569,61 @@ local function FindAura(unit, spellIDs, spellNames, isHelpful, exactSpellNames)
     end
   end
 
-  if unit == "player" and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellName then
+  if not requirePlayerCaster and unit == "player" and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellName then
     for _, spellName in ipairs(exactNames) do
       local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellName, spellName)
-      if ok and aura and (AuraDataMatchesType == nil or AuraDataMatchesType(aura, unit, isHelpful)) then
-        return aura
+      if ok and aura then
+        local matchesType = AuraDataMatchesType == nil or AuraDataMatchesType(aura, unit, isHelpful)
+        local lookupInfo = BuildAuraLookupInfo(aura, "player_spell_name", isHelpful, "querySpellName", spellName, not matchesType)
+        if matchesType then
+          return aura, lookupInfo
+        end
+        rejectedLookupInfo = rejectedLookupInfo or lookupInfo
       end
     end
   end
 
-  if AuraUtil and AuraUtil.FindAuraBySpellID then
+  if not requirePlayerCaster and AuraUtil and AuraUtil.FindAuraBySpellID then
     for _, spellId in ipairs(spellIDs) do
       local aura = AuraUtil.FindAuraBySpellID(spellId, unit, filter)
       if aura then
-        return aura
+        return aura, BuildAuraLookupInfo(aura, "aurautil_spell_id", isHelpful, "querySpellId", spellId, false)
       end
     end
   end
 
-  if AuraUtil and AuraUtil.FindAuraByName then
+  if not requirePlayerCaster and AuraUtil and AuraUtil.FindAuraByName then
     for _, spellName in ipairs(exactNames) do
       local aura = AuraUtil.FindAuraByName(spellName, unit, filter)
       if aura then
-        return aura
+        return aura, BuildAuraLookupInfo(aura, "aurautil_name", isHelpful, "querySpellName", spellName, false)
       end
     end
   end
 
-  local legacyAura = ScanLegacyUnitAuras(unit, isHelpful, spellIDs, spellNames, false)
+  local legacyAura = ScanLegacyUnitAuras(unit, isHelpful, spellIDs, spellNames, false, nil, trigger)
   if legacyAura then
-    return legacyAura
+    return legacyAura, BuildAuraLookupInfo(legacyAura, "legacy_scan", isHelpful, nil, nil, false)
   end
 
-  local modernAura = ScanModernUnitAuras(unit, isHelpful, spellIDs, spellNames, false)
+  local modernAura = ScanModernUnitAuras(unit, isHelpful, spellIDs, spellNames, false, nil, trigger)
   if modernAura then
-    return modernAura
+    return modernAura, BuildAuraLookupInfo(modernAura, "modern_scan", isHelpful, nil, nil, false)
   end
 
   if unit == "player" then
-    local unfilteredAura = ScanModernUnitAurasWithFilter(unit, nil, spellIDs, spellNames, false)
-    if unfilteredAura and (AuraDataMatchesType == nil or AuraDataMatchesType(unfilteredAura, unit, isHelpful)) then
-      return unfilteredAura
+    local unfilteredAura = ScanModernUnitAurasWithFilter(unit, nil, spellIDs, spellNames, false, nil, trigger)
+    if unfilteredAura then
+      local matchesType = AuraDataMatchesType == nil or AuraDataMatchesType(unfilteredAura, unit, isHelpful)
+      local lookupInfo = BuildAuraLookupInfo(unfilteredAura, "modern_any", isHelpful, nil, nil, not matchesType)
+      if matchesType then
+        return unfilteredAura, lookupInfo
+      end
+      rejectedLookupInfo = rejectedLookupInfo or lookupInfo
     end
   end
 
-  return nil
+  return nil, rejectedLookupInfo
 end
 
 local function BuildAuraSummary(unit, isHelpful)
@@ -1103,7 +1198,7 @@ local function BuildStateFromAuraData(auraData, matchedUnit, helpful, fallbackNa
       legacyNames[#legacyNames + 1] = fallbackAuraName
     end
 
-    local legacyAura = ScanLegacyUnitAuras(matchedUnit, helpful, GetSpellIDs(trigger), legacyNames, false)
+    local legacyAura = ScanLegacyUnitAuras(matchedUnit, helpful, GetSpellIDs(trigger), legacyNames, false, nil, trigger)
     local legacyStacks = SafeAuraNumber(legacyAura and legacyAura.applications, 0)
     if legacyStacks and legacyStacks > 0 then
       stacks = legacyStacks
@@ -1637,6 +1732,94 @@ local function RememberTargetAuraState(auraConfig, state, extra)
   SetCachedTargetEntry(auraConfig, targetGUID, cache)
 end
 
+local function GetAuraFilterVisibility(unit, auraInstanceID, filter)
+  auraInstanceID = tonumber(auraInstanceID or 0) or 0
+  if auraInstanceID <= 0 or not unit or not (C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID) then
+    return nil
+  end
+
+  local ok, isFilteredOut = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, auraInstanceID, filter)
+  if ok and type(isFilteredOut) == "boolean" then
+    return not isFilteredOut
+  end
+  return nil
+end
+
+local function DescribeAuraDataForDebug(unit, auraData)
+  local auraInstanceID = tonumber(auraData and auraData.auraInstanceID or 0) or 0
+  local spellId = SafeSpellID(auraData and auraData.spellId)
+  local auraName = SafeAuraString(auraData and auraData.name)
+  local isHelpful = SafeAuraBoolean(auraData and auraData.isHelpful)
+  local isHarmful = SafeAuraBoolean(auraData and auraData.isHarmful)
+  local helpfulFilter = GetAuraFilterVisibility(unit, auraInstanceID, "HELPFUL")
+  local harmfulFilter = GetAuraFilterVisibility(unit, auraInstanceID, "HARMFUL")
+  return string.format("%s(%s)#%s helpful=%s harmful=%s helpfulFilter=%s harmfulFilter=%s",
+    tostring(auraName or "?"),
+    tostring(spellId or "?"),
+    auraInstanceID > 0 and tostring(auraInstanceID) or "?",
+    tostring(isHelpful),
+    tostring(isHarmful),
+    tostring(helpfulFilter),
+    tostring(harmfulFilter))
+end
+
+local function CollectChangedAuraData(unit, unitAuraUpdateInfo)
+  local changedAuras = {}
+  local seen = {}
+
+  if type(unitAuraUpdateInfo) ~= "table" then
+    return changedAuras
+  end
+
+  local function RememberAuraData(auraData)
+    if type(auraData) ~= "table" then
+      return
+    end
+    local auraInstanceID = tonumber(auraData.auraInstanceID or 0) or 0
+    if auraInstanceID > 0 and seen[auraInstanceID] then
+      return
+    end
+    if auraInstanceID > 0 then
+      seen[auraInstanceID] = true
+    end
+    changedAuras[#changedAuras + 1] = auraData
+  end
+
+  for _, auraData in ipairs(unitAuraUpdateInfo.addedAuras or {}) do
+    RememberAuraData(auraData)
+  end
+
+  if unitAuraUpdateInfo.updatedAuraInstanceIDs and C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+    for _, auraInstanceID in ipairs(unitAuraUpdateInfo.updatedAuraInstanceIDs) do
+      RememberAuraData(C_UnitAuras.GetAuraDataByAuraInstanceID(unit, auraInstanceID))
+    end
+  end
+
+  return changedAuras
+end
+
+local function SummarizeAuraDataList(unit, auraDataList, maxEntries)
+  local parts = {}
+  for _, auraData in ipairs(auraDataList or {}) do
+    if #parts >= (maxEntries or 8) then
+      break
+    end
+    parts[#parts + 1] = DescribeAuraDataForDebug(unit, auraData)
+  end
+  return table.concat(parts, ", ")
+end
+
+local function SummarizeAuraInstanceIDs(auraInstanceIDs, maxEntries)
+  local parts = {}
+  for _, auraInstanceID in ipairs(auraInstanceIDs or {}) do
+    if #parts >= (maxEntries or 8) then
+      break
+    end
+    parts[#parts + 1] = tostring(auraInstanceID)
+  end
+  return table.concat(parts, ", ")
+end
+
 AuraDataMatchesType = function(auraData, unit, helpful)
   if type(auraData) ~= "table" then
     return false
@@ -1766,6 +1949,62 @@ function provider:HandleEvent(event, ...)
   if event == "UNIT_AURA" then
     local unit, unitAuraUpdateInfo = ...
     if unit == "player" then
+      if type(unitAuraUpdateInfo) == "table" then
+        local debugPlayerTriggers = nil
+        for _, aura in ns.Registry:IterateAll() do
+          for _, trigger in IterateAuraTriggers(aura) do
+            if trigger.unit == "player" and trigger.debug == true then
+              debugPlayerTriggers = debugPlayerTriggers or {}
+              debugPlayerTriggers[#debugPlayerTriggers + 1] = {
+                aura = aura,
+                trigger = trigger,
+              }
+            end
+          end
+        end
+
+        if debugPlayerTriggers and #debugPlayerTriggers > 0 then
+          local changedAuras = CollectChangedAuraData("player", unitAuraUpdateInfo)
+          local addedCount = unitAuraUpdateInfo.addedAuras and #unitAuraUpdateInfo.addedAuras or 0
+          local updatedCount = unitAuraUpdateInfo.updatedAuraInstanceIDs and #unitAuraUpdateInfo.updatedAuraInstanceIDs or 0
+          local removedCount = unitAuraUpdateInfo.removedAuraInstanceIDs and #unitAuraUpdateInfo.removedAuraInstanceIDs or 0
+          local changedSummary = SummarizeAuraDataList("player", changedAuras, 8)
+          local removedSummary = SummarizeAuraInstanceIDs(unitAuraUpdateInfo.removedAuraInstanceIDs, 8)
+
+          for _, entry in ipairs(debugPlayerTriggers) do
+            local aura = entry.aura
+            local trigger = entry.trigger
+            local helpful = trigger.auraType ~= "debuff"
+            local matched = {}
+            local typeRejected = {}
+
+            for _, auraData in ipairs(changedAuras) do
+              local matchesTrigger = TriggerMatchesAuraData(trigger, auraData)
+              if matchesTrigger then
+                if AuraDataMatchesType(auraData, "player", helpful) then
+                  matched[#matched + 1] = DescribeAuraDataForDebug("player", auraData)
+                else
+                  typeRejected[#typeRejected + 1] = DescribeAuraDataForDebug("player", auraData)
+                end
+              end
+            end
+
+            local details = string.format("UNIT_AURA player added=%d updated=%d removed=%d changed=[%s] removedIDs=[%s]",
+              addedCount,
+              updatedCount,
+              removedCount,
+              changedSummary,
+              removedSummary)
+            if #matched > 0 then
+              details = string.format("%s matched=[%s]", details, table.concat(matched, ", "))
+            end
+            if #typeRejected > 0 then
+              details = string.format("%s typeRejected=[%s]", details, table.concat(typeRejected, ", "))
+            end
+            LogAuraEvent(aura, trigger, details)
+          end
+        end
+      end
       local changedSpellIDs, changedSpellNames, needsFullRefresh = CollectChangedAuraSpells(unit, unitAuraUpdateInfo)
       if not needsFullRefresh then
         return self:GetAffectedAurasForAuraChanges(changedSpellIDs, changedSpellNames, unit)
@@ -1937,7 +2176,7 @@ function provider:Evaluate(trigger, auraConfig)
       checkedUnits[#checkedUnits + 1] = candidateUnit
       if UnitPassesAuraFilters(candidateUnit, trigger, aliveOnly) then
         eligibleUnits[#eligibleUnits + 1] = candidateUnit
-        local candidateAura = FindAura(candidateUnit, spellIDs, spellNames, helpful, exactSpellNames)
+        local candidateAura = FindAura(candidateUnit, spellIDs, spellNames, helpful, exactSpellNames, trigger)
         if filterMode == "missing" then
           if not candidateAura then
             missingCount = missingCount + 1
@@ -2111,14 +2350,19 @@ function provider:Evaluate(trigger, auraConfig)
   local ignoredUnits = {}
   local ignoredReasons = {}
   local hasEligibleUnit = false
+  local auraLookupInfo = nil
   for _, candidateUnit in ipairs(IterateUnits(unit)) do
     checkedUnits[#checkedUnits + 1] = candidateUnit
     if UnitPassesAuraFilters(candidateUnit, trigger, aliveOnly) then
       hasEligibleUnit = true
-      aura = FindAura(candidateUnit, spellIDs, spellNames, helpful, exactSpellNames)
+      local candidateAura, candidateLookupInfo = FindAura(candidateUnit, spellIDs, spellNames, helpful, exactSpellNames, trigger)
+      aura = candidateAura
       if aura then
         matchedUnit = candidateUnit
+        auraLookupInfo = candidateLookupInfo
         break
+      elseif not auraLookupInfo and candidateLookupInfo and (candidateLookupInfo.rejectedByType == true or candidateLookupInfo.rejectedBySource == true) then
+        auraLookupInfo = candidateLookupInfo
       end
     else
       ignoredUnits[#ignoredUnits + 1] = candidateUnit
@@ -2168,6 +2412,9 @@ function provider:Evaluate(trigger, auraConfig)
       elseif unit == "target" then
         details = string.format("%s | %s", details, BuildAuraSummary("target", helpful))
       end
+      if auraLookupInfo and (auraLookupInfo.rejectedByType == true or auraLookupInfo.rejectedBySource == true) and auraLookupInfo.message then
+        details = string.format("%s | %s", details, auraLookupInfo.message)
+      end
       ns.Debug:LogTrigger(nil, trigger, missing, details)
     end
     return missing
@@ -2187,7 +2434,11 @@ function provider:Evaluate(trigger, auraConfig)
     end
   end
   if ns.Debug and ns.Debug.LogTrigger and trigger.debug == true then
-    ns.Debug:LogTrigger(nil, trigger, found, string.format("matchedUnit=%s auraName=%s", tostring(matchedUnit), tostring(aura.name or "")))
+    local details = string.format("matchedUnit=%s auraName=%s", tostring(matchedUnit), tostring(aura.name or ""))
+    if auraLookupInfo and auraLookupInfo.message then
+      details = string.format("%s %s", details, auraLookupInfo.message)
+    end
+    ns.Debug:LogTrigger(nil, trigger, found, details)
   end
   if filterMode == "missing" then
     return BuildSatisfiedState(trigger, auraConfig, helpful, unit, matchedUnit)

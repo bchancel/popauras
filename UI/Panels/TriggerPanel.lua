@@ -371,6 +371,10 @@ local function SplitEntries(input)
   return results
 end
 
+local function TrimmedText(value)
+  return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
 local function UpdatePrimaryTriggerLayout(frame, aura)
   if not frame then
     return
@@ -665,6 +669,30 @@ local function BuildAuraResolvedTokens(trigger)
   return resolvedTokens
 end
 
+function Panel:ApplyTriggerType(triggerType)
+  if self.suppressUpdates then
+    return
+  end
+
+  local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+  if not aura then
+    return
+  end
+
+  local triggers = EnsureAuraTriggers(aura)
+  local trigger, triggerIndex = self:GetSelectedTrigger(aura)
+  trigger = trigger or Tables.DeepCopy(ns.Defaults.baseTrigger)
+  trigger.type = triggerType or "simple"
+  ns.Defaults:ApplyTriggerDefaults(trigger)
+  triggers[triggerIndex] = trigger
+
+  ns.runtime:RefreshAura(aura.id)
+  if ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
+    ns.CooldownManager:ApplyVisibilityOverrides()
+  end
+  ns.ui.MainWindow:RefreshSelection()
+end
+
 function Panel:ApplyCurrent()
   if self.suppressUpdates then
     return
@@ -692,8 +720,12 @@ function Panel:ApplyCurrent()
   trigger.auraFilter = UIDropDownMenu_GetSelectedValue(frame.auraFilterDropDown) or trigger.auraFilter or "present"
   trigger.unit = UIDropDownMenu_GetSelectedValue(frame.auraUnitDropDown) or trigger.unit or "player"
   trigger.groupRange = NormalizeAuraGroupRange(UIDropDownMenu_GetSelectedValue(frame.auraRangeDropDown) or trigger.groupRange or "any")
+  trigger.castByMe = frame.auraCastByMeCheck:GetChecked() == true
   trigger.aliveOnly = frame.auraAliveOnlyCheck:GetChecked() == true
   trigger.ignoreNPCs = frame.auraIgnoreNPCsCheck:GetChecked() == true
+  if trigger.type == "aura" and trigger.unit == "player" then
+    trigger.castByMe = false
+  end
   trigger.chatChannels = ReadSelectedChatChannels(frame)
   trigger.chatChannel = trigger.chatChannels[1] or trigger.chatChannel or "WHISPER"
   trigger.chatExact = frame.chatExactCheck:GetChecked() == true
@@ -709,64 +741,85 @@ function Panel:ApplyCurrent()
   trigger.soundHealer = UIDropDownMenu_GetSelectedValue(frame.deathHealerSoundDropDown) or trigger.soundHealer or "None"
   trigger.soundDPS = UIDropDownMenu_GetSelectedValue(frame.deathDPSSoundDropDown) or trigger.soundDPS or "None"
 
-  local input = frame.argInput:GetText()
+  local input = TrimmedText(frame.argInput:GetText())
   if trigger.type == "spell_cooldown" then
-    local spellIDs, result, names = ResolveSpellList(input)
-    if not spellIDs then
-      frame.resolvedLabel:SetText("|cffff4444" .. result .. "|r")
-      return
-    end
-    trigger.spellIDs = spellIDs
-    trigger.spellNames = names
-    trigger.spellId = spellIDs[1]
-    trigger.itemId = nil
-    trigger.itemName = nil
-    local resolved = string.format("|cff88ff88Resolved:|r %s", result)
-    if trigger.type == "spell_cooldown" and ns.CooldownManager and ns.CooldownManager.FindCooldownIDForSpellID then
-      local mapped = {}
-      local unmapped = {}
-      for _, spellId in ipairs(spellIDs) do
-        local cooldownID = ns.CooldownManager:FindCooldownIDForSpellID(spellId)
-        if cooldownID then
-          mapped[#mapped + 1] = tostring(cooldownID)
-        else
-          unmapped[#unmapped + 1] = tostring(spellId)
+    if input == "" then
+      trigger.spellIDs = nil
+      trigger.spellNames = nil
+      trigger.spellId = nil
+      trigger.itemId = nil
+      trigger.itemName = nil
+      frame.resolvedLabel:SetText("|cffaaaaaaEnter one or more spell names or spell IDs.|r")
+    else
+      local spellIDs, result, names = ResolveSpellList(input)
+      if not spellIDs then
+        frame.resolvedLabel:SetText("|cffff4444" .. result .. "|r")
+        return
+      end
+      trigger.spellIDs = spellIDs
+      trigger.spellNames = names
+      trigger.spellId = spellIDs[1]
+      trigger.itemId = nil
+      trigger.itemName = nil
+      local resolved = string.format("|cff88ff88Resolved:|r %s", result)
+      if trigger.type == "spell_cooldown" and ns.CooldownManager and ns.CooldownManager.FindCooldownIDForSpellID then
+        local mapped = {}
+        local unmapped = {}
+        for _, spellId in ipairs(spellIDs) do
+          local cooldownID = ns.CooldownManager:FindCooldownIDForSpellID(spellId)
+          if cooldownID then
+            mapped[#mapped + 1] = tostring(cooldownID)
+          else
+            unmapped[#unmapped + 1] = tostring(spellId)
+          end
+        end
+        if #mapped > 0 then
+          resolved = string.format("%s  |cff66ccffCDM:|r %s", resolved, table.concat(mapped, ", "))
+        end
+        if #unmapped > 0 then
+          resolved = string.format("%s  |cffffcc66Unmapped:|r %s", resolved, table.concat(unmapped, ", "))
         end
       end
-      if #mapped > 0 then
-        resolved = string.format("%s  |cff66ccffCDM:|r %s", resolved, table.concat(mapped, ", "))
-      end
-      if #unmapped > 0 then
-        resolved = string.format("%s  |cffffcc66Unmapped:|r %s", resolved, table.concat(unmapped, ", "))
-      end
+      frame.resolvedLabel:SetText(resolved)
     end
-    frame.resolvedLabel:SetText(resolved)
   elseif trigger.type == "aura" then
-    local spellIDs, result, names, errorMessage = ResolveAuraList(input)
-    if errorMessage then
-      frame.resolvedLabel:SetText("|cffff4444" .. errorMessage .. "|r")
-      return
-    end
-    trigger.spellIDs = spellIDs
-    trigger.spellNames = names
-    trigger.spellId = spellIDs and spellIDs[1] or nil
-    trigger.itemId = nil
-    trigger.itemName = nil
-    frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s", result))
-  elseif trigger.type == "item_cooldown" then
-    input = Items and Items.NormalizeText and Items.NormalizeText(input) or tostring(input or ""):gsub("^%s+", ""):gsub("%s+$", "")
     if input == "" then
-      frame.resolvedLabel:SetText("|cffff4444Enter an item name or item ID.|r")
-      return
-    end
-    local itemId, result = ResolveItemId(input)
-    trigger.itemId = itemId or 0
-    trigger.itemName = trigger.itemId > 0 and (result or input) or input
-    trigger.spellId = nil
-    if trigger.itemId > 0 then
-      frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s (%d)", result or "Item", trigger.itemId))
+      trigger.spellIDs = nil
+      trigger.spellNames = nil
+      trigger.spellId = nil
+      trigger.itemId = nil
+      trigger.itemName = nil
+      frame.resolvedLabel:SetText("|cffaaaaaaEnter aura names or spell IDs separated by commas.|r")
     else
-      frame.resolvedLabel:SetText(string.format("|cffffcc66Saved item name:|r %s  |cffaaaaaaItem ID will resolve when cached or equipped.|r", trigger.itemName))
+      local spellIDs, result, names, errorMessage = ResolveAuraList(input)
+      if errorMessage then
+        frame.resolvedLabel:SetText("|cffff4444" .. errorMessage .. "|r")
+        return
+      end
+      trigger.spellIDs = spellIDs
+      trigger.spellNames = names
+      trigger.spellId = spellIDs and spellIDs[1] or nil
+      trigger.itemId = nil
+      trigger.itemName = nil
+      frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s", result))
+    end
+  elseif trigger.type == "item_cooldown" then
+    input = Items and Items.NormalizeText and Items.NormalizeText(input) or input
+    if input == "" then
+      trigger.itemId = 0
+      trigger.itemName = ""
+      trigger.spellId = nil
+      frame.resolvedLabel:SetText("|cffaaaaaaEnter an item name or item ID.|r")
+    else
+      local itemId, result = ResolveItemId(input)
+      trigger.itemId = itemId or 0
+      trigger.itemName = trigger.itemId > 0 and (result or input) or input
+      trigger.spellId = nil
+      if trigger.itemId > 0 then
+        frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s (%d)", result or "Item", trigger.itemId))
+      else
+        frame.resolvedLabel:SetText(string.format("|cffffcc66Saved item name:|r %s  |cffaaaaaaItem ID will resolve when cached or equipped.|r", trigger.itemName))
+      end
     end
   elseif trigger.type == "cast" then
     local spellIDs, result, names = ResolveSpellList(input)
@@ -819,6 +872,7 @@ function Panel:ApplyCurrent()
     trigger.auraType = "buff"
     trigger.auraFilter = "present"
     trigger.groupRange = "any"
+    trigger.castByMe = false
     trigger.aliveOnly = false
     trigger.ignoreNPCs = false
   elseif trigger.type == "cast" and not trigger.unit then
@@ -1100,6 +1154,9 @@ function Panel:Create(parent)
   frame.auraAliveOnlyCheck = Frames.CreateCheckbox(frame, "Alive Only")
   frame.auraAliveOnlyCheck:SetPoint("TOPLEFT", frame.auraRangeDropDown, "BOTTOMLEFT", 14, -10)
 
+  frame.auraCastByMeCheck = Frames.CreateCheckbox(frame, "Cast By Me")
+  frame.auraCastByMeCheck:SetPoint("TOPLEFT", frame.auraAliveOnlyCheck, "TOPRIGHT", 120, 0)
+
   frame.auraIgnoreNPCsCheck = Frames.CreateCheckbox(frame, "Ignore NPCs")
   frame.auraIgnoreNPCsCheck:SetPoint("TOPLEFT", frame.auraAliveOnlyCheck, "BOTTOMLEFT", 0, -6)
 
@@ -1175,7 +1232,7 @@ function Panel:Create(parent)
       info.func = function()
         UIDropDownMenu_SetSelectedValue(frame.typeDropDown, value)
         UIDropDownMenu_SetText(frame.typeDropDown, label)
-        Panel:ApplyCurrent()
+        Panel:ApplyTriggerType(value)
       end
       UIDropDownMenu_AddButton(info, level)
     end
@@ -1344,6 +1401,7 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.deathMaxAlertsInput)
   frame.chatExactCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.showAlwaysCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.auraCastByMeCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraAliveOnlyCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraIgnoreNPCsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.chargeCooldownCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
@@ -1447,6 +1505,7 @@ function Panel:Refresh(aura)
   self.frame.auraUnitDropDown:SetShown(isAura)
   self.frame.auraRangeLabel:SetShown(isAura and (trigger.unit or "player") == "group")
   self.frame.auraRangeDropDown:SetShown(isAura and (trigger.unit or "player") == "group")
+  self.frame.auraCastByMeCheck:SetShown(isAura and (trigger.unit or "player") ~= "player")
   self.frame.auraAliveOnlyCheck:SetShown(isAura)
   self.frame.auraIgnoreNPCsCheck:SetShown(isAura and (trigger.unit or "player") == "group")
   self.frame.argLabel:SetShown(not isDeathAlert)
@@ -1483,6 +1542,7 @@ function Panel:Refresh(aura)
     return auraGroupRangeValues
   end))
   self.frame.auraAliveOnlyCheck:SetChecked(trigger.aliveOnly == true)
+  self.frame.auraCastByMeCheck:SetChecked(trigger.castByMe == true)
   self.frame.auraIgnoreNPCsCheck:SetChecked(trigger.ignoreNPCs == true)
   self.frame.manualCooldownLabel:SetShown(isSpellCooldown)
   self.frame.manualCooldownInput:SetShown(isSpellCooldown)

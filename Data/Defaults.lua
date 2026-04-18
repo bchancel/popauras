@@ -192,6 +192,9 @@ local function ApplyTriggerTypeDefaults(trigger)
     trigger.auraType = trigger.auraType or "buff"
     trigger.auraFilter = trigger.auraFilter or "present"
     trigger.groupRange = trigger.groupRange or "any"
+    if trigger.castByMe == nil then
+      trigger.castByMe = false
+    end
     if trigger.aliveOnly == nil then
       trigger.aliveOnly = false
     end
@@ -373,6 +376,7 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].auraType = "buff"
       aura.triggers[1].auraFilter = "present"
       aura.triggers[1].groupRange = "any"
+      aura.triggers[1].castByMe = false
       aura.triggers[1].aliveOnly = false
       aura.triggers[1].ignoreNPCs = false
       aura.triggers[1].spellId = 0

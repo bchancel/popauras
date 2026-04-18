@@ -1,3 +1,7 @@
+# v0.3.10
+- Trigger Type switching in the Trigger tab no longer gets stuck behind stale options when cycling between trigger types
+- Added a "Cast By Me" filter for aura triggers so you can track your own buffs on target, party/raid, and nameplate units
+
 # v0.3.9
 - Fixed exported/imported icon auras sometimes restoring at the generic 220 width instead of icon size
 - Shared aura imports now apply automatically after accepting the transfer
