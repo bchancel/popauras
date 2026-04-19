@@ -460,7 +460,38 @@ local function QueryLooksLikeBorrowedGCD(spellId, queryId, cooldown, duration, e
   return false
 end
 
+local function QueryHasUsableExplicitState(cooldown, duration, expirationTime, durationObject, isOnGCD)
+  if type(cooldown) ~= "table" or isOnGCD == true then
+    return false
+  end
+
+  local explicitActive = SafeBoolean(cooldown.isActive)
+  if explicitActive == nil then
+    return false
+  end
+
+  if explicitActive == false then
+    return CooldownLooksReady(cooldown, duration, expirationTime, durationObject, isOnGCD)
+  end
+
+  return durationObject ~= nil or IsUsableCooldownDuration(duration, expirationTime, isOnGCD)
+end
+
 local function SelectBestCooldownQuery(spellId, cache, cdmState)
+  local primaryCooldown = GetSpellCooldownInfoForID(spellId)
+  if primaryCooldown then
+    local duration, expirationTime, durationObject, isOnGCD = GetSpellCooldownTiming(spellId, primaryCooldown)
+    if QueryLooksLikeBorrowedGCD(spellId, spellId, primaryCooldown, duration, expirationTime, durationObject, isOnGCD) then
+      duration = 0
+      expirationTime = 0
+      durationObject = nil
+      isOnGCD = true
+    end
+    if QueryHasUsableExplicitState(primaryCooldown, duration, expirationTime, durationObject, isOnGCD) then
+      return spellId, primaryCooldown, duration, expirationTime, durationObject, isOnGCD
+    end
+  end
+
   local best = nil
 
   for _, queryId in ipairs(BuildCooldownQueryIDs(spellId, cache, cdmState)) do
@@ -477,8 +508,9 @@ local function SelectBestCooldownQuery(spellId, cache, cdmState)
 
       if not best
         or score > best.score
-        or (score == best.score and (expirationTime or 0) > (best.expirationTime or 0))
-        or (score == best.score and (expirationTime or 0) == (best.expirationTime or 0) and (duration or 0) > (best.duration or 0)) then
+        or (score == best.score and queryId == spellId and best.queryId ~= spellId)
+        or (score == best.score and (expirationTime or 0) < (best.expirationTime or 0))
+        or (score == best.score and (expirationTime or 0) == (best.expirationTime or 0) and (duration or 0) < (best.duration or 0)) then
         best = {
           queryId = queryId,
           cooldown = cooldown,
@@ -743,36 +775,216 @@ local function BuildDebugBits(parts)
   return table.concat(result, " ")
 end
 
-function provider:GetAffectedAurasForSpellIDs(spellIDs)
-  local wanted = {}
-  for _, spellID in ipairs(spellIDs or {}) do
-    spellID = tonumber(spellID or 0) or 0
-    if spellID > 0 then
-      wanted[spellID] = true
+local function QuantizeTime(value)
+  value = SafeNumber(value)
+  if value == nil then
+    return ""
+  end
+  return string.format("%.3f", value)
+end
+
+local function GetDurationObjectWindow(durationObject)
+  if not durationObject then
+    return nil, nil, nil
+  end
+
+  local startTime = CallDurationObjectMethod(durationObject, "GetStartTime")
+  local endTime = CallDurationObjectMethod(durationObject, "GetEndTime")
+  local totalDuration = CallDurationObjectMethod(durationObject, "GetTotalDuration")
+  if totalDuration == nil and startTime ~= nil and endTime ~= nil and endTime > startTime then
+    totalDuration = endTime - startTime
+  end
+
+  return startTime, endTime, totalDuration
+end
+
+local function BuildCooldownEventQueryIDs(spellId, cache)
+  local ids = {}
+  local seen = {}
+
+  local function add(id)
+    id = tonumber(id or 0) or 0
+    if id > 0 and not seen[id] then
+      seen[id] = true
+      ids[#ids + 1] = id
     end
   end
 
-  if next(wanted) == nil then
-    return {}
+  add(spellId)
+  add(cache and cache.cooldownID)
+
+  if ns.CooldownManager and ns.CooldownManager.GetCooldownIDsForSpellID then
+    for _, cooldownID in ipairs(ns.CooldownManager:GetCooldownIDsForSpellID(spellId)) do
+      add(cooldownID)
+    end
   end
 
-  return ns.Registry:CollectAuraIds(function(aura)
+  table.sort(ids)
+  return ids
+end
+
+local function BuildCooldownEventQuerySignature(spellId, queryId)
+  local cooldown = GetSpellCooldownInfoForID(queryId)
+  if type(cooldown) ~= "table" then
+    return string.format("%d:nil", queryId)
+  end
+
+  local duration = SafeNumber(cooldown.duration) or 0
+  local startTime = SafeNumber(cooldown.startTime) or 0
+  local expirationTime = (startTime > 0 and duration > 0) and (startTime + duration) or 0
+  local durationObject = nil
+  if (startTime <= 0 or duration <= 0) and ShouldProbeSpellCooldownDuration(cooldown) and C_Spell and C_Spell.GetSpellCooldownDuration then
+    local ok, rawDurationObject = pcall(C_Spell.GetSpellCooldownDuration, queryId)
+    if ok then
+      durationObject = rawDurationObject
+    end
+  end
+
+  local objectStartTime, objectEndTime, objectDuration = GetDurationObjectWindow(durationObject)
+  local isOnGCD = SafeBoolean(cooldown.isOnGCD)
+  if QueryLooksLikeBorrowedGCD(spellId, queryId, cooldown, duration, expirationTime, durationObject, isOnGCD) then
+    duration = 0
+    startTime = 0
+    expirationTime = 0
+    objectStartTime = nil
+    objectEndTime = nil
+    objectDuration = nil
+    durationObject = nil
+    isOnGCD = true
+  end
+
+  return table.concat({
+    tostring(queryId),
+    tostring(SafeBoolean(cooldown.isActive)),
+    tostring(SafeBoolean(cooldown.isEnabled)),
+    tostring(isOnGCD == true),
+    QuantizeTime(startTime),
+    QuantizeTime(duration),
+    QuantizeTime(expirationTime),
+    QuantizeTime(objectStartTime),
+    QuantizeTime(objectEndTime),
+    QuantizeTime(objectDuration),
+    durationObject ~= nil and "1" or "0",
+  }, ":")
+end
+
+local function BuildChargeEventSignature(spellId)
+  if not C_Spell or not C_Spell.GetSpellCharges then
+    return ""
+  end
+
+  local chargeInfo = C_Spell.GetSpellCharges(spellId)
+  if type(chargeInfo) ~= "table" then
+    return "charges:nil"
+  end
+
+  local durationObject = nil
+  local currentCharges = SafeNumber(chargeInfo.currentCharges)
+  local maxCharges = SafeNumber(chargeInfo.maxCharges)
+  local cooldownStartTime = SafeNumber(chargeInfo.cooldownStartTime)
+  local cooldownDuration = SafeNumber(chargeInfo.cooldownDuration)
+  local missingCharges = currentCharges ~= nil and maxCharges ~= nil and maxCharges > 1 and currentCharges < maxCharges
+  if missingCharges and (not cooldownStartTime or cooldownStartTime <= 0 or not cooldownDuration or cooldownDuration <= 0) and C_Spell.GetSpellChargeDuration then
+    local ok, rawDurationObject = pcall(C_Spell.GetSpellChargeDuration, spellId)
+    if ok then
+      durationObject = rawDurationObject
+    end
+  end
+
+  local objectStartTime, objectEndTime, objectDuration = GetDurationObjectWindow(durationObject)
+  return table.concat({
+    "charges",
+    tostring(currentCharges or ""),
+    tostring(maxCharges or ""),
+    tostring(SafeBoolean(chargeInfo.isActive)),
+    QuantizeTime(cooldownStartTime),
+    QuantizeTime(cooldownDuration),
+    QuantizeTime(objectStartTime),
+    QuantizeTime(objectEndTime),
+    QuantizeTime(objectDuration),
+    durationObject ~= nil and "1" or "0",
+  }, ":")
+end
+
+local function BuildCooldownEventSignature(spellId, cache)
+  local parts = {}
+
+  for _, queryId in ipairs(BuildCooldownEventQueryIDs(spellId, cache)) do
+    parts[#parts + 1] = BuildCooldownEventQuerySignature(spellId, queryId)
+  end
+
+  parts[#parts + 1] = BuildChargeEventSignature(spellId)
+
+  return table.concat(parts, "|")
+end
+
+local function EnsureSpellAuraIndex(self)
+  if not ns.Registry or not ns.Registry.GetFlatOrder then
+    self.spellAuraIndex = {}
+    self.watchedSpellIDs = {}
+    self.spellAuraIndexOrder = nil
+    return
+  end
+
+  local flatOrder = ns.Registry:GetFlatOrder()
+  if self.spellAuraIndex and self.watchedSpellIDs and self.spellAuraIndexOrder == flatOrder then
+    return
+  end
+
+  local spellAuraIndex = {}
+  local watchedSpellIDs = {}
+  local seenSpellIDs = {}
+
+  for _, aura in ns.Registry:IterateAll() do
+    local spellIDsForAura = {}
     for _, trigger in IterateSpellCooldownTriggers(aura) do
       for _, spellID in ipairs(GetSpellIDs(trigger)) do
-        if wanted[spellID] then
-          return true
+        if spellID > 0 and not spellIDsForAura[spellID] then
+          spellIDsForAura[spellID] = true
+          local auraIds = spellAuraIndex[spellID]
+          if not auraIds then
+            auraIds = {}
+            spellAuraIndex[spellID] = auraIds
+          end
+          auraIds[#auraIds + 1] = aura.id
+          if not seenSpellIDs[spellID] then
+            seenSpellIDs[spellID] = true
+            watchedSpellIDs[#watchedSpellIDs + 1] = spellID
+          end
         end
       end
     end
-    return false
-  end)
+  end
+
+  table.sort(watchedSpellIDs)
+  self.spellAuraIndex = spellAuraIndex
+  self.watchedSpellIDs = watchedSpellIDs
+  self.spellAuraIndexOrder = flatOrder
+end
+
+function provider:GetAffectedAurasForSpellIDs(spellIDs)
+  EnsureSpellAuraIndex(self)
+
+  local results = {}
+  local seenAuraIds = {}
+  for _, spellID in ipairs(spellIDs or {}) do
+    spellID = tonumber(spellID or 0) or 0
+    if spellID > 0 then
+      for _, auraId in ipairs(self.spellAuraIndex and self.spellAuraIndex[spellID] or {}) do
+        if not seenAuraIds[auraId] then
+          seenAuraIds[auraId] = true
+          results[#results + 1] = auraId
+        end
+      end
+    end
+  end
+
+  return results
 end
 
 function provider:GetAffectedAuras(event, ...)
   if event == "SPELL_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_CHARGES" then
-    return ns.Registry:CollectAuraIds(function(aura)
-      return ns.TriggerBase:AnyTriggerMatches(aura, "spell_cooldown")
-    end)
+    return {}
   end
 
   if event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -787,13 +999,10 @@ function provider:GetAffectedAuras(event, ...)
 end
 
 function provider:PruneCache()
+  EnsureSpellAuraIndex(self)
   local activeSpellIDs = {}
-  for _, aura in ns.Registry:IterateAll() do
-    for _, trigger in IterateSpellCooldownTriggers(aura) do
-      for _, spellID in ipairs(GetSpellIDs(trigger)) do
-        activeSpellIDs[spellID] = true
-      end
-    end
+  for _, spellID in ipairs(self.watchedSpellIDs or {}) do
+    activeSpellIDs[spellID] = true
   end
 
   for spellID in pairs(self.cache) do
@@ -801,6 +1010,30 @@ function provider:PruneCache()
       self.cache[spellID] = nil
     end
   end
+
+  self.cooldownEventSignatures = self.cooldownEventSignatures or {}
+  for spellID in pairs(self.cooldownEventSignatures) do
+    if not activeSpellIDs[spellID] then
+      self.cooldownEventSignatures[spellID] = nil
+    end
+  end
+end
+
+function provider:GetChangedSpellIDsForCooldownEvent()
+  EnsureSpellAuraIndex(self)
+
+  self.cooldownEventSignatures = self.cooldownEventSignatures or {}
+  local changedSpellIDs = {}
+
+  for _, spellID in ipairs(self.watchedSpellIDs or {}) do
+    local signature = BuildCooldownEventSignature(spellID, self.cache[spellID])
+    if self.cooldownEventSignatures[spellID] ~= signature then
+      self.cooldownEventSignatures[spellID] = signature
+      changedSpellIDs[#changedSpellIDs + 1] = spellID
+    end
+  end
+
+  return changedSpellIDs
 end
 
 IsCooldownActive = function(cooldown)
@@ -900,6 +1133,14 @@ local function AdvanceCachedCharges(cache)
 end
 
 function provider:HandleEvent(event, ...)
+  if event == "SPELL_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_CHARGES" then
+    local changedSpellIDs = self:GetChangedSpellIDsForCooldownEvent()
+    if #changedSpellIDs == 0 then
+      return {}
+    end
+    return self:GetAffectedAurasForSpellIDs(changedSpellIDs)
+  end
+
   if event == "UNIT_SPELLCAST_SUCCEEDED" then
     local unit, _, spellId = ...
     if unit ~= "player" or type(spellId) ~= "number" then
@@ -988,6 +1229,10 @@ function provider:HandleEvent(event, ...)
     end
     return affectedAuraIds
   elseif event == "PLAYER_ENTERING_WORLD" or event == "SPELLS_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "PLAYER_SPECIALIZATION_CHANGED" or event == "TRAIT_CONFIG_UPDATED" then
+    self.spellAuraIndex = nil
+    self.watchedSpellIDs = nil
+    self.spellAuraIndexOrder = nil
+    self.cooldownEventSignatures = {}
     self:PruneCache()
     if ns.CooldownManager and ns.CooldownManager.Invalidate then
       ns.CooldownManager:Invalidate()

@@ -1,3 +1,7 @@
+# v0.3.11
+- Fixed CDM-backed spell cooldown bars getting stuck on stale timers when Cooldown Manager already showed the spell as ready
+- Reduced spell cooldown overhead during `SPELL_UPDATE_COOLDOWN` and `SPELL_UPDATE_CHARGES` 
+
 # v0.3.10
 - Trigger Type switching in the Trigger tab no longer gets stuck behind stale options when cycling between trigger types
 - Added a "Cast By Me" filter for aura triggers so you can track your own buffs on target, party/raid, and nameplate units
