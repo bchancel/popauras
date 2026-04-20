@@ -62,11 +62,13 @@ local function GetRaidFrameSettings(aura)
   local display = aura and aura.display or {}
   local iconSize = math.max(8, tonumber(display.raidFrameIconSize or DEFAULT_ICON_SIZE) or DEFAULT_ICON_SIZE)
   local anchor = tostring(display.raidFrameAnchor or "BOTTOM")
+  local growth = tostring(display.raidFrameGrowth or "AUTO")
   local offsetX = tonumber(display.raidFrameOffsetX or 0) or 0
   local offsetY = tonumber(display.raidFrameOffsetY or DEFAULT_OFFSET_Y) or DEFAULT_OFFSET_Y
   return {
     iconSize = iconSize,
     anchor = anchor,
+    growth = growth,
     offsetX = offsetX,
     offsetY = offsetY,
     showGlow = display.raidFrameShowGlow == true,
@@ -276,6 +278,7 @@ local function ReleaseIcon(icon)
   icon._overlayAuraId = nil
   icon._overlayLayoutKey = nil
   icon._overlayAnchor = nil
+  icon._overlayGrowth = nil
   icon._overlayOffsetX = 0
   icon._overlayOffsetY = 0
   icon._overlaySort = 0
@@ -320,9 +323,10 @@ local function ApplyIconState(icon, aura, state)
 
   icon._overlayAuraId = aura.id
   icon._overlayAnchor = settings.anchor
+  icon._overlayGrowth = settings.growth
   icon._overlayOffsetX = settings.offsetX
   icon._overlayOffsetY = settings.offsetY
-  icon._overlayLayoutKey = string.format("%s:%0.2f:%0.2f", settings.anchor, settings.offsetX, settings.offsetY)
+  icon._overlayLayoutKey = string.format("%s:%s:%0.2f:%0.2f", settings.anchor, settings.growth, settings.offsetX, settings.offsetY)
   icon._overlaySort = ns.runtime and ns.runtime.GetActivationOrder and ns.runtime:GetActivationOrder(aura.id) or 0
 
   ApplyCooldownAppearance(icon.cooldown, aura)
@@ -368,11 +372,11 @@ local function CompareIcons(left, right)
 end
 
 local function IsRightAnchor(anchor)
-  return anchor == "TOPRIGHT" or anchor == "BOTTOMRIGHT" or anchor == "RIGHT"
+  return anchor == "TOPRIGHT" or anchor == "BOTTOMRIGHT" or anchor == "RIGHT" or anchor == "RIGHT_OUTSIDE"
 end
 
 local function IsLeftAnchor(anchor)
-  return anchor == "TOPLEFT" or anchor == "BOTTOMLEFT" or anchor == "LEFT"
+  return anchor == "TOPLEFT" or anchor == "BOTTOMLEFT" or anchor == "LEFT" or anchor == "LEFT_OUTSIDE"
 end
 
 local function IsTopAnchor(anchor)
@@ -384,11 +388,66 @@ local function IsBottomAnchor(anchor)
 end
 
 local function UseVerticalLayout(anchor)
-  return anchor == "LEFT" or anchor == "RIGHT"
+  return anchor == "LEFT" or anchor == "RIGHT" or anchor == "LEFT_OUTSIDE" or anchor == "RIGHT_OUTSIDE"
+end
+
+local function ResolveAnchorBinding(anchor)
+  if anchor == "LEFT_OUTSIDE" then
+    return "RIGHT", "LEFT"
+  elseif anchor == "RIGHT_OUTSIDE" then
+    return "LEFT", "RIGHT"
+  end
+  return anchor, anchor
+end
+
+local function ResolveAnchorBaseOffsets(anchor, offsetX, offsetY)
+  local baseX = tonumber(offsetX or 0) or 0
+  local baseY = tonumber(offsetY or DEFAULT_OFFSET_Y) or DEFAULT_OFFSET_Y
+
+  if anchor == "RIGHT" or anchor == "TOPRIGHT" or anchor == "BOTTOMRIGHT" or anchor == "LEFT_OUTSIDE" then
+    baseX = -baseX
+  end
+
+  if IsTopAnchor(anchor) then
+    baseY = -baseY
+  end
+
+  return baseX, baseY
+end
+
+local function LayoutDirectionalGroup(unitFrame, icons, anchor, growth, offsetX, offsetY)
+  table.sort(icons, CompareIcons)
+
+  local point, relativePoint = ResolveAnchorBinding(anchor)
+  local baseX, baseY = ResolveAnchorBaseOffsets(anchor, offsetX, offsetY)
+  local cursorX = 0
+  local cursorY = 0
+
+  for index, icon in ipairs(icons) do
+    icon:ClearAllPoints()
+    icon:SetPoint(point, unitFrame, relativePoint, baseX + cursorX, baseY + cursorY)
+    icon:Show()
+
+    if index < #icons then
+      local width = icon:GetWidth() or DEFAULT_ICON_SIZE
+      local height = icon:GetHeight() or DEFAULT_ICON_SIZE
+      if growth == "LEFT" then
+        cursorX = cursorX - width - ICON_PADDING
+      elseif growth == "RIGHT" then
+        cursorX = cursorX + width + ICON_PADDING
+      elseif growth == "UP" then
+        cursorY = cursorY + height + ICON_PADDING
+      elseif growth == "DOWN" then
+        cursorY = cursorY - height - ICON_PADDING
+      end
+    end
+  end
 end
 
 local function LayoutHorizontalGroup(unitFrame, icons, anchor, offsetX, offsetY)
   table.sort(icons, CompareIcons)
+  local point, relativePoint = ResolveAnchorBinding(anchor)
+  local baseX, baseY = ResolveAnchorBaseOffsets(anchor, offsetX, offsetY)
 
   local totalSpan = 0
   for index, icon in ipairs(icons) do
@@ -407,31 +466,26 @@ local function LayoutHorizontalGroup(unitFrame, icons, anchor, offsetX, offsetY)
     local width = icon:GetWidth() or DEFAULT_ICON_SIZE
     local anchorX
     if IsLeftAnchor(anchor) then
-      anchorX = offsetX + cursor
+      anchorX = baseX + cursor
       cursor = cursor + width + ICON_PADDING
     elseif IsRightAnchor(anchor) then
-      anchorX = -offsetX - cursor
+      anchorX = baseX - cursor
       cursor = cursor + width + ICON_PADDING
     else
-      anchorX = offsetX + cursor + (width / 2)
+      anchorX = baseX + cursor + (width / 2)
       cursor = cursor + width + ICON_PADDING
-    end
-
-    local anchorY = offsetY
-    if IsTopAnchor(anchor) then
-      anchorY = -offsetY
-    elseif IsBottomAnchor(anchor) then
-      anchorY = offsetY
     end
 
     icon:ClearAllPoints()
-    icon:SetPoint(anchor, unitFrame, anchor, anchorX, anchorY)
+    icon:SetPoint(point, unitFrame, relativePoint, anchorX, baseY)
     icon:Show()
   end
 end
 
 local function LayoutVerticalGroup(unitFrame, icons, anchor, offsetX, offsetY)
   table.sort(icons, CompareIcons)
+  local point, relativePoint = ResolveAnchorBinding(anchor)
+  local baseX, baseY = ResolveAnchorBaseOffsets(anchor, offsetX, offsetY)
 
   local totalSpan = 0
   for index, icon in ipairs(icons) do
@@ -444,11 +498,10 @@ local function LayoutVerticalGroup(unitFrame, icons, anchor, offsetX, offsetY)
   local cursor = totalSpan / 2
   for _, icon in ipairs(icons) do
     local height = icon:GetHeight() or DEFAULT_ICON_SIZE
-    local anchorY = offsetY + cursor - (height / 2)
-    local anchorX = IsRightAnchor(anchor) and -offsetX or offsetX
+    local anchorY = baseY + cursor - (height / 2)
 
     icon:ClearAllPoints()
-    icon:SetPoint(anchor, unitFrame, anchor, anchorX, anchorY)
+    icon:SetPoint(point, unitFrame, relativePoint, baseX, anchorY)
     icon:Show()
     cursor = cursor - height - ICON_PADDING
   end
@@ -471,10 +524,11 @@ local function RelayoutFrame(unitFrame)
       icon:SetParent(unitFrame)
       icon:SetFrameStrata("HIGH")
       icon:SetFrameLevel(unitFrame:GetFrameLevel() + 20)
-      local layoutKey = icon._overlayLayoutKey or "BOTTOM:0:11"
+      local layoutKey = icon._overlayLayoutKey or "BOTTOM:AUTO:0:11"
       if not groups[layoutKey] then
         groups[layoutKey] = {
           anchor = icon._overlayAnchor or "BOTTOM",
+          growth = icon._overlayGrowth or "AUTO",
           offsetX = tonumber(icon._overlayOffsetX or 0) or 0,
           offsetY = tonumber(icon._overlayOffsetY or DEFAULT_OFFSET_Y) or DEFAULT_OFFSET_Y,
           icons = {},
@@ -488,7 +542,9 @@ local function RelayoutFrame(unitFrame)
   for _, layoutKey in ipairs(orderedKeys) do
     local group = groups[layoutKey]
     if group then
-      if UseVerticalLayout(group.anchor) then
+      if group.growth and group.growth ~= "" and group.growth ~= "AUTO" then
+        LayoutDirectionalGroup(unitFrame, group.icons, group.anchor, group.growth, group.offsetX, group.offsetY)
+      elseif UseVerticalLayout(group.anchor) then
         LayoutVerticalGroup(unitFrame, group.icons, group.anchor, group.offsetX, group.offsetY)
       else
         LayoutHorizontalGroup(unitFrame, group.icons, group.anchor, group.offsetX, group.offsetY)

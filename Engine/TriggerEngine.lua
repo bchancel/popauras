@@ -125,6 +125,34 @@ function TriggerEngine:BuildPreviewState(aura)
     })
   end
 
+  if aura.kind == "private_aura_frame" then
+    return ns.Schema.NormalizeRuntimeState({
+      show = true,
+      active = true,
+      icon = 134400,
+      name = aura.name,
+      source = "preview",
+      statusText = "Private Aura Preview",
+    })
+  end
+
+  if aura.kind == "aura_bar_list" then
+    return ns.Schema.NormalizeRuntimeState({
+      show = true,
+      active = true,
+      icon = 134400,
+      name = aura.name,
+      stacks = 2,
+      duration = 18,
+      expirationTime = now + 18,
+      progressType = "timed",
+      value = 18,
+      total = 18,
+      source = "preview",
+      statusText = "Buffs and Debuffs Preview",
+    })
+  end
+
   return ns.Schema.NormalizeRuntimeState({
     show = true,
     active = true,
@@ -156,6 +184,10 @@ function ns.Render:CreateRegion(aura)
     return ns.renderers.IconRegion:New(aura)
   elseif aura.kind == "bar" then
     return ns.renderers.BarRegion:New(aura)
+  elseif aura.kind == "private_aura_frame" then
+    return ns.renderers.PrivateAuraFrameRegion:New(aura)
+  elseif aura.kind == "aura_bar_list" then
+    return ns.renderers.AuraBarListRegion:New(aura)
   elseif aura.kind == "text" then
     return ns.renderers.TextRegion:New(aura)
   elseif aura.kind == "interrupt_tracker" then

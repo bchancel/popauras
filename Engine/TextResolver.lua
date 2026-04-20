@@ -59,9 +59,21 @@ local function GetDurationCacheStamp(now)
   return math.floor((tonumber(now) or 0) / DURATION_REMAINING_CACHE_INTERVAL)
 end
 
-local function FormatTime(seconds, decimals)
+local function FormatTime(seconds, decimals, useExtendedUnits)
   seconds = math.max(0, tonumber(seconds) or 0)
   decimals = math.max(0, math.min(2, tonumber(decimals) or 1))
+  if useExtendedUnits then
+    if seconds >= 86400 then
+      local days = math.floor(seconds / 86400)
+      local hours = math.floor((seconds % 86400) / 3600)
+      return string.format("%dd %dh", days, hours)
+    end
+    if seconds >= 3600 then
+      local hours = math.floor(seconds / 3600)
+      local minutes = math.floor((seconds % 3600) / 60)
+      return string.format("%dh %dm", hours, minutes)
+    end
+  end
   local pattern = "%." .. tostring(decimals) .. "f"
   if seconds >= 60 then
     return string.format(pattern .. "m", seconds / 60)
@@ -127,6 +139,7 @@ function TextResolver:GetTimerText(state, aura, remainingFromObject)
   state = state or {}
   aura = aura or {}
   local display = aura.display or {}
+  local useExtendedAuraListUnits = aura.kind == "aura_bar_list"
   if remainingFromObject == nil then
     remainingFromObject = self:GetDurationObjectRemaining(state)
   end
@@ -140,8 +153,12 @@ function TextResolver:GetTimerText(state, aura, remainingFromObject)
     return ""
   end
 
+  if useExtendedAuraListUnits and state.hasExpiration == false then
+    return ""
+  end
+
   if remainingFromObject ~= nil then
-    return FormatTime(remainingFromObject, display.timerDecimals)
+    return FormatTime(remainingFromObject, display.timerDecimals, useExtendedAuraListUnits)
   end
 
   if (state.source == "aura" or state.source == "cdm_aura") and state.progressType ~= "timed" and (tonumber(state.duration or 0) or 0) <= 0 then
@@ -153,7 +170,7 @@ function TextResolver:GetTimerText(state, aura, remainingFromObject)
   end
 
   local progress = state.progressType == "timed" and ((state.expirationTime or 0) - GetTime()) or state.value or state.duration or 0
-  return FormatTime(progress, display.timerDecimals)
+  return FormatTime(progress, display.timerDecimals, useExtendedAuraListUnits)
 end
 
 function TextResolver:Resolve(template, state, aura)

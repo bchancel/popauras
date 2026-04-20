@@ -11,6 +11,8 @@ ns.Constants = {
     bar = true,
     text = true,
     interrupt_tracker = true,
+    private_aura_frame = true,
+    aura_bar_list = true,
   },
   TRIGGER_OPS = {
     AND = true,

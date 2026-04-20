@@ -17,6 +17,20 @@ local TILE_TOP_OFFSET = 72
 
 local auraOptions = {
   {
+    kind = "private_aura_frame",
+    title = "Private Aura Frame",
+    description = "Anchor DBM-style private aura icons for yourself or your co-tank with a compact growth layout.",
+    accent = { 0.22, 0.70, 0.96 },
+    art = "private_aura",
+  },
+  {
+    kind = "aura_bar_list",
+    title = "Buffs and Debuffs",
+    description = "Render player or target buffs and debuffs as a growing list of timed bars instead of icons.",
+    accent = { 0.22, 0.78, 0.66 },
+    art = "aura_bars",
+  },
+  {
     kind = "dynamic_group",
     title = "Dynamic Group",
     description = "Automatically arrange child auras with growth, spacing, and sorting rules.",
@@ -315,8 +329,59 @@ local function BuildDeathAlertArt(host)
   crossH:SetVertexColor(0.58, 0.20, 0.28, 0.35)
 end
 
+local function BuildPrivateAuraArt(host)
+  for index = 1, 3 do
+    local slot = CreateFrame("Frame", nil, host, "BackdropTemplate")
+    slot:SetSize(20, 20)
+    slot:SetPoint("LEFT", 8 + ((index - 1) * 26), 0)
+    slot:SetBackdrop({
+      bgFile = "Interface\\Buttons\\WHITE8x8",
+      edgeFile = "Interface\\Buttons\\WHITE8x8",
+      edgeSize = 1,
+    })
+    slot:SetBackdropColor(0.08, 0.13, 0.18, 0.98)
+    slot:SetBackdropBorderColor(0.32, 0.70, 0.96, 1)
+
+    local icon = slot:CreateTexture(nil, "ARTWORK")
+    icon:SetPoint("TOPLEFT", 2, -2)
+    icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    icon:SetTexture("Interface\\Icons\\spell_shadow_mindtwisting")
+  end
+end
+
+local function BuildAuraBarsArt(host)
+  for index = 1, 3 do
+    local row = CreateFrame("Frame", nil, host, "BackdropTemplate")
+    row:SetSize(84, 12)
+    row:SetPoint("TOP", 0, -8 - ((index - 1) * 18))
+    row:SetBackdrop({
+      bgFile = "Interface\\Buttons\\WHITE8x8",
+      edgeFile = "Interface\\Buttons\\WHITE8x8",
+      edgeSize = 1,
+    })
+    row:SetBackdropColor(0.08, 0.10, 0.12, 0.96)
+    row:SetBackdropBorderColor(0.20, 0.26, 0.32, 1)
+
+    local icon = row:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(12, 12)
+    icon:SetPoint("RIGHT", row, "LEFT", -4, 0)
+    icon:SetTexture("Interface\\Icons\\spell_holy_renew")
+
+    local fill = row:CreateTexture(nil, "ARTWORK")
+    fill:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    fill:SetVertexColor(0.22, 0.78, 0.66, 1)
+    fill:SetPoint("TOPLEFT", 2, -2)
+    fill:SetPoint("BOTTOMLEFT", 2, 2)
+    fill:SetWidth(58 - ((index - 1) * 10))
+  end
+end
+
 local function BuildArt(host, art)
-  if art == "icon" then
+  if art == "private_aura" then
+    BuildPrivateAuraArt(host)
+  elseif art == "aura_bars" then
+    BuildAuraBarsArt(host)
+  elseif art == "icon" then
     BuildIconArt(host)
   elseif art == "bar" then
     BuildBarArt(host)

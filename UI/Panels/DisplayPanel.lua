@@ -21,6 +21,28 @@ local iconAnchorValues = {
   "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT",
 }
 
+local raidFrameAnchorValues = {
+  { value = "LEFT", label = "Left" },
+  { value = "LEFT_OUTSIDE", label = "Left Outside" },
+  { value = "CENTER", label = "Center" },
+  { value = "RIGHT", label = "Right" },
+  { value = "RIGHT_OUTSIDE", label = "Right Outside" },
+  { value = "TOP", label = "Top" },
+  { value = "BOTTOM", label = "Bottom" },
+  { value = "TOPLEFT", label = "Top Left" },
+  { value = "TOPRIGHT", label = "Top Right" },
+  { value = "BOTTOMLEFT", label = "Bottom Left" },
+  { value = "BOTTOMRIGHT", label = "Bottom Right" },
+}
+
+local raidFrameGrowthValues = {
+  { value = "AUTO", label = "Auto" },
+  { value = "RIGHT", label = "Right" },
+  { value = "LEFT", label = "Left" },
+  { value = "DOWN", label = "Down" },
+  { value = "UP", label = "Up" },
+}
+
 local strataValues = {
   "BACKGROUND",
   "LOW",
@@ -186,10 +208,20 @@ local function GetDropdownLabel(dropdown, value)
   return tostring(value or "")
 end
 
+local function DropdownHasValue(dropdown, value)
+  for _, entry in ipairs(ResolveDropdownEntries(dropdown and dropdown._values)) do
+    local entryValue = GetDropdownEntryValueAndLabel(entry)
+    if entryValue == value then
+      return true
+    end
+  end
+  return false
+end
+
 local function SetDropdown(dropdown, value)
-  if value == "LEFT_OUTSIDE" then
+  if value == "LEFT_OUTSIDE" and not DropdownHasValue(dropdown, value) then
     value = "LEFT"
-  elseif value == "RIGHT_OUTSIDE" then
+  elseif value == "RIGHT_OUTSIDE" and not DropdownHasValue(dropdown, value) then
     value = "RIGHT"
   end
   UIDropDownMenu_SetSelectedValue(dropdown, value)
@@ -571,10 +603,13 @@ function Panel:UpdateControlStates()
   end
 
   local frame = self.frame
-  local isGroup = frame.groupSection:IsShown()
   local aura = self:GetSelectedAura()
+  local kind = aura and aura.kind or ""
+  local isGroup = kind == "group" or kind == "dynamic_group"
   local isText = aura and aura.kind == "text"
   local isIconAura = aura and aura.kind == "icon"
+  local isPrivateAuraFrame = aura and aura.kind == "private_aura_frame"
+  local isAuraBarList = aura and aura.kind == "aura_bar_list"
   local showIcon = frame.showIconCheck:GetChecked() == true
   local matchBarSize = frame.iconMatchSizeCheck and frame.iconMatchSizeCheck:GetChecked() == true
   local showName = frame.nameControls.showCheck:GetChecked() == true
@@ -584,7 +619,7 @@ function Panel:UpdateControlStates()
   local readyLook = frame.readyLookCheck:GetChecked() == true
   local trigger = GetSelectedTrigger(aura)
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura")
-  local showIconCooldownControls = not isGroup and not isText and isIconAura and frame.iconSection.collapsed ~= true
+  local showIconCooldownControls = not isGroup and not isText and not isPrivateAuraFrame and isIconAura and frame.iconSection.collapsed ~= true
   local showRaidFrameSection = not isGroup and not isText and isIconAura and frame.raidFrameSection:IsShown()
   local showRaidFrameControls = showRaidFrameSection and frame.showOnRaidFramesCheck:GetChecked() == true and frame.raidFrameSection.collapsed ~= true
   local soundEnabled = frame.soundEnabledCheck:GetChecked() == true
@@ -596,11 +631,13 @@ function Panel:UpdateControlStates()
     frame.showAlwaysReadyCheck,
     frame.readyColorWrap.button, frame.readyColorWrap.label,
     frame.barTextureWrap.dropdown, frame.barTextureWrap.label,
-  }, not isGroup and not isText)
+  }, not isGroup and not isText and not isPrivateAuraFrame)
   SetControlGroupEnabled({ frame.showBackgroundCheck }, true)
-  SetControlGroupEnabled({ frame.readyColorWrap.button, frame.readyColorWrap.label }, not isGroup and not isText and readyLook)
-  SetControlGroupEnabled({ frame.showAlwaysReadyCheck }, not isGroup and not isText and supportsShowAlways)
+  SetControlGroupEnabled({ frame.readyColorWrap.button, frame.readyColorWrap.label }, not isGroup and not isText and not isPrivateAuraFrame and readyLook)
+  SetControlGroupEnabled({ frame.showAlwaysReadyCheck }, not isGroup and not isText and not isPrivateAuraFrame and supportsShowAlways)
   SetControlGroupEnabled({ frame.backgroundColorWrap.button, frame.backgroundColorWrap.label }, showBackground)
+  SetControlGroupEnabled({ frame.backgroundGammaWrap.input, frame.backgroundGammaWrap.label }, showBackground and isAuraBarList)
+  SetControlGroupEnabled({ frame.permanentAlphaWrap.input, frame.permanentAlphaWrap.label }, isAuraBarList)
 
   SetControlGroupEnabled({
     frame.reverseCheck,
@@ -611,8 +648,8 @@ function Panel:UpdateControlStates()
     frame.iconXWrap.input, frame.iconXWrap.label,
     frame.iconYWrap.input, frame.iconYWrap.label,
     frame.iconHint,
-  }, not isGroup and not isText)
-  SetControlGroupEnabled({ frame.iconSizeWrap.input, frame.iconSizeWrap.label }, showIcon and not isGroup and not isText and not matchBarSize)
+  }, not isGroup and not isText and not isPrivateAuraFrame)
+  SetControlGroupEnabled({ frame.iconSizeWrap.input, frame.iconSizeWrap.label }, showIcon and not isGroup and not isText and not isPrivateAuraFrame and not matchBarSize)
   SetControlGroupShown({
     frame.iconEdgeCheck,
     frame.iconFinishFlashCheck,
@@ -622,7 +659,7 @@ function Panel:UpdateControlStates()
     frame.iconEdgeCheck,
     frame.iconFinishFlashCheck,
     frame.iconSwipeColorWrap.button, frame.iconSwipeColorWrap.label,
-  }, not isGroup and not isText and isIconAura)
+  }, not isGroup and not isText and not isPrivateAuraFrame and isIconAura)
 
   SetControlGroupEnabled({ frame.showOnRaidFramesCheck }, showRaidFrameSection)
   SetControlGroupEnabled({
@@ -631,6 +668,7 @@ function Panel:UpdateControlStates()
     frame.raidFrameStacksCheck,
     frame.raidFrameSizeWrap.input, frame.raidFrameSizeWrap.label,
     frame.raidFrameAnchorWrap.dropdown, frame.raidFrameAnchorWrap.label,
+    frame.raidFrameGrowthWrap.dropdown, frame.raidFrameGrowthWrap.label,
     frame.raidFrameXWrap.input, frame.raidFrameXWrap.label,
     frame.raidFrameYWrap.input, frame.raidFrameYWrap.label,
     frame.raidFrameHint,
@@ -640,12 +678,17 @@ function Panel:UpdateControlStates()
     frame.nameControls.fontWrap.dropdown, frame.nameControls.fontWrap.label,
     frame.nameControls.sizeWrap.input, frame.nameControls.sizeWrap.label,
     frame.nameControls.rotationWrap.dropdown, frame.nameControls.rotationWrap.label,
-    frame.nameControls.altNameWrap.input, frame.nameControls.altNameWrap.label,
     frame.nameControls.anchorWrap.dropdown, frame.nameControls.anchorWrap.label,
     frame.nameControls.xWrap.input, frame.nameControls.xWrap.label,
     frame.nameControls.yWrap.input, frame.nameControls.yWrap.label,
     frame.nameControls.colorWrap.button, frame.nameControls.colorWrap.label,
-  }, showName and not isGroup)
+  }, showName and not isGroup and not isPrivateAuraFrame)
+  SetControlGroupShown({
+    frame.nameControls.altNameWrap.input, frame.nameControls.altNameWrap.label,
+  }, not isAuraBarList)
+  SetControlGroupEnabled({
+    frame.nameControls.altNameWrap.input, frame.nameControls.altNameWrap.label,
+  }, showName and not isGroup and not isPrivateAuraFrame and not isAuraBarList)
 
   SetControlGroupEnabled({
     frame.timerControls.fontWrap.dropdown, frame.timerControls.fontWrap.label,
@@ -657,7 +700,7 @@ function Panel:UpdateControlStates()
     frame.timerControls.colorWrap.button, frame.timerControls.colorWrap.label,
     frame.timerControls.decimalsWrap.dropdown, frame.timerControls.decimalsWrap.label,
     frame.timerControls.hideReadyCheck,
-  }, showTimer and not isGroup and not isText)
+  }, showTimer and not isGroup and not isText and not isPrivateAuraFrame)
 
   SetControlGroupEnabled({
     frame.stacksControls.fontWrap.dropdown, frame.stacksControls.fontWrap.label,
@@ -667,14 +710,14 @@ function Panel:UpdateControlStates()
     frame.stacksControls.xWrap.input, frame.stacksControls.xWrap.label,
     frame.stacksControls.yWrap.input, frame.stacksControls.yWrap.label,
     frame.stacksControls.colorWrap.button, frame.stacksControls.colorWrap.label,
-  }, showStacks and not isGroup and not isText)
+  }, showStacks and not isGroup and not isText and not isPrivateAuraFrame)
 
   SetControlGroupEnabled({
     frame.soundReadyCheck,
     frame.soundFileButton, frame.soundFileWrap.label,
     frame.soundChannelWrap.dropdown, frame.soundChannelWrap.label,
-  }, soundEnabled and not isGroup)
-  if (not soundEnabled or isGroup) and SoundPicker then
+  }, soundEnabled and not isGroup and not isPrivateAuraFrame and not isAuraBarList)
+  if (not soundEnabled or isGroup or isPrivateAuraFrame or isAuraBarList) and SoundPicker then
     SoundPicker:HideIfDropdown(frame.soundFileWrap.dropdown)
   end
 end
@@ -689,6 +732,7 @@ function Panel:ApplyCurrent()
   if not aura then
     return
   end
+  local isAuraBarList = aura.kind == "aura_bar_list"
 
   aura.name = ns.Registry:GetUniqueAuraName(frame.nameInputWrap.input:GetText(), aura.id)
   frame.nameInputWrap.input:SetText(aura.name)
@@ -731,6 +775,9 @@ function Panel:ApplyCurrent()
   aura.display.barTexture = NormalizeBarTextureValue(selectedBarTexture)
   aura.display.showBackground = frame.showBackgroundCheck:GetChecked() == true
   aura.display.backgroundColor = Colors.Copy(frame.backgroundColorWrap.color or aura.display.backgroundColor)
+  aura.display.backgroundGamma = CommitNumeric(frame.backgroundGammaWrap.input, aura.display.backgroundGamma or 1)
+  aura.display.permanentAlpha = math.max(0, math.min(1, CommitNumeric(frame.permanentAlphaWrap.input, aura.display.permanentAlpha or 0.25)))
+  frame.permanentAlphaWrap.input:SetText(string.format("%.2f", aura.display.permanentAlpha))
 
   aura.display.spacing = CommitNumeric(frame.groupSpacingWrap.input, aura.display.spacing or 6)
   aura.display.growth = UIDropDownMenu_GetSelectedValue(frame.groupGrowthWrap.dropdown) or aura.display.growth
@@ -756,6 +803,7 @@ function Panel:ApplyCurrent()
   aura.display.showOnRaidFrames = frame.showOnRaidFramesCheck:GetChecked() == true
   aura.display.raidFrameIconSize = CommitInteger(frame.raidFrameSizeWrap.input, aura.display.raidFrameIconSize or 18)
   aura.display.raidFrameAnchor = UIDropDownMenu_GetSelectedValue(frame.raidFrameAnchorWrap.dropdown) or aura.display.raidFrameAnchor or "BOTTOM"
+  aura.display.raidFrameGrowth = UIDropDownMenu_GetSelectedValue(frame.raidFrameGrowthWrap.dropdown) or aura.display.raidFrameGrowth or "AUTO"
   aura.display.raidFrameOffsetX = CommitNumeric(frame.raidFrameXWrap.input, aura.display.raidFrameOffsetX or 0)
   aura.display.raidFrameOffsetY = CommitNumeric(frame.raidFrameYWrap.input, aura.display.raidFrameOffsetY or 11)
   aura.display.raidFrameShowGlow = frame.raidFrameGlowCheck:GetChecked() == true
@@ -763,7 +811,7 @@ function Panel:ApplyCurrent()
   aura.display.raidFrameShowStacks = frame.raidFrameStacksCheck:GetChecked() == true
 
   aura.text = aura.text or {}
-  aura.text.nameOverride = CommitString(frame.nameControls.altNameWrap.input)
+  aura.text.nameOverride = isAuraBarList and "" or CommitString(frame.nameControls.altNameWrap.input)
 
   aura.display.showName = frame.nameControls.showCheck:GetChecked() == true
   aura.display.nameFontStyle = UIDropDownMenu_GetSelectedValue(frame.nameControls.fontWrap.dropdown) or aura.display.nameFontStyle
@@ -804,6 +852,21 @@ function Panel:ApplyCurrent()
     aura.display.showStacks = false
     aura.display.reverse = false
     aura.display.nameAnchor = UIDropDownMenu_GetSelectedValue(frame.nameControls.anchorWrap.dropdown) or aura.display.nameAnchor or "CENTER"
+  elseif aura.kind == "private_aura_frame" then
+    aura.display.icon = false
+    aura.display.showName = false
+    aura.display.showTimer = false
+    aura.display.showStacks = false
+    aura.display.showBackground = false
+    aura.display.soundEnabled = false
+  elseif aura.kind == "aura_bar_list" then
+    aura.display.iconOverrideId = 0
+    aura.display.iconOverrideName = ""
+    aura.display.hideCDMIcon = false
+    aura.display.iconCooldownEdge = false
+    aura.display.iconCooldownBling = false
+    aura.display.soundEnabled = false
+    aura.text.nameOverride = ""
   end
 
   local region = ns.runtime:GetRegionByAuraId(aura.id)
@@ -857,7 +920,7 @@ function Panel:Create(parent)
   frame.canvasSection.expandedHeightGroup = 352
   frame.groupSection = CreateSection(frame.content, "Group Layout", -396, 132)
   frame.iconSection = CreateSection(frame.content, "Icon", -560, 270)
-  frame.raidFrameSection = CreateSection(frame.content, "Raid Frames", -846, 188)
+  frame.raidFrameSection = CreateSection(frame.content, "Raid Frames", -846, 236)
   frame.nameSection = CreateSection(frame.content, "Name Text", -1050, 290)
   frame.timerSection = CreateSection(frame.content, "Duration Text", -1356, 260)
   frame.stacksSection = CreateSection(frame.content, "Stacks Text", -1632, 220)
@@ -911,6 +974,8 @@ function Panel:Create(parent)
   frame.backgroundColorWrap.button:SetPoint("TOPLEFT", 220, -364)
   frame.backgroundColorWrap.label:ClearAllPoints()
   frame.backgroundColorWrap.label:SetPoint("LEFT", frame.backgroundColorWrap.button, "RIGHT", 8, 0)
+  frame.backgroundGammaWrap = CreateLabeledInput(frame.canvasSection, "Background Gamma", 430, -364, 70)
+  frame.permanentAlphaWrap = CreateLabeledInput(frame.canvasSection, "Permanent Aura Alpha", 540, -364, 70)
   frame.barColorWrap.button:SetScript("OnClick", function()
     local widget = frame.barColorWrap
     local starting = widget.color or { r = 0.1, g = 0.6, b = 1, a = 1 }
@@ -1046,11 +1111,12 @@ function Panel:Create(parent)
   frame.raidFrameStacksCheck = Frames.CreateCheckbox(frame.raidFrameSection, "Stacks")
   frame.raidFrameStacksCheck:SetPoint("TOPLEFT", 392, -34)
   frame.raidFrameSizeWrap = CreateLabeledInput(frame.raidFrameSection, "Icon Size", 12, -86, 54)
-  frame.raidFrameAnchorWrap = CreateLabeledDropdown(frame.raidFrameSection, "Anchor", 110, -86, 150, iconAnchorValues)
-  frame.raidFrameXWrap = CreateLabeledInput(frame.raidFrameSection, "Offset X", 310, -86, 60)
-  frame.raidFrameYWrap = CreateLabeledInput(frame.raidFrameSection, "Offset Y", 410, -86, 60)
+  frame.raidFrameAnchorWrap = CreateLabeledDropdown(frame.raidFrameSection, "Anchor", 110, -86, 170, raidFrameAnchorValues)
+  frame.raidFrameGrowthWrap = CreateLabeledDropdown(frame.raidFrameSection, "Grow", 320, -86, 140, raidFrameGrowthValues)
+  frame.raidFrameXWrap = CreateLabeledInput(frame.raidFrameSection, "Offset X", 12, -148, 60)
+  frame.raidFrameYWrap = CreateLabeledInput(frame.raidFrameSection, "Offset Y", 112, -148, 60)
   frame.raidFrameHint = Frames.CreateLabel(frame.raidFrameSection, "Places compact aura icons on detected party or raid unit frames without rebuilding them every refresh. Anchor and offsets are applied per unit frame.", "GameFontDisableSmall")
-  frame.raidFrameHint:SetPoint("TOPLEFT", 12, -150)
+  frame.raidFrameHint:SetPoint("TOPLEFT", 12, -204)
   frame.raidFrameHint:SetWidth(660)
 
   frame.soundEnabledCheck = Frames.CreateCheckbox(frame.soundSection, "Play Aura Sound")
@@ -1107,7 +1173,9 @@ function Panel:Create(parent)
     frame.readyColorWrap.label, frame.readyColorWrap.button, frame.readyColorWrap.valueText,
     frame.barTextureWrap.label, frame.barTextureWrap.dropdown,
     frame.showBackgroundCheck,
-    frame.backgroundColorWrap.label, frame.backgroundColorWrap.button, frame.backgroundColorWrap.valueText
+    frame.backgroundColorWrap.label, frame.backgroundColorWrap.button, frame.backgroundColorWrap.valueText,
+    frame.backgroundGammaWrap.label, frame.backgroundGammaWrap.input,
+    frame.permanentAlphaWrap.label, frame.permanentAlphaWrap.input
   )
   RegisterSectionWidgets(frame.groupSection,
     frame.groupSpacingWrap.label, frame.groupSpacingWrap.input,
@@ -1134,6 +1202,7 @@ function Panel:Create(parent)
     frame.raidFrameStacksCheck,
     frame.raidFrameSizeWrap.label, frame.raidFrameSizeWrap.input,
     frame.raidFrameAnchorWrap.label, frame.raidFrameAnchorWrap.dropdown,
+    frame.raidFrameGrowthWrap.label, frame.raidFrameGrowthWrap.dropdown,
     frame.raidFrameXWrap.label, frame.raidFrameXWrap.input,
     frame.raidFrameYWrap.label, frame.raidFrameYWrap.input,
     frame.raidFrameHint
@@ -1196,6 +1265,8 @@ function Panel:Create(parent)
   ConfigureNumericInput(frame.raidFrameSizeWrap.input, 3)
   ConfigureNumericInput(frame.raidFrameXWrap.input, 10)
   ConfigureNumericInput(frame.raidFrameYWrap.input, 10)
+  ConfigureNumericInput(frame.backgroundGammaWrap.input, 5)
+  ConfigureNumericInput(frame.permanentAlphaWrap.input, 5)
   frame.nameControls.altNameWrap.input:SetMaxLetters(64)
   ConfigureNumericInput(frame.nameControls.sizeWrap.input, 3)
   ConfigureNumericInput(frame.nameControls.xWrap.input, 10)
@@ -1226,6 +1297,8 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.xWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.yWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.levelWrap.input, function() Panel:ApplyCurrent() end)
+  self:WireLiveInput(frame.backgroundGammaWrap.input, function() Panel:ApplyCurrent() end)
+  self:WireLiveInput(frame.permanentAlphaWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.groupSpacingWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.iconSizeWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.altIconIdWrap.input, function() Panel:ApplyCurrent() end)
@@ -1276,7 +1349,8 @@ function Panel:Create(parent)
   InitDropdownWithCallback(frame.barTextureWrap.dropdown, barTextureValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.groupGrowthWrap.dropdown, { "DOWN", "UP", "RIGHT", "LEFT" }, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.iconAnchorWrap.dropdown, iconAnchorValues, function() Panel:ApplyCurrent() end)
-  InitDropdownWithCallback(frame.raidFrameAnchorWrap.dropdown, iconAnchorValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.raidFrameAnchorWrap.dropdown, raidFrameAnchorValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.raidFrameGrowthWrap.dropdown, raidFrameGrowthValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.soundFileWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.soundChannelWrap.dropdown, GetSoundChannelDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.nameControls.fontWrap.dropdown, fontStyleValues, function() Panel:ApplyCurrent() end)
@@ -1353,6 +1427,10 @@ function Panel:ApplyCanvasLayout(isGroup)
     frame.showBackgroundCheck:ClearAllPoints()
     frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -274)
     PositionColorSwatch(frame.backgroundColorWrap, 180, -274)
+    frame.backgroundGammaWrap.label:Hide()
+    frame.backgroundGammaWrap.input:Hide()
+    frame.permanentAlphaWrap.label:Hide()
+    frame.permanentAlphaWrap.input:Hide()
     return
   end
 
@@ -1382,6 +1460,8 @@ function Panel:ApplyCanvasLayout(isGroup)
   frame.showBackgroundCheck:ClearAllPoints()
   frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -364)
   PositionColorSwatch(frame.backgroundColorWrap, 220, -364)
+  PositionLabeledInput(frame.backgroundGammaWrap, 430, -364)
+  PositionLabeledInput(frame.permanentAlphaWrap, 540, -364)
 end
 
 function Panel:LayoutSections()
@@ -1407,17 +1487,29 @@ function Panel:Refresh(aura)
   local isGroup = aura.kind == "group" or aura.kind == "dynamic_group"
   local isText = aura.kind == "text"
   local isIconAura = aura.kind == "icon"
+  local isPrivateAuraFrame = aura.kind == "private_aura_frame"
+  local isAuraBarList = aura.kind == "aura_bar_list"
+  local usesLayoutSection = isGroup or isPrivateAuraFrame or isAuraBarList
   local trigger = GetSelectedTrigger(aura)
   local supportsShowAlways = trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura"
   local summaryText = aura.kind:gsub("_", " ")
   summaryText = summaryText:gsub("(%a)([%w']*)", function(first, rest)
     return string.upper(first) .. rest
   end)
+  if isPrivateAuraFrame then
+    summaryText = "Private Aura Frame"
+  elseif isAuraBarList then
+    summaryText = "Buffs and Debuffs"
+  end
   self.frame.summary:SetText(summaryText .. " Display")
   if isGroup then
     self.frame.hint:SetText("Dock this group to the screen, CDM, unit frames, or another group, then tune spacing below.")
   elseif isText then
     self.frame.hint:SetText("Text-only alert aura. Use the trigger tab for death filters, sounds, and alert duration.")
+  elseif isPrivateAuraFrame then
+    self.frame.hint:SetText("DBM-style private aura anchors driven by Blizzard's private aura widgets for yourself or your co-tank.")
+  elseif isAuraBarList then
+    self.frame.hint:SetText("Custom buff and debuff bar lists built from the visible player or target aura APIs rather than Blizzard's tracked-bar viewer.")
   else
     self.frame.hint:SetText("Placement and appearance for the selected aura.")
   end
@@ -1475,6 +1567,8 @@ function Panel:Refresh(aura)
   SetDropdown(self.frame.barTextureWrap.dropdown, aura.display.barTexture or "FLAT")
   self.frame.showBackgroundCheck:SetChecked(aura.display.showBackground ~= false)
   SetColorSwatch(self.frame.backgroundColorWrap, aura.display.backgroundColor or { r = 0, g = 0, b = 0, a = 0.45 })
+  self.frame.backgroundGammaWrap.input:SetText(tostring(aura.display.backgroundGamma or 1))
+  self.frame.permanentAlphaWrap.input:SetText(string.format("%.2f", tonumber(aura.display.permanentAlpha or 0.25) or 0.25))
 
   self.frame.groupSpacingWrap.input:SetText(tostring(aura.display.spacing or 6))
   self.frame.groupMaintainOrderCheck:SetChecked(aura.display.maintainAuraOrder == true)
@@ -1510,6 +1604,7 @@ function Panel:Refresh(aura)
   SetDropdown(self.frame.groupGrowthWrap.dropdown, aura.display.growth or "DOWN")
   SetDropdown(self.frame.iconAnchorWrap.dropdown, aura.display.iconAnchor or "LEFT")
   SetDropdown(self.frame.raidFrameAnchorWrap.dropdown, aura.display.raidFrameAnchor or "BOTTOM")
+  SetDropdown(self.frame.raidFrameGrowthWrap.dropdown, aura.display.raidFrameGrowth or "AUTO")
   self.frame.soundReadyCheck:SetChecked(aura.display.soundMode == "ready")
   SetDropdown(self.frame.soundFileWrap.dropdown, aura.display.soundFile or "None")
   UpdateSelectorButtonText(self.frame.soundFileButton, self.frame.soundFileWrap.dropdown)
@@ -1549,18 +1644,20 @@ function Panel:Refresh(aura)
   self.frame.stacksControls.yWrap.input:SetText(tostring(aura.display.stacksOffsetY or 0))
   SetColorSwatch(self.frame.stacksControls.colorWrap, aura.display.stacksColor or { r = 1, g = 1, b = 1, a = 1 })
 
-  self.frame.groupSection:SetShown(isGroup)
-  self.frame.iconSection:SetShown(not isGroup and not isText)
+  self.frame.groupSection:SetShown(usesLayoutSection)
+  self.frame.iconSection:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
   self.frame.raidFrameSection:SetShown(false)
-  self.frame.nameSection:SetShown(not isGroup)
-  self.frame.timerSection:SetShown(not isGroup and not isText)
-  self.frame.stacksSection:SetShown(not isGroup and not isText)
-  self.frame.soundSection:SetShown(not isGroup)
-  if isGroup and SoundPicker then
+  self.frame.nameSection:SetShown(not isGroup and not isPrivateAuraFrame)
+  self.frame.timerSection:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.stacksSection:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.soundSection:SetShown(not isGroup and not isPrivateAuraFrame and not isAuraBarList)
+  if (isGroup or isPrivateAuraFrame or isAuraBarList) and SoundPicker then
     SoundPicker:HideIfDropdown(self.frame.soundFileWrap.dropdown)
   end
 
-  self.frame.canvasSection.expandedHeight = isGroup and self.frame.canvasSection.expandedHeightGroup or self.frame.canvasSection.expandedHeightAura
+  self.frame.canvasSection.expandedHeight = (isGroup or isPrivateAuraFrame)
+      and self.frame.canvasSection.expandedHeightGroup
+      or self.frame.canvasSection.expandedHeightAura
 
   SetSectionCollapsed(self.frame.canvasSection, self.frame.collapsedSections.canvas)
   SetSectionCollapsed(self.frame.groupSection, self.frame.collapsedSections.group)
@@ -1571,35 +1668,45 @@ function Panel:Refresh(aura)
   SetSectionCollapsed(self.frame.stacksSection, self.frame.collapsedSections.stacks)
   SetSectionCollapsed(self.frame.soundSection, self.frame.collapsedSections.sound)
 
-  self.frame.orientationWrap.label:SetShown(not isGroup and not isText)
-  self.frame.orientationWrap.dropdown:SetShown(not isGroup and not isText)
+  self.frame.orientationWrap.label:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.orientationWrap.dropdown:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
   self.frame.strataWrap.label:SetShown(true)
   self.frame.strataWrap.dropdown:SetShown(true)
   self.frame.levelWrap.label:SetShown(true)
   self.frame.levelWrap.input:SetShown(true)
-  self.frame.barColorWrap.label:SetShown(not isGroup and not isText)
-  self.frame.barColorWrap.button:SetShown(not isGroup and not isText)
-  self.frame.barColorWrap.valueText:SetShown(not isGroup and not isText)
-  self.frame.readyLookCheck:SetShown(not isGroup and not isText)
-  self.frame.glowWhenActiveCheck:SetShown(not isGroup and not isText)
-  self.frame.showAlwaysReadyCheck:SetShown(not isGroup and not isText and supportsShowAlways)
-  self.frame.readyColorWrap.label:SetShown(not isGroup and not isText)
-  self.frame.readyColorWrap.button:SetShown(not isGroup and not isText)
-  self.frame.readyColorWrap.valueText:SetShown(not isGroup and not isText)
-  self.frame.barTextureWrap.label:SetShown(not isGroup and not isText)
-  self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText)
-  self.frame.showBackgroundCheck:SetShown(true)
-  self.frame.backgroundColorWrap.label:SetShown(true)
-  self.frame.backgroundColorWrap.button:SetShown(true)
-  self.frame.backgroundColorWrap.valueText:SetShown(true)
+  self.frame.barColorWrap.label:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.barColorWrap.button:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.barColorWrap.valueText:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.readyLookCheck:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.glowWhenActiveCheck:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.showAlwaysReadyCheck:SetShown(not isGroup and not isText and not isPrivateAuraFrame and supportsShowAlways)
+  self.frame.readyColorWrap.label:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.readyColorWrap.button:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.readyColorWrap.valueText:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.barTextureWrap.label:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText and not isPrivateAuraFrame)
+  self.frame.showBackgroundCheck:SetShown(not isPrivateAuraFrame)
+  self.frame.backgroundColorWrap.label:SetShown(not isPrivateAuraFrame)
+  self.frame.backgroundColorWrap.button:SetShown(not isPrivateAuraFrame)
+  self.frame.backgroundColorWrap.valueText:SetShown(not isPrivateAuraFrame)
+  self.frame.backgroundGammaWrap.label:SetShown(isAuraBarList)
+  self.frame.backgroundGammaWrap.input:SetShown(isAuraBarList)
+  self.frame.permanentAlphaWrap.label:SetShown(isAuraBarList)
+  self.frame.permanentAlphaWrap.input:SetShown(isAuraBarList)
+  self.frame.nameControls.altNameWrap.label:SetShown(not isAuraBarList)
+  self.frame.nameControls.altNameWrap.input:SetShown(not isAuraBarList)
   self.frame.iconEdgeCheck:SetShown(isIconAura)
   self.frame.iconFinishFlashCheck:SetShown(isIconAura)
   self.frame.iconSwipeColorWrap.label:SetShown(isIconAura)
   self.frame.iconSwipeColorWrap.button:SetShown(isIconAura)
   self.frame.iconSwipeColorWrap.valueText:SetShown(isIconAura)
-  self.frame.iconMatchSizeCheck:SetShown(not isIconAura)
+  self.frame.iconMatchSizeCheck:SetShown(not isIconAura and not isPrivateAuraFrame)
+  self.frame.hideCDMIconCheck:SetShown(not isPrivateAuraFrame and not isAuraBarList and not isGroup and not isText)
+  self.frame.altIconIdWrap.label:SetShown(not isPrivateAuraFrame and not isAuraBarList and not isGroup and not isText)
+  self.frame.altIconIdWrap.input:SetShown(not isPrivateAuraFrame and not isAuraBarList and not isGroup and not isText)
+  self.frame.iconHint:SetShown(not isPrivateAuraFrame and not isAuraBarList and not isGroup and not isText)
   if self.frame.showIconCheck.Text then
-    self.frame.showIconCheck.Text:SetText(isIconAura and "Show Aura Icon" or "Show Icon")
+    self.frame.showIconCheck.Text:SetText(isIconAura and "Show Aura Icon" or (isAuraBarList and "Show Row Icons" or "Show Icon"))
   end
   local triggerUnit = trigger.unit or "player"
   local showRaidFramesOption = isIconAura and (triggerUnit == "group" or triggerUnit == "nameplate")
@@ -1608,8 +1715,18 @@ function Panel:Refresh(aura)
   self.frame.groupBackgroundColorWrap.label:SetShown(false)
   self.frame.groupBackgroundColorWrap.button:SetShown(false)
   self.frame.groupBackgroundColorWrap.valueText:SetShown(false)
+  self.frame.groupMaintainOrderCheck:SetShown(isGroup)
+  self.frame.groupSection.title:SetText(isPrivateAuraFrame and "Private Aura Layout" or (isAuraBarList and "List Layout" or "Group Layout"))
+  if isPrivateAuraFrame then
+    self.frame.groupHint:SetText("Control the slot spacing and growth direction for the private aura anchors.")
+  elseif isAuraBarList then
+    self.frame.groupHint:SetText("Control the spacing and growth direction for the buff/debuff bar list.")
+  else
+    self.frame.groupHint:SetText("Groups control child size, spacing, order, and growth.")
+  end
+  self.frame.iconSection.title:SetText(isAuraBarList and "Row Icon" or "Icon")
 
-  self:ApplyCanvasLayout(isGroup)
+  self:ApplyCanvasLayout(isGroup or isPrivateAuraFrame)
   self:LayoutSections()
   self:UpdateControlStates()
   self.suppressUpdates = false

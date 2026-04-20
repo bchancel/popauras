@@ -18,6 +18,8 @@ Util\Frames.lua
 Util\SoundPicker.lua
 Util\Spells.lua
 Util\Items.lua
+Util\PrivateAuras.lua
+Util\UnitAuraList.lua
 
 Data\Defaults.lua
 Data\Interrupts.lua
@@ -45,6 +47,8 @@ Engine\TextResolver.lua
 
 Triggers\Base.lua
 Triggers\AuraProvider.lua
+Triggers\PrivateAuraProvider.lua
+Triggers\AuraListProvider.lua
 Triggers\SpellCooldownProvider.lua
 Triggers\ItemCooldownProvider.lua
 Triggers\CastProvider.lua
@@ -57,6 +61,8 @@ Renderers\BaseRegion.lua
 Renderers\Layouts.lua
 Renderers\IconRegion.lua
 Renderers\BarRegion.lua
+Renderers\PrivateAuraFrameRegion.lua
+Renderers\AuraBarListRegion.lua
 Renderers\TextRegion.lua
 Renderers\InterruptTrackerRegion.lua
 Renderers\GroupRegion.lua
