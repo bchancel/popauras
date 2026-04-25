@@ -11,6 +11,24 @@ function Base:CreateProvider(key, definition)
   return definition
 end
 
+function Base:InvalidateProviderCaches(providerKey)
+  if type(providerKey) == "string" and providerKey ~= "" then
+    local provider = ns.providers and ns.providers[providerKey] or nil
+    if provider then
+      provider._cacheToken = nil
+      provider._cachedAuraIds = nil
+      provider._cachedAuraIdsByUnit = nil
+    end
+    return
+  end
+
+  for _, provider in pairs(ns.providers or EMPTY) do
+    provider._cacheToken = nil
+    provider._cachedAuraIds = nil
+    provider._cachedAuraIdsByUnit = nil
+  end
+end
+
 function Base:GetTriggers(aura)
   if type(aura) ~= "table" or type(aura.triggers) ~= "table" then
     return EMPTY

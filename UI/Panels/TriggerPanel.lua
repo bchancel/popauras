@@ -15,7 +15,6 @@ local triggerTypes = {
   chat = "Chat",
   timer = "Internal Timer",
   death_alert = "Death Alert",
-  private_aura = "Private Aura",
   aura_list = "Buffs and Debuffs",
 }
 
@@ -44,16 +43,17 @@ local auraGroupRangeValues = {
   { value = "in_range", label = "In Range" },
 }
 
-local privateAuraTargetValues = {
-  { value = "player", label = "Person" },
-  { value = "cotank", label = "Co-Tank" },
-}
-
 local auraListSourceValues = {
   { value = "player_buff", label = "Player Buffs" },
   { value = "player_debuff", label = "Player Debuffs" },
   { value = "target_buff", label = "Target Buffs" },
   { value = "target_debuff", label = "Target Debuffs" },
+}
+
+local auraListTargetDebuffModeValues = {
+  { value = "all", label = "All Target Debuffs" },
+  { value = "mine_only", label = "Only Mine" },
+  { value = "mine_or_unowned", label = "Mine + Non-Player" },
 }
 
 local simpleModeValues = {
@@ -755,14 +755,21 @@ function Panel:ApplyCurrent()
   trigger.soundTank = UIDropDownMenu_GetSelectedValue(frame.deathTankSoundDropDown) or trigger.soundTank or "None"
   trigger.soundHealer = UIDropDownMenu_GetSelectedValue(frame.deathHealerSoundDropDown) or trigger.soundHealer or "None"
   trigger.soundDPS = UIDropDownMenu_GetSelectedValue(frame.deathDPSSoundDropDown) or trigger.soundDPS or "None"
-  trigger.privateAuraTarget = UIDropDownMenu_GetSelectedValue(frame.privateAuraTargetDropDown) or trigger.privateAuraTarget or "player"
   if trigger.type == "aura_list" and UnitAuraList and UnitAuraList.ApplySourceValue then
     UnitAuraList:ApplySourceValue(
       trigger,
       UIDropDownMenu_GetSelectedValue(frame.auraListSourceDropDown) or UnitAuraList:GetSourceValue(trigger)
     )
-    trigger.targetMineOrUnownedOnly = frame.auraListTargetDebuffFilterCheck:GetChecked() == true
+    if UnitAuraList.ApplyTargetDebuffFilterMode then
+      UnitAuraList:ApplyTargetDebuffFilterMode(
+        trigger,
+        UIDropDownMenu_GetSelectedValue(frame.auraListTargetDebuffModeDropDown)
+          or UnitAuraList:GetTargetDebuffFilterMode(trigger)
+      )
+    end
   end
+  trigger.hideBlizzardBuffs = frame.auraListHideBlizzardBuffsCheck:GetChecked() == true
+  trigger.hideBlizzardDebuffs = frame.auraListHideBlizzardDebuffsCheck:GetChecked() == true
 
   local input = TrimmedText(frame.argInput:GetText())
   if trigger.type == "spell_cooldown" then
@@ -866,13 +873,6 @@ function Panel:ApplyCurrent()
     trigger.itemId = nil
     trigger.itemName = nil
     frame.resolvedLabel:SetText("|cff88ff88Tracks party or raid member deaths only.|r")
-  elseif trigger.type == "private_aura" then
-    trigger.spellIDs = nil
-    trigger.spellNames = nil
-    trigger.spellId = nil
-    trigger.itemId = nil
-    trigger.itemName = nil
-    frame.resolvedLabel:SetText("|cff88ff88Uses Blizzard private aura anchors for the selected unit.|r")
   elseif trigger.type == "aura_list" then
     trigger.spellIDs = nil
     trigger.spellNames = nil
@@ -918,6 +918,9 @@ function Panel:ApplyCurrent()
 
   triggers[triggerIndex] = trigger
   aura.triggerOp = UIDropDownMenu_GetSelectedValue(frame.opDropDown) or "AND"
+  if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+    ns.TriggerBase:InvalidateProviderCaches("aura_list")
+  end
   ns.runtime:RefreshAura(aura.id)
   if ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
     ns.CooldownManager:ApplyVisibilityOverrides()
@@ -1124,17 +1127,18 @@ function Panel:Create(parent)
   end)
   frame.modeDropDown:SetPoint("TOPLEFT", frame.modeLabel, "BOTTOMLEFT", -14, -4)
 
-  frame.privateAuraTargetLabel = Frames.CreateLabel(frame, "Track Private Auras On", "GameFontNormal")
-  frame.privateAuraTargetLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
-  frame.privateAuraTargetDropDown = Frames.CreateDropdown(frame, 170)
-  frame.privateAuraTargetDropDown:SetPoint("TOPLEFT", frame.privateAuraTargetLabel, "BOTTOMLEFT", -14, -4)
-
   frame.auraListSourceLabel = Frames.CreateLabel(frame, "Aura Source", "GameFontNormal")
   frame.auraListSourceLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
   frame.auraListSourceDropDown = Frames.CreateDropdown(frame, 190)
   frame.auraListSourceDropDown:SetPoint("TOPLEFT", frame.auraListSourceLabel, "BOTTOMLEFT", -14, -4)
-  frame.auraListTargetDebuffFilterCheck = Frames.CreateCheckbox(frame, "Only Mine + Non-Player Debuffs")
-  frame.auraListTargetDebuffFilterCheck:SetPoint("TOPLEFT", frame.auraListSourceDropDown, "BOTTOMLEFT", 16, -4)
+  frame.auraListTargetDebuffModeLabel = Frames.CreateLabel(frame, "Target Debuff Filter", "GameFontNormal")
+  frame.auraListTargetDebuffModeLabel:SetPoint("TOPLEFT", frame.auraListSourceDropDown, "BOTTOMLEFT", 14, -10)
+  frame.auraListTargetDebuffModeDropDown = Frames.CreateDropdown(frame, 210)
+  frame.auraListTargetDebuffModeDropDown:SetPoint("TOPLEFT", frame.auraListTargetDebuffModeLabel, "BOTTOMLEFT", -14, -4)
+  frame.auraListHideBlizzardBuffsCheck = Frames.CreateCheckbox(frame, "Hide Blizzard Buffs")
+  frame.auraListHideBlizzardBuffsCheck:SetPoint("TOPLEFT", frame.auraListSourceDropDown, "BOTTOMLEFT", 14, -10)
+  frame.auraListHideBlizzardDebuffsCheck = Frames.CreateCheckbox(frame, "Hide Blizzard Debuffs")
+  frame.auraListHideBlizzardDebuffsCheck:SetPoint("TOPLEFT", frame.auraListSourceDropDown, "BOTTOMLEFT", 14, -10)
 
   frame.auraTypeLabel = Frames.CreateLabel(frame, "Aura Type", "GameFontNormal")
   frame.auraTypeLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
@@ -1387,19 +1391,6 @@ function Panel:Create(parent)
       UIDropDownMenu_AddButton(info, level)
     end
   end)
-  UIDropDownMenu_Initialize(frame.privateAuraTargetDropDown, function(self, level)
-    for _, option in ipairs(privateAuraTargetValues) do
-      local info = UIDropDownMenu_CreateInfo()
-      info.text = option.label
-      info.value = option.value
-      info.func = function()
-        UIDropDownMenu_SetSelectedValue(frame.privateAuraTargetDropDown, option.value)
-        UIDropDownMenu_SetText(frame.privateAuraTargetDropDown, option.label)
-        Panel:ApplyCurrent()
-      end
-      UIDropDownMenu_AddButton(info, level)
-    end
-  end)
   UIDropDownMenu_Initialize(frame.auraListSourceDropDown, function(self, level)
     for _, option in ipairs(auraListSourceValues) do
       local info = UIDropDownMenu_CreateInfo()
@@ -1412,6 +1403,11 @@ function Panel:Create(parent)
       end
       UIDropDownMenu_AddButton(info, level)
     end
+  end)
+  InitDropdownValues(frame.auraListTargetDebuffModeDropDown, function()
+    return auraListTargetDebuffModeValues
+  end, function()
+    Panel:ApplyCurrent()
   end)
   for _, option in ipairs(chatChannelValues) do
     local check = frame.chatChannelChecks[option.value]
@@ -1479,12 +1475,13 @@ function Panel:Create(parent)
   frame.auraCastByMeCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraAliveOnlyCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraIgnoreNPCsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.auraListHideBlizzardBuffsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.auraListHideBlizzardDebuffsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.chargeCooldownCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.deathTankCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.deathHealerCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.deathDPSCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.debugCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
-  frame.auraListTargetDebuffFilterCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
 
   return frame
 end
@@ -1571,18 +1568,22 @@ function Panel:Refresh(aura)
   local isAura = trigger.type == "aura"
   local isChat = trigger.type == "chat"
   local isDeathAlert = trigger.type == "death_alert"
-  local isPrivateAura = trigger.type == "private_aura"
   local isAuraList = trigger.type == "aura_list"
   local auraListSourceValue = UnitAuraList and UnitAuraList.GetSourceValue and UnitAuraList:GetSourceValue(trigger) or "player_buff"
+  local auraListTargetDebuffMode = UnitAuraList and UnitAuraList.GetTargetDebuffFilterMode
+    and UnitAuraList:GetTargetDebuffFilterMode(trigger)
+    or (trigger.targetMineOrUnownedOnly == true and "mine_or_unowned" or "all")
   local showTargetDebuffFilter = isAuraList and auraListSourceValue == "target_debuff"
+  local showHideBlizzardBuffs = isAuraList and auraListSourceValue == "player_buff"
+  local showHideBlizzardDebuffs = isAuraList and auraListSourceValue == "player_debuff"
   self.frame.modeLabel:SetShown(isSimple)
   self.frame.modeDropDown:SetShown(isSimple)
-  self.frame.privateAuraTargetLabel:SetShown(isPrivateAura)
-  self.frame.privateAuraTargetDropDown:SetShown(isPrivateAura)
   self.frame.auraListSourceLabel:SetShown(isAuraList)
   self.frame.auraListSourceDropDown:SetShown(isAuraList)
-  self.frame.auraListTargetDebuffFilterCheck:SetShown(showTargetDebuffFilter)
-  self.frame.auraListTargetDebuffFilterCheck:SetChecked(trigger.targetMineOrUnownedOnly == true)
+  self.frame.auraListTargetDebuffModeLabel:SetShown(showTargetDebuffFilter)
+  self.frame.auraListTargetDebuffModeDropDown:SetShown(showTargetDebuffFilter)
+  self.frame.auraListHideBlizzardBuffsCheck:SetShown(showHideBlizzardBuffs)
+  self.frame.auraListHideBlizzardDebuffsCheck:SetShown(showHideBlizzardDebuffs)
   self.frame.auraTypeLabel:SetShown(isAura)
   self.frame.auraTypeDropDown:SetShown(isAura)
   self.frame.auraFilterLabel:SetShown(isAura)
@@ -1594,8 +1595,8 @@ function Panel:Refresh(aura)
   self.frame.auraCastByMeCheck:SetShown(isAura and (trigger.unit or "player") ~= "player")
   self.frame.auraAliveOnlyCheck:SetShown(isAura)
   self.frame.auraIgnoreNPCsCheck:SetShown(isAura and (trigger.unit or "player") == "group")
-  self.frame.argLabel:SetShown(not isDeathAlert and not isPrivateAura and not isAuraList)
-  self.frame.argInput:SetShown(not isDeathAlert and not isPrivateAura and not isAuraList)
+  self.frame.argLabel:SetShown(not isDeathAlert and not isAuraList)
+  self.frame.argInput:SetShown(not isDeathAlert and not isAuraList)
   self.frame.chatExactCheck:SetShown(isChat)
   self.frame.chatExactCheck:SetChecked(trigger.chatExact == true)
   self.frame.chatChannelLabel:SetShown(isChat)
@@ -1627,9 +1628,6 @@ function Panel:Refresh(aura)
   UIDropDownMenu_SetText(self.frame.auraRangeDropDown, GetDropdownOptionLabel(normalizedGroupRange, function()
     return auraGroupRangeValues
   end))
-  SetDropdownValue(self.frame.privateAuraTargetDropDown, trigger.privateAuraTarget or "player", function()
-    return privateAuraTargetValues
-  end)
   SetDropdownValue(
     self.frame.auraListSourceDropDown,
     auraListSourceValue,
@@ -1637,6 +1635,15 @@ function Panel:Refresh(aura)
       return auraListSourceValues
     end
   )
+  SetDropdownValue(
+    self.frame.auraListTargetDebuffModeDropDown,
+    auraListTargetDebuffMode,
+    function()
+      return auraListTargetDebuffModeValues
+    end
+  )
+  self.frame.auraListHideBlizzardBuffsCheck:SetChecked(trigger.hideBlizzardBuffs == true)
+  self.frame.auraListHideBlizzardDebuffsCheck:SetChecked(trigger.hideBlizzardDebuffs == true)
   self.frame.auraAliveOnlyCheck:SetChecked(trigger.aliveOnly == true)
   self.frame.auraCastByMeCheck:SetChecked(trigger.castByMe == true)
   self.frame.auraIgnoreNPCsCheck:SetChecked(trigger.ignoreNPCs == true)
@@ -1707,9 +1714,6 @@ function Panel:Refresh(aura)
 
   if isDeathAlert then
     self.frame.resolvedLabel:SetText("|cff88ff88Tracks party or raid member deaths only.|r")
-  elseif isPrivateAura then
-    self.frame.argInput:SetText("")
-    self.frame.resolvedLabel:SetText("|cff88ff88Uses Blizzard private aura anchors for the selected unit.|r")
   elseif isAuraList then
     self.frame.argInput:SetText("")
     self.frame.resolvedLabel:SetText("|cff88ff88Builds a live bar list from the selected unit's visible buffs or debuffs.|r")

@@ -17,6 +17,7 @@ local provider = ns.TriggerBase:CreateProvider("death_alert", {
   observedDeathState = {},
   combatAlertCounts = {},
   inCombat = false,
+  capWindowActive = false,
 })
 
 local Strings = ns.util.Strings
@@ -113,6 +114,16 @@ local function GetAlertCap(trigger)
   return math.max(0, math.min(20, cap))
 end
 
+local function AnyGroupMemberDead(roster)
+  for _, member in pairs(roster or {}) do
+    local unit = member and member.unit
+    if unit and UnitExists(unit) and UnitIsDeadOrGhost(unit) == true then
+      return true
+    end
+  end
+  return false
+end
+
 function provider:GetDeathAlertAuraIds()
   return ns.Registry:CollectAuraIds(function(aura)
     return GetDeathAlertTrigger(aura) ~= nil
@@ -166,6 +177,20 @@ function provider:SyncObservedDeathState()
   end
 end
 
+function provider:RefreshCombatCapWindow(roster)
+  if self.inCombat then
+    self.capWindowActive = true
+    return
+  end
+
+  if AnyGroupMemberDead(roster or BuildGroupRosterByGUID()) then
+    return
+  end
+
+  self.capWindowActive = false
+  wipe(self.combatAlertCounts)
+end
+
 function provider:HandleEvent(event, ...)
   if event == "PLAYER_ENTERING_WORLD" then
     wipe(self.alerts)
@@ -173,25 +198,28 @@ function provider:HandleEvent(event, ...)
     wipe(self.observedDeathState)
     wipe(self.combatAlertCounts)
     self.inCombat = InCombatLockdown and InCombatLockdown() == true or false
+    self.capWindowActive = self.inCombat
     self:SyncObservedDeathState()
     return self:GetDeathAlertAuraIds()
   end
 
   if event == "PLAYER_REGEN_DISABLED" then
     self.inCombat = true
+    self.capWindowActive = true
     wipe(self.combatAlertCounts)
     return self:GetDeathAlertAuraIds()
   end
 
   if event == "PLAYER_REGEN_ENABLED" then
     self.inCombat = false
-    wipe(self.combatAlertCounts)
+    self:RefreshCombatCapWindow()
     return self:GetDeathAlertAuraIds()
   end
 
   if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ROLES_ASSIGNED" then
     self:PruneAlerts()
     self:SyncObservedDeathState()
+    self:RefreshCombatCapWindow()
     return self:GetDeathAlertAuraIds()
   end
 
@@ -229,6 +257,7 @@ function provider:HandleEvent(event, ...)
   self.observedDeathState[destGUID] = isDead
 
   if not isDead then
+    self:RefreshCombatCapWindow(roster)
     return {}
   end
 
@@ -246,7 +275,7 @@ function provider:HandleEvent(event, ...)
     if trigger and TriggerMatchesRole(trigger, member.role) then
       local alertsThisCombat = tonumber(self.combatAlertCounts[auraId] or 0) or 0
       local alertCap = GetAlertCap(trigger)
-      if not self.inCombat or alertCap == 0 or alertsThisCombat < alertCap then
+      if not self.capWindowActive or alertCap == 0 or alertsThisCombat < alertCap then
         local duration = tonumber(trigger.alertDuration or 2) or 2
         duration = math.max(0.1, duration)
         self.alerts[auraId] = {
@@ -265,7 +294,7 @@ function provider:HandleEvent(event, ...)
           ns.Interrupts:PlaySound(soundName)
         end
 
-        if self.inCombat then
+        if self.capWindowActive then
           self.combatAlertCounts[auraId] = alertsThisCombat + 1
         end
 

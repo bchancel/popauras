@@ -390,14 +390,17 @@ function InterruptTrackerRegion:AnnounceEntry(entry)
   end
 
   local channel = settings.announceChannel or "PARTY"
+  if channel == "PARTY" and IsInGroup and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+    channel = "INSTANCE_CHAT"
+  end
   local sent = false
   if C_ChatInfo and C_ChatInfo.SendChatMessage then
-    if channel == "YELL" or channel == "SAY" or (channel == "PARTY" and IsInGroup()) then
+    if channel == "YELL" or channel == "SAY" or channel == "INSTANCE_CHAT" or (channel == "PARTY" and IsInGroup()) then
       C_ChatInfo.SendChatMessage(message, channel)
       sent = true
     end
   elseif SendChatMessage then
-    if channel == "YELL" or channel == "SAY" or (channel == "PARTY" and IsInGroup()) then
+    if channel == "YELL" or channel == "SAY" or channel == "INSTANCE_CHAT" or (channel == "PARTY" and IsInGroup()) then
       SendChatMessage(message, channel)
       sent = true
     end

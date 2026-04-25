@@ -8,6 +8,13 @@ local UNIT_AURA_SORT_RULE = Enum and Enum.UnitAuraSortRule or nil
 local UNIT_AURA_SORT_DIRECTION = Enum and Enum.UnitAuraSortDirection or nil
 local KNOWN_STACK_SPELLS = {}
 local KNOWN_AURA_INSTANCES = {}
+local PLAYER_TRACKED_TARGET_DEBUFFS = {}
+local NON_PLAYER_TRACKED_TARGET_DEBUFFS = {}
+local TARGET_DEBUFF_FILTER_MODES = {
+  all = true,
+  mine_only = true,
+  mine_or_unowned = true,
+}
 
 local function SafeNumber(value, fallback)
   if type(value) == "number" and not (issecretvalue and issecretvalue(value)) then
@@ -41,16 +48,17 @@ local function SafeBoolean(value)
   return nil
 end
 
-local function AuraWasCastByPlayer(auraData)
-  if type(auraData) ~= "table" then
-    return false
+local function SafeGUID(value)
+  if type(value) == "string" and not (issecretvalue and issecretvalue(value)) then
+    return value
   end
+  return nil
+end
 
-  local sourceUnit = SafeAuraString(auraData.sourceUnit) or SafeAuraString(auraData.unitCaster)
+local function IsPlayerSourceUnit(sourceUnit)
   if sourceUnit == nil or sourceUnit == "" then
     return false
   end
-
   if sourceUnit == "player" or sourceUnit == "pet" or sourceUnit == "vehicle" then
     return true
   end
@@ -62,27 +70,151 @@ local function AuraWasCastByPlayer(auraData)
   return false
 end
 
-local function AuraSourceIsOtherPlayerControlled(auraData)
+local function GetLegacyAuraSourceUnit(unit, helpful, index)
+  if type(unit) ~= "string" or type(index) ~= "number" then
+    return nil
+  end
+
+  local reader = helpful and UnitBuff or UnitDebuff
+  if type(reader) ~= "function" then
+    return nil
+  end
+
+  local _, _, _, _, _, _, sourceUnit = reader(unit, index)
+  return SafeAuraString(sourceUnit)
+end
+
+local function GetResolvedAuraSourceUnit(unit, helpful, index, auraData)
+  return SafeAuraString(auraData and auraData.sourceUnit)
+    or SafeAuraString(auraData and auraData.unitCaster)
+    or GetLegacyAuraSourceUnit(unit, helpful, index)
+end
+
+local function GetTrackedDebuffBucket(store, destGUID)
+  if type(destGUID) ~= "string" or destGUID == "" then
+    return nil
+  end
+
+  local bucket = store[destGUID]
+  if type(bucket) ~= "table" then
+    bucket = {}
+    store[destGUID] = bucket
+  end
+
+  return bucket
+end
+
+local function IncrementTrackedDebuff(store, destGUID, spellID)
+  if type(destGUID) ~= "string" or destGUID == "" or type(spellID) ~= "number" or spellID <= 0 then
+    return false
+  end
+
+  local bucket = GetTrackedDebuffBucket(store, destGUID)
+  if not bucket then
+    return false
+  end
+
+  bucket[spellID] = (tonumber(bucket[spellID] or 0) or 0) + 1
+  return true
+end
+
+local function DecrementTrackedDebuff(store, destGUID, spellID)
+  if type(destGUID) ~= "string" or destGUID == "" or type(spellID) ~= "number" or spellID <= 0 then
+    return false
+  end
+
+  local bucket = store[destGUID]
+  if type(bucket) ~= "table" then
+    return false
+  end
+
+  local nextValue = (tonumber(bucket[spellID] or 0) or 0) - 1
+  if nextValue > 0 then
+    bucket[spellID] = nextValue
+  else
+    bucket[spellID] = nil
+  end
+
+  if next(bucket) == nil then
+    store[destGUID] = nil
+  end
+
+  return true
+end
+
+local function HasTrackedDebuff(store, destGUID, spellID)
+  if type(destGUID) ~= "string" or destGUID == "" or type(spellID) ~= "number" or spellID <= 0 then
+    return false
+  end
+
+  local bucket = store[destGUID]
+  return type(bucket) == "table" and (tonumber(bucket[spellID] or 0) or 0) > 0
+end
+
+local function IsTrackedPlayerDebuff(destGUID, spellID)
+  return HasTrackedDebuff(PLAYER_TRACKED_TARGET_DEBUFFS, destGUID, spellID)
+end
+
+local function IsTrackedNonPlayerDebuff(destGUID, spellID)
+  return HasTrackedDebuff(NON_PLAYER_TRACKED_TARGET_DEBUFFS, destGUID, spellID)
+end
+
+local function IsPlayerControlledSourceFlags(sourceFlags)
+  if type(sourceFlags) ~= "number" then
+    return false
+  end
+
+  if CombatLog_Object_IsA and COMBATLOG_OBJECT_CONTROL_PLAYER then
+    local ok, result = pcall(CombatLog_Object_IsA, sourceFlags, COMBATLOG_OBJECT_CONTROL_PLAYER)
+    if ok and result ~= nil then
+      return result == true
+    end
+  end
+
+  if bit and bit.band and COMBATLOG_OBJECT_CONTROL_PLAYER then
+    return bit.band(sourceFlags, COMBATLOG_OBJECT_CONTROL_PLAYER) ~= 0
+  end
+
+  if bit32 and bit32.band and COMBATLOG_OBJECT_CONTROL_PLAYER then
+    return bit32.band(sourceFlags, COMBATLOG_OBJECT_CONTROL_PLAYER) ~= 0
+  end
+
+  return false
+end
+
+local function IsMineSourceGUID(sourceGUID)
+  sourceGUID = SafeGUID(sourceGUID)
+  if sourceGUID == nil then
+    return false
+  end
+
+  return sourceGUID == SafeGUID(UnitGUID and UnitGUID("player"))
+    or sourceGUID == SafeGUID(UnitGUID and UnitGUID("pet"))
+    or sourceGUID == SafeGUID(UnitGUID and UnitGUID("vehicle"))
+end
+
+local function ClassifyAuraSource(unit, helpful, index, auraData)
   if type(auraData) ~= "table" then
-    return false
+    return "unknown"
   end
 
-  local sourceUnit = SafeAuraString(auraData.sourceUnit) or SafeAuraString(auraData.unitCaster)
+  local sourceUnit = GetResolvedAuraSourceUnit(unit, helpful, index, auraData)
   if sourceUnit == nil or sourceUnit == "" then
-    return false
+    return "unknown"
   end
 
-  if AuraWasCastByPlayer(auraData) then
-    return false
+  if IsPlayerSourceUnit(sourceUnit) then
+    return "self"
   end
 
   if UnitExists and UnitExists(sourceUnit) then
     if UnitIsPlayer and UnitIsPlayer(sourceUnit) then
-      return true
+      return "other_player"
     end
     if UnitPlayerControlled and UnitPlayerControlled(sourceUnit) then
-      return true
+      return "other_player"
     end
+    return "non_player"
   end
 
   if sourceUnit:match("^party%d+$")
@@ -91,14 +223,111 @@ local function AuraSourceIsOtherPlayerControlled(auraData)
     or sourceUnit:match("^partypet%d+$")
     or sourceUnit:match("^raidpet%d+$")
     or sourceUnit:match("^arenapet%d+$") then
-    return true
+    return "other_player"
   end
 
-  return false
+  return "unknown"
 end
 
-local function ShouldIncludeTargetDebuff(trigger, auraData, unit, helpful)
-  if type(trigger) ~= "table" or trigger.targetMineOrUnownedOnly ~= true then
+local function GetTargetDebuffFilterMode(trigger)
+  local mode = tostring(trigger and trigger.targetDebuffFilterMode or "")
+  if TARGET_DEBUFF_FILTER_MODES[mode] then
+    return mode
+  end
+  if trigger and trigger.targetMineOrUnownedOnly == true then
+    return "mine_or_unowned"
+  end
+  return "all"
+end
+
+local function CollectAuraInstanceIDsForFilter(unit, filter)
+  if type(unit) ~= "string" or unit == "" or type(filter) ~= "string" or filter == "" then
+    return nil, 0
+  end
+
+  if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then
+    return nil, 0
+  end
+
+  local auraInstanceIDs = {}
+  local rawCount = 0
+  local index = 1
+
+  while true do
+    local ok, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
+    if not ok then
+      return nil, 0
+    end
+    if not auraData then
+      break
+    end
+
+    rawCount = rawCount + 1
+
+    local auraInstanceID = SafeNumber(auraData.auraInstanceID, nil)
+    if auraInstanceID ~= nil then
+      auraInstanceIDs[auraInstanceID] = true
+    end
+
+    index = index + 1
+  end
+
+  return auraInstanceIDs, rawCount
+end
+
+local function CollectPlayerFilteredAuraInstanceIDs(unit, helpful, debugInfo)
+  local baseFilter = helpful and "HELPFUL" or "HARMFUL"
+  local filterOrder = {
+    baseFilter .. "|PLAYER",
+    "PLAYER|" .. baseFilter,
+  }
+  local combinedAuraInstanceIDs = {}
+  local sawSupportedFilter = false
+  local bestFilter = nil
+  local bestRawCount = 0
+
+  for _, filter in ipairs(filterOrder) do
+    local auraInstanceIDs, rawCount = CollectAuraInstanceIDsForFilter(unit, filter)
+    if auraInstanceIDs ~= nil then
+      sawSupportedFilter = true
+      if rawCount > bestRawCount then
+        bestFilter = filter
+        bestRawCount = rawCount
+      end
+      for auraInstanceID in pairs(auraInstanceIDs) do
+        combinedAuraInstanceIDs[auraInstanceID] = true
+      end
+    end
+  end
+
+  if sawSupportedFilter then
+    if debugInfo then
+      debugInfo.playerReader = "GetAuraDataByIndex(" .. tostring(bestFilter or filterOrder[1]) .. ")"
+      debugInfo.playerRawCount = bestRawCount
+    end
+    return combinedAuraInstanceIDs
+  end
+
+  if debugInfo then
+    debugInfo.playerReader = "unsupported"
+    debugInfo.playerRawCount = 0
+  end
+
+  return nil
+end
+
+local function AuraMatchesPlayerFilteredSet(playerFilteredAuraInstances, auraData)
+  if type(playerFilteredAuraInstances) ~= "table" then
+    return false
+  end
+
+  local auraInstanceID = SafeNumber(auraData and auraData.auraInstanceID, nil)
+  return auraInstanceID ~= nil and playerFilteredAuraInstances[auraInstanceID] == true
+end
+
+local function ShouldIncludeTargetDebuff(trigger, auraData, unit, helpful, index, playerFilteredAuraInstances, matchedPlayerFilteredAura)
+  local filterMode = GetTargetDebuffFilterMode(trigger)
+  if filterMode == "all" then
     return true
   end
 
@@ -106,11 +335,37 @@ local function ShouldIncludeTargetDebuff(trigger, auraData, unit, helpful)
     return true
   end
 
-  if AuraWasCastByPlayer(auraData) then
+  if matchedPlayerFilteredAura == nil then
+    matchedPlayerFilteredAura = AuraMatchesPlayerFilteredSet(playerFilteredAuraInstances, auraData)
+  end
+  if matchedPlayerFilteredAura then
     return true
   end
 
-  return not AuraSourceIsOtherPlayerControlled(auraData)
+  local sourceKind = ClassifyAuraSource(unit, helpful, index, auraData)
+
+  if sourceKind == "self" then
+    return true
+  end
+
+  if sourceKind == "other_player" then
+    return false
+  end
+
+  if sourceKind == "non_player" then
+    return filterMode == "mine_or_unowned"
+  end
+
+  local fromPlayer = SafeBoolean(auraData and auraData.isFromPlayerOrPlayerPet)
+  if fromPlayer == true then
+    return false
+  end
+
+  if filterMode == "mine_or_unowned" and fromPlayer == false then
+    return true
+  end
+
+  return false
 end
 
 local function GetAuraInstanceKey(unit, auraInstanceID)
@@ -128,7 +383,7 @@ local function GetKnownAuraInstanceInfo(unit, auraInstanceID)
   return KNOWN_AURA_INSTANCES[key]
 end
 
-local function RememberAuraInstanceInfo(unit, auraInstanceID, spellID, stackCapable)
+local function RememberAuraInstanceInfo(unit, auraInstanceID, spellID, stackCapable, safeName)
   local key = GetAuraInstanceKey(unit, auraInstanceID)
   if not key then
     return
@@ -142,6 +397,10 @@ local function RememberAuraInstanceInfo(unit, auraInstanceID, spellID, stackCapa
 
   if spellID then
     info.spellId = spellID
+  end
+  safeName = SafeString(safeName, "")
+  if safeName ~= "" then
+    info.name = safeName
   end
   if stackCapable == true then
     info.stackCapable = true
@@ -166,13 +425,18 @@ local function ResolveSpellName(spellID)
   return SafeString(name, "")
 end
 
-local function ResolveAuraName(auraData)
+local function ResolveAuraName(auraData, fallbackSpellID, fallbackName)
   local safeName = SafeString(auraData and auraData.name, "")
   if safeName ~= "" then
     return safeName
   end
 
-  return ResolveSpellName(SafeSpellID(auraData and auraData.spellId))
+  local cachedName = SafeString(fallbackName, "")
+  if cachedName ~= "" then
+    return cachedName
+  end
+
+  return ResolveSpellName(SafeSpellID(auraData and auraData.spellId) or fallbackSpellID)
 end
 
 local function CallDurationObjectMethod(durationObject, methodName)
@@ -361,13 +625,17 @@ local function BuildDebugPreviewEntry(auraData, entry, index)
   local spellID = SafeSpellID(auraData and auraData.spellId) or (entry and entry.spellId) or nil
   local auraInstanceID = SafeNumber(auraData and auraData.auraInstanceID, nil) or (entry and entry.auraInstanceID) or nil
   local icon = (auraData and auraData.icon) or (entry and entry.icon) or nil
+  local sourceUnit = SafeAuraString(auraData and auraData.sourceUnit) or SafeAuraString(auraData and auraData.unitCaster)
+  local fromPlayer = SafeBoolean(auraData and auraData.isFromPlayerOrPlayerPet)
   local label = name ~= "" and name or "?"
-  return string.format("%s(%s)#%s@%d icon=%s",
+  return string.format("%s(%s)#%s@%d icon=%s src=%s fromPlayer=%s",
     tostring(label),
     tostring(spellID or "?"),
     tostring(auraInstanceID or "?"),
     tonumber(index or 0) or 0,
-    tostring(icon ~= nil))
+    tostring(icon ~= nil),
+    tostring(sourceUnit or "-"),
+    tostring(fromPlayer))
 end
 
 local function SortEntries(unit, helpful, entries, debugInfo)
@@ -477,6 +745,22 @@ function UnitAuraList:GetSourceValue(trigger)
   return helpful and "player_buff" or "player_debuff"
 end
 
+function UnitAuraList:GetTargetDebuffFilterMode(trigger)
+  return GetTargetDebuffFilterMode(trigger)
+end
+
+function UnitAuraList:ApplyTargetDebuffFilterMode(trigger, value)
+  trigger = trigger or {}
+  local mode = tostring(value or "all")
+  if not TARGET_DEBUFF_FILTER_MODES[mode] then
+    mode = "all"
+  end
+
+  trigger.targetDebuffFilterMode = mode
+  trigger.targetMineOrUnownedOnly = mode == "mine_or_unowned"
+  return trigger
+end
+
 function UnitAuraList:ApplySourceValue(trigger, value)
   trigger = trigger or {}
   value = tostring(value or "player_buff")
@@ -504,34 +788,50 @@ local function BuildDebugSummary(debugInfo)
   if preview == "" then
     preview = "-"
   end
+  local keptPreview = type(debugInfo.keptPreview) == "table" and table.concat(debugInfo.keptPreview, ", ") or ""
+  if keptPreview == "" then
+    keptPreview = "-"
+  end
 
   return string.format(
-    "unit=%s type=%s combat=%s reader=%s raw=%d returned=%d stop=%s sort=%s ordered=%d preview=%s",
+    "unit=%s type=%s combat=%s filter=%s reader=%s raw=%d playerReader=%s playerRaw=%d playerMatched=%d returned=%d stop=%s sort=%s ordered=%d preview=%s kept=%s",
     tostring(debugInfo.unit or ""),
     debugInfo.helpful == false and "debuff" or "buff",
     tostring(debugInfo.inCombat == true),
+    tostring(debugInfo.targetDebuffFilterMode or "all"),
     tostring(debugInfo.reader or "none"),
     tonumber(debugInfo.rawCount or 0) or 0,
+    tostring(debugInfo.playerReader or "none"),
+    tonumber(debugInfo.playerRawCount or 0) or 0,
+    tonumber(debugInfo.playerMatchedCount or 0) or 0,
     tonumber(debugInfo.returnedCount or 0) or 0,
     tostring(debugInfo.stopReason or "nil"),
     tostring(debugInfo.sortMode or "none"),
     tonumber(debugInfo.orderedCount or 0) or 0,
-    preview
+    preview,
+    keptPreview
   )
 end
 
 function UnitAuraList:CollectInternal(trigger, maxCount, includeDebug)
   local unit, helpful = self:GetTriggerConfig(trigger)
+  local filter = helpful and "HELPFUL" or "HARMFUL"
+  local targetDebuffFilterMode = GetTargetDebuffFilterMode(trigger)
   local debugInfo = includeDebug == true and {
     unit = unit,
     helpful = helpful,
     inCombat = InCombatLockdown and InCombatLockdown() or false,
+    targetDebuffFilterMode = targetDebuffFilterMode,
     reader = "none",
     rawCount = 0,
+    playerReader = "none",
+    playerRawCount = 0,
+    playerMatchedCount = 0,
     returnedCount = 0,
     orderedCount = 0,
     sortMode = "none",
     preview = {},
+    keptPreview = {},
   } or nil
   if not unit or not UnitExists or not UnitExists(unit) then
     if debugInfo then
@@ -541,9 +841,26 @@ function UnitAuraList:CollectInternal(trigger, maxCount, includeDebug)
     return {}
   end
 
+  local auraList = nil
   local reader = nil
-  if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-    local filter = helpful and "HELPFUL" or "HARMFUL"
+  if C_UnitAuras and C_UnitAuras.GetUnitAuras then
+    local sortRule = UNIT_AURA_SORT_RULE and (UNIT_AURA_SORT_RULE.ExpirationOnly or UNIT_AURA_SORT_RULE.Default) or nil
+    local sortDirection = UNIT_AURA_SORT_DIRECTION and (UNIT_AURA_SORT_DIRECTION.Reverse or UNIT_AURA_SORT_DIRECTION.Normal) or nil
+    local ok, result
+    if sortRule ~= nil or sortDirection ~= nil then
+      ok, result = pcall(C_UnitAuras.GetUnitAuras, unit, filter, nil, sortRule, sortDirection)
+    else
+      ok, result = pcall(C_UnitAuras.GetUnitAuras, unit, filter)
+    end
+    if ok and type(result) == "table" then
+      auraList = result
+      if debugInfo then
+        debugInfo.reader = "GetUnitAuras"
+      end
+    end
+  end
+
+  if auraList == nil and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
     reader = function(index)
       return C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
     end
@@ -566,7 +883,7 @@ function UnitAuraList:CollectInternal(trigger, maxCount, includeDebug)
     end
   end
 
-  if not reader then
+  if auraList == nil and not reader then
     if debugInfo then
       debugInfo.stopReason = "no_reader"
       return {}, BuildDebugSummary(debugInfo)
@@ -574,26 +891,19 @@ function UnitAuraList:CollectInternal(trigger, maxCount, includeDebug)
     return {}
   end
 
+  local playerFilteredAuraInstances = nil
+  if helpful == false and unit == "target" and targetDebuffFilterMode ~= "all" then
+    playerFilteredAuraInstances = CollectPlayerFilteredAuraInstanceIDs(unit, helpful, debugInfo)
+  end
+
   local entries = {}
-  local index = 1
-  while true do
-    local auraData = reader(index)
+  local function AddEntryFromAuraData(auraData, index)
     if not auraData then
-      if debugInfo then
-        debugInfo.stopReason = "reader_nil@" .. tostring(index)
-      end
-      break
+      return
     end
 
-    if auraData.icon == nil then
-      if debugInfo then
-        debugInfo.stopReason = "missing_icon@" .. tostring(index)
-        if #debugInfo.preview < 4 then
-          debugInfo.preview[#debugInfo.preview + 1] = BuildDebugPreviewEntry(auraData, nil, index)
-        end
-      end
-      break
-    end
+    local rawIcon = auraData.icon
+    local safeIcon = (issecretvalue and issecretvalue(rawIcon)) and nil or rawIcon
 
     if debugInfo then
       debugInfo.rawCount = (debugInfo.rawCount or 0) + 1
@@ -602,10 +912,19 @@ function UnitAuraList:CollectInternal(trigger, maxCount, includeDebug)
       end
     end
 
-    if ShouldIncludeTargetDebuff(trigger, auraData, unit, helpful) then
+    local matchedPlayerFilteredAura = AuraMatchesPlayerFilteredSet(playerFilteredAuraInstances, auraData)
+    if safeIcon ~= nil and ShouldIncludeTargetDebuff(trigger, auraData, unit, helpful, index, playerFilteredAuraInstances, matchedPlayerFilteredAura) then
+      if debugInfo and matchedPlayerFilteredAura then
+        debugInfo.playerMatchedCount = (tonumber(debugInfo.playerMatchedCount or 0) or 0) + 1
+      end
       local auraInstanceID = SafeNumber(auraData.auraInstanceID, nil)
       local cachedAuraInfo = GetKnownAuraInstanceInfo(unit, auraInstanceID)
       local spellID = SafeSpellID(auraData.spellId) or (cachedAuraInfo and cachedAuraInfo.spellId) or nil
+      local safeName = ResolveAuraName(auraData, spellID, cachedAuraInfo and cachedAuraInfo.name)
+      local displayName = auraData and auraData.name
+      if displayName == nil then
+        displayName = safeName
+      end
       local duration, expirationTime, durationObject, hasExpiration = GetAuraTiming(unit, auraInstanceID, auraData)
       local stacks, stackText, stackDisplayValue, hasStackDisplayValue = GetAuraStacks(unit, auraInstanceID, auraData)
       local isPermanent = hasExpiration == false
@@ -617,14 +936,15 @@ function UnitAuraList:CollectInternal(trigger, maxCount, includeDebug)
         or (spellID and KNOWN_STACK_SPELLS[spellID] == true)
         or (cachedAuraInfo and cachedAuraInfo.stackCapable == true)
 
-      RememberAuraInstanceInfo(unit, auraInstanceID, spellID, knownStackCapable)
+      RememberAuraInstanceInfo(unit, auraInstanceID, spellID, knownStackCapable, safeName)
 
       entries[#entries + 1] = {
         unit = unit,
         helpful = helpful,
         index = index,
-        name = ResolveAuraName(auraData),
-        icon = auraData.icon or 134400,
+        name = safeName,
+        displayName = displayName,
+        icon = safeIcon or 134400,
         spellId = spellID,
         auraInstanceID = auraInstanceID,
         duration = duration,
@@ -643,8 +963,29 @@ function UnitAuraList:CollectInternal(trigger, maxCount, includeDebug)
         _sortIndex = index,
       }
     end
+  end
 
-    index = index + 1
+  if type(auraList) == "table" then
+    if #auraList == 0 and debugInfo then
+      debugInfo.stopReason = "empty_list"
+    end
+    for index, auraData in ipairs(auraList) do
+      AddEntryFromAuraData(auraData, index)
+    end
+  else
+    local index = 1
+    while true do
+      local auraData = reader(index)
+      if not auraData then
+        if debugInfo then
+          debugInfo.stopReason = "reader_nil@" .. tostring(index)
+        end
+        break
+      end
+
+      AddEntryFromAuraData(auraData, index)
+      index = index + 1
+    end
   end
 
   entries = SortEntries(unit, helpful, entries, debugInfo)
@@ -661,6 +1002,9 @@ function UnitAuraList:CollectInternal(trigger, maxCount, includeDebug)
 
   if debugInfo then
     debugInfo.returnedCount = #entries
+    for previewIndex = 1, math.min(4, #entries) do
+      debugInfo.keptPreview[#debugInfo.keptPreview + 1] = BuildDebugPreviewEntry(entries[previewIndex], entries[previewIndex], entries[previewIndex].index or previewIndex)
+    end
     return entries, BuildDebugSummary(debugInfo)
   end
 
@@ -673,4 +1017,51 @@ end
 
 function UnitAuraList:CollectWithDebug(trigger, maxCount)
   return self:CollectInternal(trigger, maxCount, true)
+end
+
+function UnitAuraList:HandleCombatLogEvent()
+  if not CombatLogGetCurrentEventInfo then
+    return false
+  end
+
+  local _, subevent, _, sourceGUID, _, sourceFlags, _, destGUID, _, _, _, spellID, _, _, auraType = CombatLogGetCurrentEventInfo()
+  if auraType ~= "DEBUFF" then
+    return false
+  end
+
+  destGUID = SafeGUID(destGUID)
+  spellID = SafeSpellID(spellID)
+  if destGUID == nil or spellID == nil then
+    return false
+  end
+
+  local isAppliedEvent = subevent == "SPELL_AURA_APPLIED"
+    or subevent == "SPELL_AURA_REFRESH"
+    or subevent == "SPELL_AURA_APPLIED_DOSE"
+  local isRemovedEvent = subevent == "SPELL_AURA_REMOVED"
+    or subevent == "SPELL_AURA_BROKEN"
+    or subevent == "SPELL_AURA_BROKEN_SPELL"
+
+  if not isAppliedEvent and not isRemovedEvent then
+    return false
+  end
+
+  local isMine = IsMineSourceGUID(sourceGUID)
+  local isPlayerControlled = isMine or IsPlayerControlledSourceFlags(sourceFlags)
+
+  if isAppliedEvent then
+    if isMine then
+      IncrementTrackedDebuff(PLAYER_TRACKED_TARGET_DEBUFFS, destGUID, spellID)
+    elseif not isPlayerControlled then
+      IncrementTrackedDebuff(NON_PLAYER_TRACKED_TARGET_DEBUFFS, destGUID, spellID)
+    end
+  elseif isRemovedEvent then
+    if isMine then
+      DecrementTrackedDebuff(PLAYER_TRACKED_TARGET_DEBUFFS, destGUID, spellID)
+    elseif not isPlayerControlled then
+      DecrementTrackedDebuff(NON_PLAYER_TRACKED_TARGET_DEBUFFS, destGUID, spellID)
+    end
+  end
+
+  return destGUID == SafeGUID(UnitGUID and UnitGUID("target"))
 end

@@ -11,6 +11,9 @@ Registry.flatOrderCache = nil
 function Registry:MarkDirty()
   self.treeDirty = true
   self.flatOrderCache = nil
+  if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+    ns.TriggerBase:InvalidateProviderCaches()
+  end
 end
 
 function Registry:GetAuras()

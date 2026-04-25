@@ -18,6 +18,9 @@ Bootstrap:SetScript("OnEvent", function(_, event, addonName)
   if ns.CooldownManager and ns.CooldownManager.Initialize then
     ns.CooldownManager:Initialize()
   end
+  if ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Initialize then
+    ns.BlizzardAuraFrames:Initialize()
+  end
   if ns.InterruptTracker and ns.InterruptTracker.Initialize then
     ns.InterruptTracker:Initialize()
   end

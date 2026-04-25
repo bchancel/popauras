@@ -9,6 +9,7 @@ local UnitAuraList = ns.util.UnitAuraList
 local AuraBarListRegion = {}
 ns.renderers.AuraBarListRegion = AuraBarListRegion
 
+local DEFAULT_TEXT_COLOR = { r = 1, g = 1, b = 1, a = 1 }
 local STATUS_BAR_DIRECTION = Enum and Enum.StatusBarTimerDirection or nil
 local STATUS_BAR_INTERPOLATION = Enum and Enum.StatusBarInterpolation or nil
 local REAL_TIME_MODIFIER = Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime or nil
@@ -51,6 +52,44 @@ local function ApplyTextRotation(fontString, degrees)
   fontString:SetRotation(math.rad(tonumber(degrees or 0) or 0))
 end
 
+local function ApplyFontStringColor(fontString, color)
+  if not fontString then
+    return
+  end
+  color = color or DEFAULT_TEXT_COLOR
+  if fontString.SetTextColor then
+    fontString:SetTextColor(color.r or 1, color.g or 1, color.b or 1, color.a == nil and 1 or color.a)
+  elseif fontString.SetVertexColor then
+    fontString:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, color.a == nil and 1 or color.a)
+  end
+end
+
+local function ConfigureNativeCountdown(cooldown, row, iconHolder, aura)
+  if not cooldown or not row or not aura then
+    return
+  end
+
+  if cooldown.SetMinimumCountdownDuration then
+    cooldown:SetMinimumCountdownDuration(0)
+  end
+  if cooldown.SetHideCountdownNumbers then
+    cooldown:SetHideCountdownNumbers(false)
+  end
+
+  local countdownFS = cooldown.GetCountdownFontString and cooldown:GetCountdownFontString() or nil
+  if not countdownFS then
+    return
+  end
+
+  Fonts.ApplyStyle(countdownFS, aura.display.timerFontStyle, aura.display.timerFontSize)
+  ApplyFontStringColor(countdownFS, aura.display.timerColor or DEFAULT_TEXT_COLOR)
+  PositionText(countdownFS, row, iconHolder, aura.display.timerAnchor, aura.display.timerOffsetX, aura.display.timerOffsetY)
+  ApplyTextRotation(countdownFS, aura.display.timerRotation)
+  if countdownFS.SetMaxLines then
+    countdownFS:SetMaxLines(1)
+  end
+end
+
 local oppositePoints = {
   LEFT = "RIGHT",
   RIGHT = "LEFT",
@@ -85,12 +124,12 @@ local function GetAuraTooltipFilter(entry)
 end
 
 local function ShowAuraBarTooltip(owner)
-  if not owner or not GameTooltip or not GameTooltip.SetUnitAura then
+  if not owner or not GameTooltip then
     return
   end
 
   local entry = owner._popAurasAuraEntry
-  if type(entry) ~= "table" or not entry.unit or not entry.index then
+  if type(entry) ~= "table" or not entry.unit or (not entry.auraInstanceID and not entry.index) then
     return
   end
 
@@ -100,7 +139,13 @@ local function ShowAuraBarTooltip(owner)
     GameTooltip:SetOwner(owner, "ANCHOR_CURSOR")
   end
 
-  local ok = pcall(GameTooltip.SetUnitAura, GameTooltip, entry.unit, entry.index, GetAuraTooltipFilter(entry))
+  local ok = false
+  if entry.auraInstanceID and GameTooltip.SetUnitAuraByAuraInstanceID then
+    ok = pcall(GameTooltip.SetUnitAuraByAuraInstanceID, GameTooltip, entry.unit, entry.auraInstanceID)
+  end
+  if not ok and entry.index and GameTooltip.SetUnitAura then
+    ok = pcall(GameTooltip.SetUnitAura, GameTooltip, entry.unit, entry.index, GetAuraTooltipFilter(entry))
+  end
   if ok then
     GameTooltip:Show()
   else
@@ -128,6 +173,30 @@ local function AttachAuraBarTooltipHandlers(frame)
   frame:SetScript("OnLeave", HideAuraBarTooltip)
   frame:SetScript("OnHide", HideAuraBarTooltip)
   frame._popAurasTooltipHandlers = true
+end
+
+local function UpdateNativeCooldownText(row, aura, durationObject, useNativeCooldownText)
+  if not row or not row.timerCooldown then
+    return
+  end
+
+  if useNativeCooldownText and durationObject and row.timerCooldown.SetCooldownFromDurationObject then
+    if row._popAurasNativeCountdown ~= true or row._popAurasNativeDurationObject ~= durationObject then
+      row.timerCooldown:SetCooldownFromDurationObject(durationObject, true)
+      ConfigureNativeCountdown(row.timerCooldown, row, row.iconHolder, aura)
+      row._popAurasNativeDurationObject = durationObject
+    end
+    row.timerCooldown:Show()
+    row._popAurasNativeCountdown = true
+    return
+  end
+
+  if row.timerCooldown.SetHideCountdownNumbers then
+    row.timerCooldown:SetHideCountdownNumbers(true)
+  end
+  row.timerCooldown:Hide()
+  row._popAurasNativeCountdown = false
+  row._popAurasNativeDurationObject = nil
 end
 
 local function ApplyStackText(fontString, entry)
@@ -163,43 +232,35 @@ local function CallDurationObjectMethodRaw(durationObject, methodName)
 end
 
 local function GetLiveAuraDurationObject(entry)
-  if C_UnitAuras and C_UnitAuras.GetAuraDuration and entry and entry.unit and entry.auraInstanceID then
-    local ok, durationObject = pcall(C_UnitAuras.GetAuraDuration, entry.unit, entry.auraInstanceID)
-    if ok and durationObject then
-      return durationObject
-    end
-  end
   return entry and entry.durationObject or nil
 end
 
+local function GetDurationObjectRemainingRaw(durationObject, now)
+  if not durationObject then
+    return nil
+  end
+
+  local remaining = CallDurationObjectMethodRaw(durationObject, "GetRemainingDuration")
+  if type(remaining) == "number" and not (issecretvalue and issecretvalue(remaining)) then
+    return math.max(0, remaining)
+  end
+
+  local endTime = CallDurationObjectMethodRaw(durationObject, "GetEndTime")
+  if type(endTime) == "number" and not (issecretvalue and issecretvalue(endTime)) then
+    return math.max(0, endTime - (now or GetTime()))
+  end
+
+  return nil
+end
+
 local function ResolveAuraBarLabel(entry)
-  if not entry then
-    return ""
+  if entry and entry.displayName ~= nil then
+    return entry.displayName
   end
-
-  if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex and entry.unit and entry.index then
-    local filter = entry.helpful and "HELPFUL" or "HARMFUL"
-    local auraData = C_UnitAuras.GetAuraDataByIndex(entry.unit, entry.index, filter)
-    if type(auraData) == "table" and auraData.icon ~= nil and auraData.name ~= nil then
-      return auraData.name
-    end
-  end
-
   return entry.name or ""
 end
 
 local function GetAuraHasExpiration(entry)
-  if C_UnitAuras and C_UnitAuras.DoesAuraHaveExpirationTime and entry and entry.unit and entry.auraInstanceID then
-    local ok, hasExpiration = pcall(C_UnitAuras.DoesAuraHaveExpirationTime, entry.unit, entry.auraInstanceID)
-    if ok then
-      local safeHasExpiration = nil
-      if type(hasExpiration) == "boolean" and not (issecretvalue and issecretvalue(hasExpiration)) then
-        safeHasExpiration = hasExpiration
-      end
-      return hasExpiration, safeHasExpiration
-    end
-  end
-
   if type(entry) == "table" and type(entry.hasExpiration) == "boolean"
     and not (issecretvalue and issecretvalue(entry.hasExpiration)) then
     return entry.hasExpiration, entry.hasExpiration
@@ -207,6 +268,18 @@ local function GetAuraHasExpiration(entry)
 
   if entry and entry.isPermanent == true then
     return false, false
+  end
+
+  if entry and entry.durationObject ~= nil then
+    return true, true
+  end
+
+  if entry and (tonumber(entry.expirationTime or 0) or 0) > 0 then
+    return true, true
+  end
+
+  if entry and (tonumber(entry.duration or 0) or 0) > 0 then
+    return true, true
   end
 
   return nil, nil
@@ -248,25 +321,10 @@ local function ApplyAuraBarStackText(fontString, entry)
   end
 
   if C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount and entry and entry.unit and entry.auraInstanceID then
-    local ok, count = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, entry.unit, entry.auraInstanceID, 1, 999)
-    if ok then
-      if issecretvalue and issecretvalue(count) then
-        fontString:SetText(count)
-        return
-      end
-      if type(count) == "number" then
-        fontString:SetText(count > 0 and count or "")
-        return
-      end
-      if type(count) == "string" then
-        local numeric = tonumber(count)
-        if numeric ~= nil then
-          fontString:SetText(numeric > 0 and count or "")
-        else
-          fontString:SetText(count ~= "" and count or "")
-        end
-        return
-      end
+    local ok, count = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, entry.unit, entry.auraInstanceID)
+    if ok and count ~= nil then
+      fontString:SetText(count)
+      return
     end
   end
 
@@ -279,6 +337,15 @@ local function ApplyAuraBarStackText(fontString, entry)
 end
 
 local GetEntryTimerText
+
+local function ApplyRawAuraTimerText(fontString, aura, remaining)
+  local decimals = math.max(0, math.min(2, tonumber(aura and aura.display and aura.display.timerDecimals or 0) or 0))
+  if decimals > 0 then
+    fontString:SetFormattedText("%." .. tostring(decimals) .. "fs", remaining)
+  else
+    fontString:SetFormattedText("%ds", remaining)
+  end
+end
 
 local function ApplyAuraBarTimerText(fontString, aura, entry, now)
   if not fontString then
@@ -296,23 +363,20 @@ local function ApplyAuraBarTimerText(fontString, aura, entry, now)
     return
   end
 
-  local durationObject = GetLiveAuraDurationObject(entry)
-  if durationObject then
-    local remaining = CallDurationObjectMethodRaw(durationObject, "GetRemainingDuration")
-    if remaining ~= nil then
-      if issecretvalue and issecretvalue(remaining) then
-        local decimals = math.max(0, math.min(2, tonumber(aura and aura.display and aura.display.timerDecimals or 1) or 1))
-        if decimals > 0 then
-          fontString:SetFormattedText("%." .. tostring(decimals) .. "fs", remaining)
-        else
-          fontString:SetFormattedText("%ds", remaining)
-        end
-        return
-      end
+  local rawRemaining = CallDurationObjectMethodRaw(entry and entry.durationObject or nil, "GetRemainingDuration")
+  if type(rawRemaining) == "number" then
+    if issecretvalue and issecretvalue(rawRemaining) then
+      ApplyRawAuraTimerText(fontString, aura, rawRemaining)
+    else
+      fontString:SetText(ns.TextResolver:GetTimerText(entry, aura, math.max(0, rawRemaining)))
+    end
+    return
+  end
 
+  local remaining = GetDurationObjectRemainingRaw(entry and entry.durationObject or nil, now)
+  if remaining ~= nil then
       fontString:SetText(ns.TextResolver:GetTimerText(entry, aura, remaining))
       return
-    end
   end
 
   fontString:SetText(GetEntryTimerText(aura, entry, now))
@@ -331,16 +395,16 @@ local function HasLiveTimer(entry, now)
     return false
   end
 
+  local remainingFromObject = GetDurationObjectRemainingRaw(entry.durationObject, now)
+  if remainingFromObject ~= nil then
+    return remainingFromObject > 0
+  end
+
   if entry.durationObject then
     return true
   end
 
-  if type(entry.expirationTime) == "number" and entry.expirationTime > now then
-    return true
-  end
-
-  local remainingFromObject = ns.TextResolver:GetDurationObjectRemaining(entry, now)
-  return remainingFromObject ~= nil and remainingFromObject > 0
+  return type(entry.expirationTime) == "number" and entry.expirationTime > now
 end
 
 GetEntryTimerText = function(aura, entry, now)
@@ -353,7 +417,7 @@ GetEntryTimerText = function(aura, entry, now)
     return ""
   end
 
-  local remainingFromObject = ns.TextResolver:GetDurationObjectRemaining(entry, now)
+  local remainingFromObject = GetDurationObjectRemainingRaw(entry.durationObject, now)
   if remainingFromObject ~= nil then
     if remainingFromObject <= 0 and (entry.expirationTime or 0) <= now then
       return ""
@@ -361,11 +425,29 @@ GetEntryTimerText = function(aura, entry, now)
     return ns.TextResolver:GetTimerText(entry, aura, remainingFromObject)
   end
 
+  local numericRemaining = nil
+  if (entry.expirationTime or 0) > 0 then
+    numericRemaining = math.max(0, (entry.expirationTime or 0) - now)
+  elseif (entry.duration or 0) > 0 then
+    numericRemaining = math.max(0, entry.duration or 0)
+  end
+
+  if numericRemaining ~= nil then
+    if numericRemaining <= 0 and (entry.expirationTime or 0) <= now then
+      return ""
+    end
+    return ns.TextResolver:GetTimerText(entry, aura, numericRemaining)
+  end
+
+  if entry.durationObject then
+    return ""
+  end
+
   if (entry.duration or 0) <= 0 and (entry.expirationTime or 0) <= now then
     return ""
   end
 
-  return ns.TextResolver:GetTimerText(entry, aura, remainingFromObject)
+  return ns.TextResolver:GetTimerText(entry, aura, math.max(0, tonumber(entry.value or 0) or 0))
 end
 
 local function TintColor(color, gamma)
@@ -422,6 +504,20 @@ local function BuildPreviewEntries()
   }
 end
 
+local function ShouldUseNativeCooldownText(aura, entry, durationObject, now)
+  if not aura or not entry or aura.display.showTimer ~= true or durationObject == nil then
+    return false
+  end
+
+  local safeExpirationTime = tonumber(entry and entry.expirationTime or 0) or 0
+  if safeExpirationTime > (now or GetTime()) then
+    return false
+  end
+
+  local remainingFromObject = GetDurationObjectRemainingRaw(durationObject, now)
+  return remainingFromObject == nil or remainingFromObject <= 0
+end
+
 function AuraBarListRegion:New(aura)
   local instance = setmetatable({}, { __index = self })
   instance.frame = BaseRegion:CreateFrame(aura)
@@ -455,6 +551,22 @@ function AuraBarListRegion:EnsureRow(index)
   row.overlay:SetAllPoints()
   row.overlay:SetFrameLevel(row:GetFrameLevel() + 15)
 
+  row.timerCooldown = CreateFrame("Cooldown", nil, row.overlay, "CooldownFrameTemplate")
+  row.timerCooldown:SetAllPoints()
+  row.timerCooldown:EnableMouse(false)
+  if row.timerCooldown.SetDrawSwipe then
+    row.timerCooldown:SetDrawSwipe(false)
+  end
+  if row.timerCooldown.SetDrawEdge then
+    row.timerCooldown:SetDrawEdge(false)
+  end
+  if row.timerCooldown.SetDrawBling then
+    row.timerCooldown:SetDrawBling(false)
+  end
+  if row.timerCooldown.SetHideCountdownNumbers then
+    row.timerCooldown:SetHideCountdownNumbers(true)
+  end
+
   row.labelText = row.overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   row.timerText = row.overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   row.stackText = row.overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -469,7 +581,10 @@ function AuraBarListRegion:EnsureRow(index)
 end
 
 function AuraBarListRegion:LayoutRows(aura, count)
-  local spacing = tonumber(aura.display.spacing or 4) or 4
+  local spacing = tonumber(aura.display.spacing)
+  if spacing == nil then
+    spacing = 0
+  end
   local growth = tostring(aura.display.growth or "DOWN")
   local width = self.frame:GetWidth() or aura.display.width or 220
   local height = self.frame:GetHeight() or aura.display.height or 24
@@ -547,7 +662,6 @@ function AuraBarListRegion:ApplyRow(aura, row, entry)
   row:EnableMouse(tooltipsEnabled)
 
   row.labelText:SetShown(display.showName == true)
-  row.timerText:SetShown(display.showTimer == true)
   row.stackText:SetShown(display.showStacks == true)
 
   Fonts.ApplyStyle(row.labelText, display.nameFontStyle, display.nameFontSize)
@@ -570,8 +684,19 @@ function AuraBarListRegion:ApplyRow(aura, row, entry)
   else
     row.labelText:SetText(ns.TextResolver:Resolve(aura.text.label, entry, aura))
   end
+  local durationObject = aura.kind == "aura_bar_list" and GetLiveAuraDurationObject(entry) or entry.durationObject
+  local useNativeCooldownText = aura.kind == "aura_bar_list"
+    and isVisuallyPermanent ~= true
+    and row.timerCooldown
+    and row.timerCooldown.SetCooldownFromDurationObject
+    and ShouldUseNativeCooldownText(aura, entry, durationObject, now)
+  row.timerText:SetShown(display.showTimer == true and not useNativeCooldownText)
   if aura.kind == "aura_bar_list" then
-    ApplyAuraBarTimerText(row.timerText, aura, entry, now)
+    if useNativeCooldownText then
+      row.timerText:SetText("")
+    else
+      ApplyAuraBarTimerText(row.timerText, aura, entry, now)
+    end
     ApplyAuraBarStackText(row.stackText, entry)
   else
     row.timerText:SetText(GetEntryTimerText(aura, entry, now))
@@ -583,7 +708,6 @@ function AuraBarListRegion:ApplyRow(aura, row, entry)
     and entry.progressType == "timed"
     and (((entry.expirationTime or 0) > now) or ((entry.duration or 0) > 0))
   local total = hasNumericTimer and ((entry.duration or 0) > 0 and entry.duration or remaining) or 1
-  local durationObject = aura.kind == "aura_bar_list" and GetLiveAuraDurationObject(entry) or entry.durationObject
   if durationObject and isVisuallyPermanent ~= true and row.bar.SetTimerDuration then
     local direction = STATUS_BAR_DIRECTION and (
       display.reverse == true
@@ -605,6 +729,8 @@ function AuraBarListRegion:ApplyRow(aura, row, entry)
       row.bar:SetValue(1)
     end
   end
+
+  UpdateNativeCooldownText(row, aura, durationObject, useNativeCooldownText)
 end
 
 function AuraBarListRegion:Update(aura, state)
@@ -617,6 +743,7 @@ function AuraBarListRegion:Update(aura, state)
 
   local entries = state and state.source == "preview"
     and BuildPreviewEntries()
+    or (state and type(state.auraListEntries) == "table" and state.auraListEntries)
     or (UnitAuraList and UnitAuraList.Collect and UnitAuraList:Collect(GetTrigger(aura)) or {})
 
   self.entries = entries or {}
@@ -661,10 +788,7 @@ function AuraBarListRegion:OnTimerUpdate(now)
       local isVisuallyPermanent = IsAuraVisuallyPermanent(entry)
       if isVisuallyPermanent then
         row.bar:SetAlpha(GetPermanentAlpha(aura.display or {}))
-        if aura.kind == "aura_bar_list" then
-          ApplyAuraBarTimerText(row.timerText, aura, entry, now)
-          ApplyAuraBarStackText(row.stackText, entry)
-        end
+        UpdateNativeCooldownText(row, aura, nil, false)
       elseif entry.progressType == "timed" or entry.durationObject ~= nil then
         local remaining = math.max(0, (entry.expirationTime or 0) - now)
         local total = (entry.duration or 0) > 0 and entry.duration or math.max(1, remaining)
@@ -673,22 +797,20 @@ function AuraBarListRegion:OnTimerUpdate(now)
         if durationObject == nil then
           row.bar:SetMinMaxValues(0, math.max(0.001, total))
           row.bar:SetValue(aura.display.reverse == true and math.max(0, total - remaining) or remaining)
-        elseif row.bar.SetTimerDuration then
-          local direction = STATUS_BAR_DIRECTION and (
-            aura.display.reverse == true
-              and STATUS_BAR_DIRECTION.ElapsedTime
-              or STATUS_BAR_DIRECTION.RemainingTime
-          ) or nil
-          local interpolation = STATUS_BAR_INTERPOLATION and STATUS_BAR_INTERPOLATION.Immediate or nil
-          if interpolation ~= nil or direction ~= nil then
-            row.bar:SetTimerDuration(durationObject, interpolation, direction)
-          else
-            row.bar:SetTimerDuration(durationObject)
-          end
         end
         if aura.kind == "aura_bar_list" then
-          ApplyAuraBarTimerText(row.timerText, aura, entry, now)
-          ApplyAuraBarStackText(row.stackText, entry)
+          local useNativeCooldownText = aura.kind == "aura_bar_list"
+            and isVisuallyPermanent ~= true
+            and row.timerCooldown
+            and row.timerCooldown.SetCooldownFromDurationObject
+            and ShouldUseNativeCooldownText(aura, entry, durationObject, now)
+          row.timerText:SetShown(aura.display.showTimer == true and not useNativeCooldownText)
+          if useNativeCooldownText then
+            row.timerText:SetText("")
+          else
+            ApplyAuraBarTimerText(row.timerText, aura, entry, now)
+          end
+          UpdateNativeCooldownText(row, aura, durationObject, useNativeCooldownText)
         else
           row.timerText:SetText(GetEntryTimerText(aura, entry, now))
         end

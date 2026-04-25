@@ -34,11 +34,6 @@ local auraKinds = {
     label = "Interrupt Tracker",
     defaultName = "New Interrupt Tracker",
   },
-  private_aura_frame = {
-    label = "Private Aura Frame",
-    defaultName = "Private Aura Frame",
-    triggerType = "private_aura",
-  },
   aura_bar_list = {
     label = "Buffs and Debuffs",
     defaultName = "Buffs and Debuffs",

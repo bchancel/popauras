@@ -14,6 +14,7 @@ local fillModeValues = {
 }
 
 local sortOrderValues = {
+  { value = "NONE", label = "Party Order" },
   { value = "CD_ASC", label = "CD Ascending" },
   { value = "CD_DESC", label = "CD Descending" },
 }
@@ -393,7 +394,7 @@ function Panel:ApplyCurrent()
   interrupt.barBackgroundColor = Colors.Copy(frame.barBackgroundColorWrap.color or interrupt.barBackgroundColor)
   interrupt.readyBarAlpha = EnsureAlpha(frame.readyBarAlphaWrap.input, interrupt.readyBarAlpha or 0.40)
   interrupt.fillMode = UIDropDownMenu_GetSelectedValue(frame.fillModeWrap.dropdown) or interrupt.fillMode or "DRAIN"
-  interrupt.sortOrder = UIDropDownMenu_GetSelectedValue(frame.sortOrderWrap.dropdown) or interrupt.sortOrder or "CD_ASC"
+  interrupt.sortOrder = UIDropDownMenu_GetSelectedValue(frame.sortOrderWrap.dropdown) or interrupt.sortOrder or "NONE"
   interrupt.showFailedKick = frame.failedKickCheck:GetChecked() == true
 
   aura.display.icon = frame.showIconCheck:GetChecked() == true
@@ -683,7 +684,7 @@ function Panel:Refresh(aura)
   self.frame.barAlphaWrap.input:SetText(string.format("%.2f", interrupt.barAlpha or 0.88))
   self.frame.readyBarAlphaWrap.input:SetText(string.format("%.2f", interrupt.readyBarAlpha or 0.40))
   SetDropdown(self.frame.fillModeWrap.dropdown, interrupt.fillMode or "DRAIN")
-  SetDropdown(self.frame.sortOrderWrap.dropdown, interrupt.sortOrder or "CD_ASC")
+  SetDropdown(self.frame.sortOrderWrap.dropdown, interrupt.sortOrder or "NONE")
   self.frame.failedKickCheck:SetChecked(interrupt.showFailedKick ~= false)
 
   self.frame.showIconCheck:SetChecked(aura.display.icon ~= false)

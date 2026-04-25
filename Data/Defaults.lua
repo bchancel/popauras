@@ -151,7 +151,7 @@ Defaults.load = {
 Defaults.interruptTracker = {
   layoutVersion = 2,
   fillMode = "DRAIN",
-  sortOrder = "CD_ASC",
+  sortOrder = "NONE",
   barAlpha = 0.88,
   showFailedKick = true,
   showBarBackground = true,
@@ -160,7 +160,7 @@ Defaults.interruptTracker = {
   paddingX = 6,
   paddingY = 3,
   displayInterruptName = true,
-  clickToAnnounce = true,
+  clickToAnnounce = false,
   announceChannel = "PARTY",
   antiSpam = true,
   soundEnabled = false,
@@ -190,6 +190,13 @@ local function ApplyTriggerTypeDefaults(trigger)
   end
 
   local triggerType = trigger.type or "simple"
+  if triggerType == "private_aura" then
+    trigger.type = "simple"
+    trigger.mode = "never"
+    trigger.privateAuraTarget = nil
+    triggerType = "simple"
+  end
+
   if triggerType == "aura" then
     trigger.unit = trigger.unit or "player"
     trigger.auraType = trigger.auraType or "buff"
@@ -250,14 +257,17 @@ local function ApplyTriggerTypeDefaults(trigger)
     if trigger.chatExact == nil then
       trigger.chatExact = false
     end
-  elseif triggerType == "private_aura" then
-    trigger.privateAuraTarget = trigger.privateAuraTarget or "player"
   elseif triggerType == "aura_list" then
     trigger.unit = trigger.unit or "player"
     trigger.auraType = trigger.auraType or "buff"
-    if trigger.targetMineOrUnownedOnly == nil then
-      trigger.targetMineOrUnownedOnly = false
+    local targetDebuffFilterMode = tostring(trigger.targetDebuffFilterMode or "")
+    if targetDebuffFilterMode ~= "mine_only" and targetDebuffFilterMode ~= "mine_or_unowned" then
+      targetDebuffFilterMode = trigger.targetMineOrUnownedOnly == true and "mine_or_unowned" or "all"
     end
+    trigger.targetDebuffFilterMode = targetDebuffFilterMode
+    trigger.targetMineOrUnownedOnly = targetDebuffFilterMode == "mine_or_unowned"
+    trigger.hideBlizzardBuffs = trigger.hideBlizzardBuffs == true
+    trigger.hideBlizzardDebuffs = trigger.hideBlizzardDebuffs == true
   end
 end
 
@@ -273,6 +283,11 @@ end
 function Defaults:ApplyAuraDefaults(aura)
   if type(aura) ~= "table" then
     return aura
+  end
+
+  if aura.kind == "private_aura_frame" then
+    aura.kind = "group"
+    aura.triggers = {}
   end
 
   if aura.kind == "icon" then
@@ -325,10 +340,7 @@ function Defaults:ApplyAuraDefaults(aura)
   if aura.kind ~= "interrupt_tracker" and aura.kind ~= "group" and aura.kind ~= "dynamic_group" and #aura.triggers == 0 then
     aura.triggers[1] = Tables.DeepCopy(self.baseTrigger)
   end
-  if aura.kind == "private_aura_frame" and type(aura.triggers[1]) == "table"
-      and (aura.triggers[1].type == nil or aura.triggers[1].type == "simple") then
-    aura.triggers[1].type = "private_aura"
-  elseif aura.kind == "aura_bar_list" and type(aura.triggers[1]) == "table"
+  if aura.kind == "aura_bar_list" and type(aura.triggers[1]) == "table"
       and (aura.triggers[1].type == nil or aura.triggers[1].type == "simple") then
     aura.triggers[1].type = "aura_list"
   end
@@ -346,13 +358,6 @@ function Defaults:ApplyAuraDefaults(aura)
     aura.display.showBackground = false
   elseif aura.kind == "interrupt_tracker" then
     aura.display.showStacks = false
-  elseif aura.kind == "private_aura_frame" then
-    aura.display.icon = false
-    aura.display.showName = false
-    aura.display.showTimer = false
-    aura.display.showStacks = false
-    aura.display.showBackground = false
-    aura.display.soundEnabled = false
   elseif aura.kind == "aura_bar_list" then
     aura.display.iconCooldownEdge = false
     aura.display.iconCooldownBling = false
@@ -376,6 +381,15 @@ Defaults.baseCondition = {
 }
 
 function Defaults:NewAura(kind, triggerType)
+  if kind == "private_aura_frame" then
+    kind = "group"
+    triggerType = nil
+  end
+  local removedPrivateAuraTrigger = triggerType == "private_aura"
+  if removedPrivateAuraTrigger then
+    triggerType = "simple"
+  end
+
   local id = string.format("pa_%d_%d", time(), math.random(1000, 9999))
   local defaultName = kind == "bar" and "New Bar"
     or kind == "icon" and "New Icon"
@@ -384,7 +398,6 @@ function Defaults:NewAura(kind, triggerType)
     or kind == "text" and "New Text"
     or kind == "dynamic_group" and "New Dynamic Group"
     or kind == "interrupt_tracker" and "New Interrupt Tracker"
-    or kind == "private_aura_frame" and "Private Aura Frame"
     or "New Group"
   local aura = {
     id = id,
@@ -435,12 +448,17 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].soundTank = "None"
       aura.triggers[1].soundHealer = "None"
       aura.triggers[1].soundDPS = "None"
-    elseif triggerType == "private_aura" then
-      aura.triggers[1].privateAuraTarget = "player"
     elseif triggerType == "aura_list" then
       aura.triggers[1].unit = "player"
       aura.triggers[1].auraType = "buff"
+      aura.triggers[1].targetDebuffFilterMode = "all"
       aura.triggers[1].targetMineOrUnownedOnly = false
+      aura.triggers[1].hideBlizzardBuffs = false
+      aura.triggers[1].hideBlizzardDebuffs = false
+    end
+
+    if removedPrivateAuraTrigger then
+      aura.triggers[1].mode = "never"
     end
   end
 
@@ -483,29 +501,6 @@ function Defaults:NewAura(kind, triggerType)
     aura.display.icon = false
     aura.position.width = 260
     aura.position.height = 40
-  elseif kind == "private_aura_frame" then
-    aura.display.icon = false
-    aura.display.showName = false
-    aura.display.showTimer = false
-    aura.display.showStacks = false
-    aura.display.showBackground = false
-    aura.display.width = 40
-    aura.display.height = 40
-    aura.display.spacing = 6
-    aura.display.growth = "RIGHT"
-    aura.position.width = 40
-    aura.position.height = 40
-    aura.triggers[1].type = "private_aura"
-    aura.triggers[1].privateAuraTarget = "player"
-    aura.load.visibility = {
-      dungeon = false,
-      delve = false,
-      raid = true,
-      open_world = false,
-      solo = false,
-      arena = false,
-      battleground = false,
-    }
   elseif kind == "aura_bar_list" then
     aura.display.icon = true
     aura.display.showName = true
@@ -513,7 +508,7 @@ function Defaults:NewAura(kind, triggerType)
     aura.display.showStacks = true
     aura.display.width = 220
     aura.display.height = 24
-    aura.display.spacing = 4
+    aura.display.spacing = 0
     aura.display.growth = "DOWN"
     aura.display.iconMatchBarSize = true
     aura.display.backgroundGamma = 1
@@ -523,7 +518,10 @@ function Defaults:NewAura(kind, triggerType)
     aura.triggers[1].type = "aura_list"
     aura.triggers[1].unit = "player"
     aura.triggers[1].auraType = "buff"
+    aura.triggers[1].targetDebuffFilterMode = "all"
     aura.triggers[1].targetMineOrUnownedOnly = false
+    aura.triggers[1].hideBlizzardBuffs = false
+    aura.triggers[1].hideBlizzardDebuffs = false
   elseif kind == "bar" then
     aura.display.stacksAnchor = "ICON"
     aura.display.stacksOffsetX = 0

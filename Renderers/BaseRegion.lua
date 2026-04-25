@@ -271,7 +271,8 @@ function BaseRegion:ApplyCommonAppearance(aura, frame, state, glowTarget)
     frame:Hide()
   end
 
-  local shouldGlow = state and (state.glow == true or ((aura.display and aura.display.glowWhenActive == true) and state.active == true)) or false
+  local allowActiveGlow = aura == nil or aura.kind ~= "aura_bar_list"
+  local shouldGlow = state and (state.glow == true or (allowActiveGlow and (aura.display and aura.display.glowWhenActive == true) and state.active == true)) or false
   if not state.show then
     shouldGlow = false
   end

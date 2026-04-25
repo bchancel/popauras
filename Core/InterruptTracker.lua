@@ -22,6 +22,19 @@ local SIGNAL_RETENTION = 0.35
 local CORRELATE_INTERVAL = 0.04
 local MATCH_WINDOW = 0.055
 local AURA_SUPPRESS_WINDOW = 0.028
+local INTERRUPT_CLUSTER_WINDOW = 0.018
+local OWN_PLAYER_INTERRUPT_PROTECT_WINDOW = 0.30
+local PARTY_INTERRUPT_MAX_RANGE = 35
+local INSPECT_TIMEOUT_SECONDS = 1.5
+
+local SAFE_CLASS_FALLBACKS = {
+  DEATHKNIGHT = true,
+  DEMONHUNTER = true,
+  EVOKER = true,
+  MAGE = true,
+  ROGUE = true,
+  WARRIOR = true,
+}
 
 local function SafeShortName(name)
   if Strings and Strings.GetSafeShortPlayerName then
@@ -129,6 +142,182 @@ local function ResolveObservedMemberName(unit)
   return GetSafeUnitShortName(ownerUnit), ownerUnit
 end
 
+local function FindPartyUnitByGuid(guid)
+  if type(guid) ~= "string" or guid == "" then
+    return nil
+  end
+  for index = 1, 4 do
+    local unit = "party" .. index
+    if UnitExists(unit) and UnitGUID(unit) == guid then
+      return unit
+    end
+  end
+  return nil
+end
+
+local function GetSafeClassFallbackInterrupt(classToken)
+  if not (classToken and SAFE_CLASS_FALLBACKS[classToken]) then
+    return nil
+  end
+  return ns.Interrupts and ns.Interrupts.GetInterruptForClass and ns.Interrupts:GetInterruptForClass(classToken) or nil
+end
+
+local function GetTrackedSpellID(member)
+  local spellID = tonumber(member and member.spellID or 0) or 0
+  if spellID > 0 then
+    return spellID
+  end
+  local fallback = GetSafeClassFallbackInterrupt(member and member.class or nil)
+  return fallback and fallback.spellID or nil
+end
+
+local function ResetMemberCooldownState(member)
+  if type(member) ~= "table" then
+    return false
+  end
+
+  local changed = false
+  if (tonumber(member.cdEnd or 0) or 0) ~= 0 then
+    member.cdEnd = 0
+    changed = true
+  end
+  if member.pendingKick ~= false then
+    member.pendingKick = false
+    changed = true
+  end
+  if member.pendingToken ~= nil then
+    member.pendingToken = nil
+    changed = true
+  end
+  if member.kickResult ~= nil then
+    member.kickResult = nil
+    changed = true
+  end
+  return changed
+end
+
+local function GetSafeInspectSpecID(unit)
+  if type(unit) ~= "string" or unit == "" or not (GetInspectSpecialization and UnitExists and UnitExists(unit)) then
+    return nil
+  end
+
+  local ok, specID = pcall(GetInspectSpecialization, unit)
+  specID = tonumber(specID or 0) or 0
+  if not ok or specID <= 0 then
+    return nil
+  end
+  return specID
+end
+
+local function ApplyInterruptInfoToMember(member, info, specID)
+  if type(member) ~= "table" or type(info) ~= "table" then
+    return false
+  end
+
+  local changed = false
+  if specID ~= nil and member.specID ~= specID then
+    member.specID = specID
+    changed = true
+  end
+  if member.noInterrupt ~= nil then
+    member.noInterrupt = nil
+    changed = true
+  end
+  if member.class ~= info.class then
+    member.class = info.class
+    changed = true
+  end
+  if member.spellID ~= info.spellID then
+    member.spellID = info.spellID
+    changed = true
+    if ResetMemberCooldownState(member) then
+      changed = true
+    end
+  end
+  if member.baseCd ~= info.cd then
+    member.baseCd = info.cd
+    changed = true
+  end
+  return changed
+end
+
+local function ApplyNoInterruptToMember(member, specID)
+  if type(member) ~= "table" then
+    return false
+  end
+
+  local changed = false
+  if specID ~= nil and member.specID ~= specID then
+    member.specID = specID
+    changed = true
+  end
+  if member.noInterrupt ~= true then
+    member.noInterrupt = true
+    changed = true
+  end
+  if member.spellID ~= nil then
+    member.spellID = nil
+    changed = true
+  end
+  if member.baseCd ~= nil then
+    member.baseCd = nil
+    changed = true
+  end
+  if ResetMemberCooldownState(member) then
+    changed = true
+  end
+  return changed
+end
+
+local function RefreshMemberInterruptFromUnit(member, unit, classToken)
+  local specID = GetSafeInspectSpecID(unit)
+  if specID then
+    local specInfo = ns.Interrupts and ns.Interrupts.GetInterruptForSpec and ns.Interrupts:GetInterruptForSpec(specID) or nil
+    if specInfo then
+      return ApplyInterruptInfoToMember(member, specInfo, specID)
+    end
+    if ns.Interrupts and ns.Interrupts.SPEC_NO_INTERRUPT and ns.Interrupts.SPEC_NO_INTERRUPT[specID] then
+      return ApplyNoInterruptToMember(member, specID)
+    end
+  end
+
+  local fallback = GetSafeClassFallbackInterrupt(classToken)
+  if fallback and (tonumber(member.spellID or 0) or 0) <= 0 and member.noInterrupt ~= true then
+    return ApplyInterruptInfoToMember(member, fallback, specID)
+  end
+
+  return false
+end
+
+local function GetLiveCooldownEnd(spellID)
+  if not (spellID and C_Spell and C_Spell.GetSpellCooldown) then
+    return nil
+  end
+
+  local ok, info = pcall(C_Spell.GetSpellCooldown, spellID)
+  if not ok or type(info) ~= "table" then
+    return nil
+  end
+
+  local startTime = info.startTime
+  local duration = info.duration
+  local isActive = info.isActive
+  if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration) or issecretvalue(isActive)) then
+    return nil
+  end
+
+  startTime = tonumber(startTime or 0) or 0
+  duration = tonumber(duration or 0) or 0
+  if startTime <= 0 or duration <= 0 then
+    return nil
+  end
+  if isActive ~= nil and isActive ~= true then
+    return nil
+  end
+
+  return startTime + duration
+end
+
 local function ResolveObservedInterruptSpellID(memberName, rawSpellID)
   local resolvedSpellID = nil
   if rawSpellID ~= nil and not (issecretvalue and issecretvalue(rawSpellID)) then
@@ -139,15 +328,17 @@ local function ResolveObservedInterruptSpellID(memberName, rawSpellID)
   end
 
   local member = memberName and Tracker.members and Tracker.members[memberName] or nil
-  local memberSpellID = tonumber(member and member.spellID or 0) or 0
+  local memberSpellID = tonumber(GetTrackedSpellID(member) or 0) or 0
   if memberSpellID > 0 then
+    local cdEnd = tonumber(member and member.cdEnd or 0) or 0
+    if cdEnd > (GetTime() + 0.05) then
+      return nil
+    end
     return memberSpellID
   end
 
-  local classToken = member and member.class or nil
-  local group = classToken and ns.Interrupts and ns.Interrupts.CLASS_FILTER_LOOKUP and ns.Interrupts.CLASS_FILTER_LOOKUP[classToken] or nil
-  local fallback = group and group.spells and group.spells[1] or nil
-  return fallback and fallback.id or nil
+  local fallback = GetSafeClassFallbackInterrupt(member and member.class or nil)
+  return fallback and fallback.spellID or nil
 end
 
 local function CopyEntry(target, source)
@@ -242,20 +433,7 @@ function Tracker:RefreshLocalPlayer()
   if member.spellID ~= nextSpellID then
     member.spellID = nextSpellID
     changed = true
-    if (tonumber(member.cdEnd or 0) or 0) ~= 0 then
-      member.cdEnd = 0
-      changed = true
-    end
-    if member.pendingKick ~= false then
-      member.pendingKick = false
-      changed = true
-    end
-    if member.pendingToken ~= nil then
-      member.pendingToken = nil
-      changed = true
-    end
-    if member.kickResult ~= nil then
-      member.kickResult = nil
+    if ResetMemberCooldownState(member) then
       changed = true
     end
   end
@@ -267,22 +445,21 @@ function Tracker:RefreshLocalPlayer()
     member.isLocal = true
     changed = true
   end
+  if member.orderIndex ~= 1 then
+    member.orderIndex = 1
+    changed = true
+  end
+  if member.specID ~= nil then
+    member.specID = nil
+    changed = true
+  end
+  if member.noInterrupt ~= nil then
+    member.noInterrupt = nil
+    changed = true
+  end
 
   if nextSpellID == nil then
-    if (tonumber(member.cdEnd or 0) or 0) ~= 0 then
-      member.cdEnd = 0
-      changed = true
-    end
-    if member.pendingKick ~= false then
-      member.pendingKick = false
-      changed = true
-    end
-    if member.pendingToken ~= nil then
-      member.pendingToken = nil
-      changed = true
-    end
-    if member.kickResult ~= nil then
-      member.kickResult = nil
+    if ResetMemberCooldownState(member) then
       changed = true
     end
   end
@@ -308,8 +485,13 @@ function Tracker:RefreshGroupRoster()
         keep[name] = true
         local _, classToken = UnitClass(unit)
         local member = self:GetOrCreateMember(name)
-        if CopyEntry(member, { class = classToken, isLocal = false }) then
+        if CopyEntry(member, { class = classToken, isLocal = false, orderIndex = index + 1 }) then
           changed = true
+        end
+        if RefreshMemberInterruptFromUnit(member, unit, classToken) then
+          changed = true
+        elseif member.specID == nil and not GetTrackedSpellID(member) then
+          self:EnqueueInspectUnit(unit)
         end
       end
     end
@@ -325,6 +507,110 @@ function Tracker:RefreshGroupRoster()
   if changed then
     self:MarkDirty()
   end
+end
+
+function Tracker:ProcessInspectQueue()
+  if self.inspectPendingGuid or not (NotifyInspect and CanInspect) then
+    return
+  end
+
+  self.inspectQueue = self.inspectQueue or {}
+  self.inspectQueuedGuids = self.inspectQueuedGuids or {}
+
+  while #self.inspectQueue > 0 do
+    local guid = table.remove(self.inspectQueue, 1)
+    self.inspectQueuedGuids[guid] = nil
+
+    local unit = FindPartyUnitByGuid(guid)
+    if unit and CanInspect(unit) then
+      local ok = pcall(NotifyInspect, unit)
+      if not ok then
+        if ClearInspectPlayer then
+          pcall(ClearInspectPlayer)
+        end
+      else
+        self.inspectPendingGuid = guid
+        self.inspectPendingUnit = unit
+
+        if C_Timer and C_Timer.After then
+          C_Timer.After(INSPECT_TIMEOUT_SECONDS, function()
+            if Tracker.inspectPendingGuid ~= guid then
+              return
+            end
+            Tracker.inspectPendingGuid = nil
+            Tracker.inspectPendingUnit = nil
+            if ClearInspectPlayer then
+              pcall(ClearInspectPlayer)
+            end
+            Tracker:ProcessInspectQueue()
+          end)
+        end
+        return
+      end
+    end
+  end
+end
+
+function Tracker:EnqueueInspectUnit(unit)
+  if type(unit) ~= "string" or not unit:match("^party%d+$") or not (NotifyInspect and CanInspect) then
+    return
+  end
+  if not UnitExists(unit) or not UnitIsPlayer(unit) or not CanInspect(unit) then
+    return
+  end
+
+  local guid = UnitGUID(unit)
+  if type(guid) ~= "string" or guid == "" or guid == self.playerGuid then
+    return
+  end
+
+  self.inspectQueue = self.inspectQueue or {}
+  self.inspectQueuedGuids = self.inspectQueuedGuids or {}
+
+  if self.inspectPendingGuid == guid or self.inspectQueuedGuids[guid] == true then
+    return
+  end
+
+  self.inspectQueuedGuids[guid] = true
+  self.inspectQueue[#self.inspectQueue + 1] = guid
+  self:ProcessInspectQueue()
+end
+
+function Tracker:HandleInspectReady(guid)
+  if type(guid) ~= "string" or guid == "" or guid ~= self.inspectPendingGuid then
+    return
+  end
+
+  local changed = false
+  local unit = FindPartyUnitByGuid(guid) or self.inspectPendingUnit
+  if unit and UnitExists(unit) then
+    local name = GetSafeUnitShortName(unit)
+    local _, classToken = UnitClass(unit)
+    local member = name and self:GetOrCreateMember(name) or nil
+    if member then
+      local orderIndex = tonumber(unit:match("^party(%d+)$") or 0) or 0
+      if CopyEntry(member, {
+        class = classToken,
+        isLocal = false,
+        orderIndex = orderIndex > 0 and (orderIndex + 1) or member.orderIndex,
+      }) then
+        changed = true
+      end
+      if RefreshMemberInterruptFromUnit(member, unit, classToken) then
+        changed = true
+      end
+    end
+  end
+
+  self.inspectPendingGuid = nil
+  self.inspectPendingUnit = nil
+  if ClearInspectPlayer then
+    pcall(ClearInspectPlayer)
+  end
+  if changed then
+    self:MarkDirty()
+  end
+  self:ProcessInspectQueue()
 end
 
 function Tracker:Transmit(payload)
@@ -401,7 +687,7 @@ function Tracker:HandleKick(name, spellID, baseCd, isLocal)
 
   local cooldown = ResolveBaseCooldown(resolvedSpellID, baseCd)
   local now = GetTime()
-  if member.pendingKick == true and member.spellID == resolvedSpellID and math.abs(now - (tonumber(member.lastKickAt or 0) or 0)) <= 0.35 then
+  if member.spellID == resolvedSpellID and math.abs(now - (tonumber(member.lastKickAt or 0) or 0)) <= 0.35 then
     return
   end
   local token = string.format("%s:%0.3f", tostring(name), now)
@@ -480,6 +766,143 @@ function Tracker:HandleObservedKick(unit)
   self:ApplyKickResult(memberName, "success")
 end
 
+local function ResolveDistanceBetweenUnits(sourceUnit, targetUnit)
+  if not (UnitPosition and type(sourceUnit) == "string" and type(targetUnit) == "string") then
+    return nil
+  end
+
+  local targetX, targetY, _, targetMap = UnitPosition(targetUnit)
+  if not targetX or not targetY or not targetMap then
+    return nil
+  end
+
+  local sourceX, sourceY, _, sourceMap = UnitPosition(sourceUnit)
+  if not sourceX or not sourceY or sourceMap ~= targetMap then
+    return nil
+  end
+
+  local dx = targetX - sourceX
+  local dy = targetY - sourceY
+  return math.sqrt((dx * dx) + (dy * dy))
+end
+
+local function IsMemberInterruptOffCooldown(member, now)
+  local cdEnd = tonumber(member and member.cdEnd or 0) or 0
+  return cdEnd <= 0 or cdEnd <= ((tonumber(now or 0) or 0) + 0.05)
+end
+
+local function PickClosestHeuristicCandidate(candidates)
+  if type(candidates) ~= "table" or #candidates == 0 then
+    return nil
+  end
+  if #candidates == 1 then
+    return candidates[1]
+  end
+
+  local bestKnown = nil
+  local bestDistance = nil
+  local fallback = nil
+  for _, candidate in ipairs(candidates) do
+    if candidate.dist ~= nil then
+      if not bestKnown or candidate.dist < bestDistance then
+        bestKnown = candidate
+        bestDistance = candidate.dist
+      end
+    elseif fallback == nil then
+      fallback = candidate
+    end
+  end
+
+  return bestKnown or fallback
+end
+
+function Tracker:TryHeuristicKickAttribution(unit)
+  if type(unit) ~= "string" or not unit:match("^nameplate") then
+    return
+  end
+
+  local now = GetTime()
+  local playerMember = self.playerName and self.members and self.members[self.playerName] or nil
+  local playerLastKickAt = tonumber(playerMember and playerMember.lastKickAt or 0) or 0
+  if UnitExists and UnitExists("target")
+    and UnitIsUnit and UnitIsUnit("target", unit)
+    and playerMember and playerMember.pendingKick == true
+    and playerLastKickAt > 0
+    and (now - playerLastKickAt) < OWN_PLAYER_INTERRUPT_PROTECT_WINDOW
+  then
+    return
+  end
+
+  local candidates = {}
+  for index = 1, 4 do
+    local partyUnit = "party" .. index
+    if UnitExists(partyUnit) then
+      local memberName = GetSafeUnitShortName(partyUnit)
+      local member = memberName and self.members and self.members[memberName] or nil
+      local spellID = GetTrackedSpellID(member)
+      if memberName and member and spellID and IsMemberInterruptOffCooldown(member, now) then
+        local distance = ResolveDistanceBetweenUnits(partyUnit, unit)
+        local targetMatches = UnitExists(partyUnit .. "target")
+          and UnitIsUnit
+          and UnitIsUnit(partyUnit .. "target", unit)
+          or false
+        candidates[#candidates + 1] = {
+          unit = partyUnit,
+          name = memberName,
+          spellID = spellID,
+          targetMatches = targetMatches == true,
+          dist = distance,
+          inRange = distance == nil or distance <= PARTY_INTERRUPT_MAX_RANGE,
+        }
+      end
+    end
+  end
+
+  if #candidates == 0 then
+    return
+  end
+
+  local targetingSet = {}
+  local inRangeSet = {}
+  for _, candidate in ipairs(candidates) do
+    if candidate.targetMatches then
+      targetingSet[#targetingSet + 1] = candidate
+    end
+    if candidate.inRange then
+      inRangeSet[#inRangeSet + 1] = candidate
+    end
+  end
+
+  local winner = nil
+  if #targetingSet == 1 then
+    winner = targetingSet[1]
+  elseif #targetingSet > 1 then
+    winner = PickClosestHeuristicCandidate(targetingSet)
+  elseif #inRangeSet == 1 then
+    winner = inRangeSet[1]
+  elseif #inRangeSet > 1 then
+    winner = PickClosestHeuristicCandidate(inRangeSet)
+  elseif #candidates == 1 then
+    winner = candidates[1]
+  end
+
+  if not winner then
+    return
+  end
+
+  recentCasts[winner.name] = { t = now, spellID = winner.spellID }
+
+  local member = self:GetOrCreateMember(winner.name)
+  if member and member.pendingKick == true then
+    self:ApplyKickResult(winner.name, "success")
+    return
+  end
+
+  local baseCd = ResolveBaseCooldown(winner.spellID, member and member.baseCd)
+  self:HandleKick(winner.name, winner.spellID, baseCd, false)
+  self:ApplyKickResult(winner.name, "success")
+end
+
 local function CorrelateSignals()
   local now = GetTime()
   if not needsCorrelation or (now - lastCorrelateAt) < CORRELATE_INTERVAL then
@@ -514,11 +937,26 @@ local function CorrelateSignals()
     return (left.at or 0) < (right.at or 0)
   end)
   local freshest = interrupts[#interrupts]
-  freshest.consumed = true
+
+  local clustered = 0
+  for index = 1, #interrupts do
+    local interruptSignal = interrupts[index]
+    if math.abs((interruptSignal.at or 0) - (freshest.at or 0)) <= INTERRUPT_CLUSTER_WINDOW then
+      clustered = clustered + 1
+    end
+  end
+  if clustered > 1 then
+    for index = 1, #interrupts do
+      interrupts[index].consumed = true
+    end
+    needsCorrelation = false
+    return
+  end
 
   for index = 1, #auras do
     local auraSignal = auras[index]
     if auraSignal.unit == freshest.unit and math.abs((freshest.at or 0) - (auraSignal.at or 0)) <= AURA_SUPPRESS_WINDOW then
+      freshest.consumed = true
       needsCorrelation = false
       return
     end
@@ -535,6 +973,7 @@ local function CorrelateSignals()
     end
   end
 
+  freshest.consumed = true
   if bestCast then
     bestCast.consumed = true
     Tracker:HandleObservedKick(bestCast.unit)
@@ -565,12 +1004,20 @@ function Tracker:HandleMessage(prefix, message, sender)
     local baseCd = tonumber(parts[5] or 0) or 0
     if classToken and spellID > 0 then
       local member = self:GetOrCreateMember(shortName)
+      local changed = false
       if member and CopyEntry(member, {
         class = classToken,
         spellID = spellID,
         baseCd = ResolveBaseCooldown(spellID, baseCd),
         isLocal = false,
       }) then
+        changed = true
+      end
+      if member and member.noInterrupt ~= nil then
+        member.noInterrupt = nil
+        changed = true
+      end
+      if changed then
         self:MarkDirty()
       end
     end
@@ -624,6 +1071,9 @@ function Tracker:HandleEvent(event, ...)
   if event == "CHAT_MSG_ADDON" or event == "CHAT_MSG_ADDON_LOGGED" then
     local prefix, message, _, sender = ...
     self:HandleMessage(prefix, message, sender)
+  elseif event == "INSPECT_READY" then
+    local guid = ...
+    self:HandleInspectReady(guid)
   elseif event == "GROUP_ROSTER_UPDATE" then
     self:RefreshGroupRoster()
     C_Timer.After(1, function()
@@ -652,6 +1102,32 @@ function Tracker:HandleEvent(event, ...)
       C_Timer.After(0.2, function()
         Tracker:BroadcastHello()
       end)
+    else
+      local ownerUnit = ResolveCastOwnerUnit(unit) or unit
+      if type(ownerUnit) == "string" and ownerUnit:match("^party%d+$") and UnitExists(ownerUnit) then
+        local name = GetSafeUnitShortName(ownerUnit)
+        local _, classToken = UnitClass(ownerUnit)
+        local member = name and self:GetOrCreateMember(name) or nil
+        local changed = false
+        if member then
+          local orderIndex = tonumber(ownerUnit:match("^party(%d+)$") or 0) or 0
+          if CopyEntry(member, {
+            class = classToken,
+            isLocal = false,
+            orderIndex = orderIndex > 0 and (orderIndex + 1) or member.orderIndex,
+          }) then
+            changed = true
+          end
+          if RefreshMemberInterruptFromUnit(member, ownerUnit, classToken) then
+            changed = true
+          elseif member.specID == nil and not GetTrackedSpellID(member) then
+            self:EnqueueInspectUnit(ownerUnit)
+          end
+        end
+        if changed then
+          self:MarkDirty()
+        end
+      end
     end
   elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
     local unit, _, spellID = ...
@@ -671,6 +1147,7 @@ function Tracker:HandleEvent(event, ...)
     local unit = ...
     if type(unit) == "string" and unit:match("^nameplate") then
       PushSignal("interrupt", unit)
+      self:TryHeuristicKickAttribution(unit)
     end
   elseif event == "UNIT_AURA" then
     local unit = ...
@@ -721,6 +1198,7 @@ function Tracker:InitializeEventFrame()
   local frame = CreateFrame("Frame")
   frame:RegisterEvent("PLAYER_ENTERING_WORLD")
   frame:RegisterEvent("GROUP_ROSTER_UPDATE")
+  frame:RegisterEvent("INSPECT_READY")
   frame:RegisterEvent("SPELLS_CHANGED")
   frame:RegisterEvent("ACTIVE_COMBAT_CONFIG_CHANGED")
   frame:RegisterEvent("TRAIT_CONFIG_UPDATED")
@@ -782,29 +1260,44 @@ function Tracker:GetEntries(aura)
   local entries = {}
 
   for name, member in pairs(self.members or {}) do
-    local spellID = tonumber(member.spellID or 0) or 0
+    local spellID = tonumber(GetTrackedSpellID(member) or 0) or 0
     if spellID > 0 and not (type(disabledSpells) == "table" and disabledSpells[spellID] == true) then
       local spellInfo = ns.Interrupts and ns.Interrupts.GetSpellInfo and ns.Interrupts:GetSpellInfo(spellID) or nil
-      local remaining = math.max(0, (member.cdEnd or 0) - now)
+      local isLocal = member.isLocal == true or name == self.playerName
+      local cdEnd = tonumber(member.cdEnd or 0) or 0
+      if isLocal then
+        local liveCdEnd = GetLiveCooldownEnd(spellID)
+        if liveCdEnd and liveCdEnd > now then
+          cdEnd = liveCdEnd
+        end
+      end
+      local remaining = math.max(0, cdEnd - now)
       entries[#entries + 1] = {
         name = name,
         class = member.class,
-        isLocal = member.isLocal == true or name == self.playerName,
+        isLocal = isLocal,
         spellID = spellID,
         baseCd = tonumber(member.baseCd or (spellInfo and spellInfo.cd) or 0) or 0,
-        cdEnd = member.cdEnd or 0,
+        cdEnd = cdEnd,
         remaining = remaining,
         isReady = remaining <= 0.05,
         pendingKick = member.pendingKick == true,
         kickResult = member.kickResult,
+        orderIndex = tonumber(member.orderIndex or 999) or 999,
         icon = spellInfo and spellInfo.icon or (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID)) or 134400,
         label = spellInfo and spellInfo.label or (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)) or "Interrupt",
       }
     end
   end
 
-  local sortOrder = aura and aura.interrupt and aura.interrupt.sortOrder or "CD_ASC"
+  local sortOrder = aura and aura.interrupt and aura.interrupt.sortOrder or "NONE"
   table.sort(entries, function(left, right)
+    if sortOrder == "NONE" then
+      if left.orderIndex ~= right.orderIndex then
+        return left.orderIndex < right.orderIndex
+      end
+      return left.name < right.name
+    end
     if sortOrder == "CD_DESC" then
       if left.remaining == right.remaining then
         return left.name < right.name

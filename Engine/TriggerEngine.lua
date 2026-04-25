@@ -125,17 +125,6 @@ function TriggerEngine:BuildPreviewState(aura)
     })
   end
 
-  if aura.kind == "private_aura_frame" then
-    return ns.Schema.NormalizeRuntimeState({
-      show = true,
-      active = true,
-      icon = 134400,
-      name = aura.name,
-      source = "preview",
-      statusText = "Private Aura Preview",
-    })
-  end
-
   if aura.kind == "aura_bar_list" then
     return ns.Schema.NormalizeRuntimeState({
       show = true,
@@ -184,8 +173,6 @@ function ns.Render:CreateRegion(aura)
     return ns.renderers.IconRegion:New(aura)
   elseif aura.kind == "bar" then
     return ns.renderers.BarRegion:New(aura)
-  elseif aura.kind == "private_aura_frame" then
-    return ns.renderers.PrivateAuraFrameRegion:New(aura)
   elseif aura.kind == "aura_bar_list" then
     return ns.renderers.AuraBarListRegion:New(aura)
   elseif aura.kind == "text" then

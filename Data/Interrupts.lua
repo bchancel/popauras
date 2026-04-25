@@ -44,7 +44,7 @@ Interrupts.FILTERS = {
   } },
   { class = "DRUID", name = "Druid", spells = {
     { id = 106839, label = "Skull Bash", cd = 15, icon = 236946 },
-    { id = 78675, label = "Solar Beam", cd = 60, icon = 252188 },
+    { id = 78675, label = "Solar Beam", cd = 45, icon = 252188 },
   } },
   { class = "EVOKER", name = "Evoker", spells = {
     { id = 351338, label = "Quell", cd = 18, icon = 4622469 },
@@ -89,7 +89,7 @@ Interrupts.SPEC_PRIMARY = {
   [581] = { class = "DEMONHUNTER", spellID = 183752, cd = 15 },
   [1480] = { class = "DEMONHUNTER", spellID = 183752, cd = 15 },
 
-  [102] = { class = "DRUID", spellID = 78675, cd = 60 },
+  [102] = { class = "DRUID", spellID = 78675, cd = 45 },
   [103] = { class = "DRUID", spellID = 106839, cd = 15 },
   [104] = { class = "DRUID", spellID = 106839, cd = 15 },
 
@@ -107,7 +107,6 @@ Interrupts.SPEC_PRIMARY = {
 
   [268] = { class = "MONK", spellID = 116705, cd = 15 },
   [269] = { class = "MONK", spellID = 116705, cd = 15 },
-  [270] = { class = "MONK", spellID = 116705, cd = 15 },
 
   [66] = { class = "PALADIN", spellID = 96231, cd = 15 },
   [70] = { class = "PALADIN", spellID = 96231, cd = 15 },
@@ -134,6 +133,7 @@ Interrupts.SPEC_PRIMARY = {
 Interrupts.SPEC_NO_INTERRUPT = {
   [65] = true,
   [105] = true,
+  [270] = true,
   [256] = true,
   [257] = true,
 }
@@ -151,6 +151,7 @@ Interrupts.SPELL_ALIASES = {
 }
 
 Interrupts.CD_REDUCTION_TALENTS = {
+  [388039] = { affects = 147362, reduction = 2, name = "Lone Survivor" },
   [412713] = { affects = 351338, pctReduction = 10, name = "Interwoven Threads" },
   [391271] = { affects = 6552, pctReduction = 10, name = "Seasoned Soldier" },
 }
@@ -443,6 +444,50 @@ function Interrupts:GetPlayerInterrupt()
   }
 end
 
+function Interrupts:GetInterruptForSpec(specID)
+  specID = tonumber(specID or 0) or 0
+  if specID <= 0 then
+    return nil
+  end
+  if self.SPEC_NO_INTERRUPT and self.SPEC_NO_INTERRUPT[specID] then
+    return nil
+  end
+
+  local primary = self.SPEC_PRIMARY and self.SPEC_PRIMARY[specID] or nil
+  if not primary then
+    return nil
+  end
+
+  local spellInfo = self:GetSpellInfo(primary.spellID)
+  return {
+    class = primary.class,
+    spellID = primary.spellID,
+    cd = primary.cd,
+    icon = spellInfo and spellInfo.icon or nil,
+    label = spellInfo and spellInfo.label or (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(primary.spellID)) or "Interrupt",
+  }
+end
+
+function Interrupts:GetInterruptForClass(classToken)
+  if not classToken then
+    return nil
+  end
+
+  local group = self.CLASS_FILTER_LOOKUP and self.CLASS_FILTER_LOOKUP[classToken] or nil
+  local fallback = group and group.spells and group.spells[1] or nil
+  if not fallback then
+    return nil
+  end
+
+  return {
+    class = classToken,
+    spellID = fallback.id,
+    cd = fallback.cd,
+    icon = fallback.icon,
+    label = fallback.label,
+  }
+end
+
 function Interrupts:GetSoundOptions()
   if self.soundOptionsCache then
     return self.soundOptionsCache
@@ -556,7 +601,7 @@ function Interrupts:EnsureAuraDefaults(aura)
   end
 
   SetDefault(settings, "fillMode", "DRAIN")
-  SetDefault(settings, "sortOrder", "CD_ASC")
+  SetDefault(settings, "sortOrder", "NONE")
   SetDefault(settings, "barAlpha", 0.88)
   SetDefault(settings, "showFailedKick", true)
   SetDefault(settings, "showBarBackground", true)
@@ -565,7 +610,7 @@ function Interrupts:EnsureAuraDefaults(aura)
   SetDefault(settings, "paddingX", 6)
   SetDefault(settings, "paddingY", 3)
   SetDefault(settings, "displayInterruptName", true)
-  SetDefault(settings, "clickToAnnounce", true)
+  SetDefault(settings, "clickToAnnounce", false)
   SetDefault(settings, "announceChannel", "PARTY")
   SetDefault(settings, "antiSpam", true)
   SetDefault(settings, "soundEnabled", false)

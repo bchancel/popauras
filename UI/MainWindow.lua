@@ -41,18 +41,12 @@ local function ShouldShowTab(aura, key)
 
   local isGroup = aura.kind == "group" or aura.kind == "dynamic_group"
   local isInterruptTracker = aura.kind == "interrupt_tracker"
-  local isPrivateAuraFrame = aura.kind == "private_aura_frame"
   if isGroup or isInterruptTracker then
     if key == "trigger" or key == "actions" or key == "group" then
       return false
     end
     return true
   end
-
-  if isPrivateAuraFrame and key == "actions" then
-    return false
-  end
-
   if key == "group" then
     return false
   end

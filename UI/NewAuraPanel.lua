@@ -17,20 +17,6 @@ local TILE_TOP_OFFSET = 72
 
 local auraOptions = {
   {
-    kind = "private_aura_frame",
-    title = "Private Aura Frame",
-    description = "Anchor DBM-style private aura icons for yourself or your co-tank with a compact growth layout.",
-    accent = { 0.22, 0.70, 0.96 },
-    art = "private_aura",
-  },
-  {
-    kind = "aura_bar_list",
-    title = "Buffs and Debuffs",
-    description = "Render player or target buffs and debuffs as a growing list of timed bars instead of icons.",
-    accent = { 0.22, 0.78, 0.66 },
-    art = "aura_bars",
-  },
-  {
     kind = "dynamic_group",
     title = "Dynamic Group",
     description = "Automatically arrange child auras with growth, spacing, and sorting rules.",
@@ -45,18 +31,18 @@ local auraOptions = {
     art = "group",
   },
   {
-    kind = "bar",
-    title = "Bar Aura",
-    description = "Show a timed status bar for cooldowns, buffs, debuffs, casts, or manual timers.",
-    accent = { 0.96, 0.44, 0.18 },
-    art = "bar",
-  },
-  {
     kind = "icon",
     title = "Icon Aura",
     description = "Display a single icon with optional timer text, stacks, glow, and cooldown swipe.",
     accent = { 0.88, 0.20, 0.20 },
     art = "icon",
+  },
+  {
+    kind = "bar",
+    title = "Bar Aura",
+    description = "Show a timed status bar for cooldowns, buffs, debuffs, casts, or manual timers.",
+    accent = { 0.96, 0.44, 0.18 },
+    art = "bar",
   },
   {
     kind = "text",
@@ -80,6 +66,13 @@ local auraOptions = {
     description = "Track party interrupt cooldowns with sharing, sounds, and sound/role filters.",
     accent = { 0.90, 0.78, 0.12 },
     art = "interrupt",
+  },
+  {
+    kind = "aura_bar_list",
+    title = "Buffs and Debuffs",
+    description = "Render player or target buffs and debuffs as a growing list of timed bars instead of icons.",
+    accent = { 0.22, 0.78, 0.66 },
+    art = "aura_bars",
   },
 }
 
@@ -329,26 +322,6 @@ local function BuildDeathAlertArt(host)
   crossH:SetVertexColor(0.58, 0.20, 0.28, 0.35)
 end
 
-local function BuildPrivateAuraArt(host)
-  for index = 1, 3 do
-    local slot = CreateFrame("Frame", nil, host, "BackdropTemplate")
-    slot:SetSize(20, 20)
-    slot:SetPoint("LEFT", 8 + ((index - 1) * 26), 0)
-    slot:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1,
-    })
-    slot:SetBackdropColor(0.08, 0.13, 0.18, 0.98)
-    slot:SetBackdropBorderColor(0.32, 0.70, 0.96, 1)
-
-    local icon = slot:CreateTexture(nil, "ARTWORK")
-    icon:SetPoint("TOPLEFT", 2, -2)
-    icon:SetPoint("BOTTOMRIGHT", -2, 2)
-    icon:SetTexture("Interface\\Icons\\spell_shadow_mindtwisting")
-  end
-end
-
 local function BuildAuraBarsArt(host)
   for index = 1, 3 do
     local row = CreateFrame("Frame", nil, host, "BackdropTemplate")
@@ -377,9 +350,7 @@ local function BuildAuraBarsArt(host)
 end
 
 local function BuildArt(host, art)
-  if art == "private_aura" then
-    BuildPrivateAuraArt(host)
-  elseif art == "aura_bars" then
+  if art == "aura_bars" then
     BuildAuraBarsArt(host)
   elseif art == "icon" then
     BuildIconArt(host)

@@ -18,31 +18,37 @@ local function TriggerUsesUnit(trigger, unit)
   return triggerUnit == unit
 end
 
+function provider:GetAffectedAurasForUnit(unit)
+  if unit ~= "player" and unit ~= "target" then
+    return {}
+  end
+
+  self._cachedAuraIdsByUnit = self._cachedAuraIdsByUnit or {}
+  local cached = self._cachedAuraIdsByUnit[unit]
+  if cached ~= nil then
+    return cached
+  end
+
+  cached = ns.Registry:CollectAuraIds(function(aura)
+    for _, trigger in IterateAuraListTriggers(aura) do
+      if TriggerUsesUnit(trigger, unit) then
+        return true
+      end
+    end
+    return false
+  end)
+  self._cachedAuraIdsByUnit[unit] = cached
+  return cached
+end
+
 function provider:GetAffectedAuras(event, ...)
   if event == "PLAYER_TARGET_CHANGED" then
-    return ns.Registry:CollectAuraIds(function(aura)
-      for _, trigger in IterateAuraListTriggers(aura) do
-        if TriggerUsesUnit(trigger, "target") then
-          return true
-        end
-      end
-      return false
-    end)
+    return self:GetAffectedAurasForUnit("target")
   end
 
   if event == "UNIT_AURA" then
     local unit = ...
-    if unit ~= "player" and unit ~= "target" then
-      return {}
-    end
-    return ns.Registry:CollectAuraIds(function(aura)
-      for _, trigger in IterateAuraListTriggers(aura) do
-        if TriggerUsesUnit(trigger, unit) then
-          return true
-        end
-      end
-      return false
-    end)
+    return self:GetAffectedAurasForUnit(unit)
   end
 
   return {}
@@ -51,9 +57,9 @@ end
 function provider:Evaluate(trigger, auraConfig)
   local entries, debugExtra
   if UnitAuraList and UnitAuraList.CollectWithDebug and trigger and trigger.debug == true then
-    entries, debugExtra = UnitAuraList:CollectWithDebug(trigger, 1)
+    entries, debugExtra = UnitAuraList:CollectWithDebug(trigger)
   else
-    entries = UnitAuraList and UnitAuraList.Collect and UnitAuraList:Collect(trigger, 1) or {}
+    entries = UnitAuraList and UnitAuraList.Collect and UnitAuraList:Collect(trigger) or {}
   end
   local first = entries[1]
   local helpful = (trigger and trigger.auraType or "buff") ~= "debuff"
@@ -84,6 +90,7 @@ function provider:Evaluate(trigger, auraConfig)
       source = "aura_list",
       statusText = helpful and "Buffs" or "Debuffs",
       debugExtra = debugExtra,
+      auraListEntries = entries,
     })
   end
 
@@ -96,5 +103,6 @@ function provider:Evaluate(trigger, auraConfig)
     source = "aura_list",
     statusText = helpful and "No Buffs" or "No Debuffs",
     debugExtra = debugExtra,
+    auraListEntries = entries or {},
   })
 end

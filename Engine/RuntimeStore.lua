@@ -338,6 +338,9 @@ function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
   if not skipVisibilitySync and ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
     ns.CooldownManager:ApplyVisibilityOverrides()
   end
+  if not skipVisibilitySync and ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Sync then
+    ns.BlizzardAuraFrames:Sync()
+  end
   ProfileFinish("runtime:refresh_aura", refreshProfile)
 end
 
@@ -400,6 +403,9 @@ function RuntimeStore:RefreshAuras(auraIds, skipVisibilitySync)
   if not skipVisibilitySync and ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
     ns.CooldownManager:ApplyVisibilityOverrides()
   end
+  if not skipVisibilitySync and ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Sync then
+    ns.BlizzardAuraFrames:Sync()
+  end
   ProfileFinish("runtime:refresh_batch", refreshProfile)
 end
 
@@ -425,6 +431,9 @@ function RuntimeStore:RefreshAll()
 
   if ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
     ns.CooldownManager:ApplyVisibilityOverrides()
+  end
+  if ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Sync then
+    ns.BlizzardAuraFrames:Sync()
   end
   ProfileFinish("runtime:refresh_all", refreshProfile)
 end
