@@ -55,6 +55,19 @@ local function SafeGUID(value)
   return nil
 end
 
+local function CallSafeBooleanAPI(func, ...)
+  if type(func) ~= "function" then
+    return nil
+  end
+
+  local ok, value = pcall(func, ...)
+  if not ok then
+    return nil
+  end
+
+  return SafeBoolean(value)
+end
+
 local function IsPlayerSourceUnit(sourceUnit)
   if sourceUnit == nil or sourceUnit == "" then
     return false
@@ -64,7 +77,15 @@ local function IsPlayerSourceUnit(sourceUnit)
   end
 
   if UnitIsUnit then
-    return UnitIsUnit(sourceUnit, "player") or UnitIsUnit(sourceUnit, "pet") or UnitIsUnit(sourceUnit, "vehicle")
+    if CallSafeBooleanAPI(UnitIsUnit, sourceUnit, "player") == true then
+      return true
+    end
+    if CallSafeBooleanAPI(UnitIsUnit, sourceUnit, "pet") == true then
+      return true
+    end
+    if CallSafeBooleanAPI(UnitIsUnit, sourceUnit, "vehicle") == true then
+      return true
+    end
   end
 
   return false
@@ -207,11 +228,11 @@ local function ClassifyAuraSource(unit, helpful, index, auraData)
     return "self"
   end
 
-  if UnitExists and UnitExists(sourceUnit) then
-    if UnitIsPlayer and UnitIsPlayer(sourceUnit) then
+  if CallSafeBooleanAPI(UnitExists, sourceUnit) == true then
+    if CallSafeBooleanAPI(UnitIsPlayer, sourceUnit) == true then
       return "other_player"
     end
-    if UnitPlayerControlled and UnitPlayerControlled(sourceUnit) then
+    if CallSafeBooleanAPI(UnitPlayerControlled, sourceUnit) == true then
       return "other_player"
     end
     return "non_player"
@@ -833,7 +854,7 @@ function UnitAuraList:CollectInternal(trigger, maxCount, includeDebug)
     preview = {},
     keptPreview = {},
   } or nil
-  if not unit or not UnitExists or not UnitExists(unit) then
+  if type(unit) ~= "string" or unit == "" or CallSafeBooleanAPI(UnitExists, unit) ~= true then
     if debugInfo then
       debugInfo.stopReason = unit and "unit_missing" or "unit_nil"
       return {}, BuildDebugSummary(debugInfo)

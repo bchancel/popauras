@@ -18,6 +18,9 @@ local provider = ns.TriggerBase:CreateProvider("spell_cooldown", {
 local spellIDsCache = setmetatable({}, { __mode = "k" })
 local REAL_TIME_MODIFIER = Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime or nil
 local IsCooldownActive
+local EnsureSpellAuraIndex
+local ClearReadyCooldownCache
+local ShouldClearExpiredReadyCooldownCache
 
 local function IterateSpellCooldownTriggers(aura)
   return ns.TriggerBase:IterateTriggers(aura, "spell_cooldown")
@@ -918,7 +921,555 @@ local function BuildCooldownEventSignature(spellId, cache)
   return table.concat(parts, "|")
 end
 
-local function EnsureSpellAuraIndex(self)
+local function GetCooldownDebugSpellLabel(spellId)
+  spellId = tonumber(spellId or 0) or 0
+  local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellId) or nil
+  if spellName and spellName ~= "" then
+    return string.format("%s (%d)", tostring(spellName), spellId)
+  end
+  return string.format("Spell %d", spellId)
+end
+
+local function BuildRecentPlayerCastDebugSummary(castInfo, age)
+  castInfo = type(castInfo) == "table" and castInfo or nil
+  local castSpellId = tonumber(castInfo and castInfo.spellId or 0) or 0
+  if castSpellId <= 0 then
+    return "spell="
+  end
+
+  return BuildDebugBits({
+    string.format("spell=%s", GetCooldownDebugSpellLabel(castSpellId)),
+    string.format("age=%s", QuantizeTime(age)),
+  })
+end
+
+local function BuildCacheDebugSummary(cache)
+  cache = type(cache) == "table" and cache or nil
+  local now = GetTime()
+  local expirationTime = SafeNumber(cache and cache.expirationTime) or 0
+  local remaining = expirationTime > now and (expirationTime - now) or 0
+  return BuildDebugBits({
+    string.format("src=%s", tostring(cache and cache.source or "")),
+    string.format("active=%s", tostring(cache and cache.active == true)),
+    string.format("dur=%s", QuantizeTime(cache and cache.duration)),
+    string.format("exp=%s", QuantizeTime(expirationTime > 0 and expirationTime or nil)),
+    string.format("rem=%s", QuantizeTime(remaining > 0 and remaining or nil)),
+    string.format("cdmID=%s", tostring(cache and cache.cooldownID or "")),
+    string.format("charges=%s", tostring(cache and cache.currentCharges or "")),
+    string.format("max=%s", tostring(cache and cache.maxCharges or "")),
+    string.format("chargeSpell=%s", tostring(cache and cache.isChargeSpell == true)),
+    string.format("deferred=%s", tostring(cache and cache.deferredByActiveAura == true)),
+    string.format("deferredExp=%s", QuantizeTime(cache and cache.deferredExpirationTime)),
+  })
+end
+
+local function BuildCooldownQueryDebugSummary(spellId, queryId)
+  local cooldown = GetSpellCooldownInfoForID(queryId)
+  if type(cooldown) ~= "table" then
+    return string.format("query=%d nil", tonumber(queryId or 0) or 0)
+  end
+
+  local duration, expirationTime, durationObject, isOnGCD = GetSpellCooldownTiming(queryId, cooldown)
+  local borrowedGCD = QueryLooksLikeBorrowedGCD(spellId, queryId, cooldown, duration, expirationTime, durationObject, isOnGCD)
+  if borrowedGCD then
+    duration = 0
+    expirationTime = 0
+    durationObject = nil
+    isOnGCD = true
+  end
+
+  local startTime = SafeNumber(cooldown.startTime)
+  local liveDuration = SafeNumber(cooldown.duration)
+  local objectStartTime, objectEndTime, objectDuration = GetDurationObjectWindow(durationObject)
+  local objectRemaining = GetDurationObjectRemaining(durationObject)
+  return BuildDebugBits({
+    string.format("query=%d", tonumber(queryId or 0) or 0),
+    string.format("active=%s", tostring(SafeBoolean(cooldown.isActive))),
+    string.format("enabled=%s", tostring(SafeBoolean(cooldown.isEnabled))),
+    string.format("gcd=%s", tostring(isOnGCD == true)),
+    string.format("borrowedGCD=%s", tostring(borrowedGCD == true)),
+    string.format("start=%s", QuantizeTime(startTime)),
+    string.format("liveDur=%s", QuantizeTime(liveDuration)),
+    string.format("dur=%s", QuantizeTime(duration)),
+    string.format("exp=%s", QuantizeTime(expirationTime)),
+    string.format("objStart=%s", QuantizeTime(objectStartTime)),
+    string.format("objEnd=%s", QuantizeTime(objectEndTime)),
+    string.format("objDur=%s", QuantizeTime(objectDuration)),
+    string.format("objRem=%s", QuantizeTime(objectRemaining)),
+  })
+end
+
+local function BuildChargeDebugSummary(spellId)
+  if not C_Spell or not C_Spell.GetSpellCharges then
+    return "charges unsupported"
+  end
+
+  local chargeInfo = C_Spell.GetSpellCharges(spellId)
+  if type(chargeInfo) ~= "table" then
+    return "charges nil"
+  end
+
+  local chargeDuration, chargeExpirationTime, chargeDurationObject = GetSpellChargeTiming(spellId, chargeInfo)
+  local objectStartTime, objectEndTime, objectDuration = GetDurationObjectWindow(chargeDurationObject)
+  local objectRemaining = GetDurationObjectRemaining(chargeDurationObject)
+  return BuildDebugBits({
+    string.format("charges=%s", tostring(SafeNumber(chargeInfo.currentCharges) or "")),
+    string.format("max=%s", tostring(SafeNumber(chargeInfo.maxCharges) or "")),
+    string.format("active=%s", tostring(SafeBoolean(chargeInfo.isActive))),
+    string.format("start=%s", QuantizeTime(chargeInfo and chargeInfo.cooldownStartTime)),
+    string.format("liveDur=%s", QuantizeTime(chargeInfo and chargeInfo.cooldownDuration)),
+    string.format("dur=%s", QuantizeTime(chargeDuration)),
+    string.format("exp=%s", QuantizeTime(chargeExpirationTime)),
+    string.format("objStart=%s", QuantizeTime(objectStartTime)),
+    string.format("objEnd=%s", QuantizeTime(objectEndTime)),
+    string.format("objDur=%s", QuantizeTime(objectDuration)),
+    string.format("objRem=%s", QuantizeTime(objectRemaining)),
+  })
+end
+
+local function BuildCDMDebugSummary(cdmState, cdmAuraDetails)
+  local cdmLine = BuildDebugBits({
+    string.format("id=%s", tostring(cdmState and cdmState.cooldownID or "")),
+    string.format("active=%s", tostring(cdmState and cdmState.active == true)),
+    string.format("rawActive=%s", tostring(cdmState and cdmState.rawActive == true)),
+    string.format("actual=%s", tostring(cdmState and cdmState.isOnActualCooldown == true)),
+    string.format("gcd=%s", tostring(cdmState and cdmState.isOnGCD == true)),
+    string.format("dur=%s", QuantizeTime(cdmState and cdmState.duration)),
+    string.format("exp=%s", QuantizeTime(cdmState and cdmState.expirationTime)),
+    string.format("maxDur=%s", QuantizeTime(cdmState and cdmState.maxDuration)),
+    string.format("count=%s", tostring(cdmState and cdmState.count or "")),
+    string.format("text=%s", tostring(cdmState and cdmState.countText or "")),
+    string.format("obj=%s", tostring(cdmState and cdmState.durationObject ~= nil)),
+  })
+  local auraLine = BuildDebugBits({
+    string.format("active=%s", tostring(cdmAuraDetails and cdmAuraDetails.active == true)),
+    string.format("spell=%s", tostring(cdmAuraDetails and cdmAuraDetails.spellId or "")),
+    string.format("match=%s", tostring(cdmAuraDetails and cdmAuraDetails.spellMatches ~= false or false)),
+    string.format("inst=%s", tostring(cdmAuraDetails and cdmAuraDetails.auraInstanceID or "")),
+    string.format("unit=%s", tostring(cdmAuraDetails and cdmAuraDetails.unit or "")),
+    string.format("stacks=%s", tostring(cdmAuraDetails and cdmAuraDetails.stacks or "")),
+    string.format("text=%s", tostring(cdmAuraDetails and cdmAuraDetails.stackText or "")),
+    string.format("dur=%s", QuantizeTime(cdmAuraDetails and cdmAuraDetails.duration)),
+    string.format("exp=%s", QuantizeTime(cdmAuraDetails and cdmAuraDetails.expirationTime)),
+    string.format("obj=%s", tostring(cdmAuraDetails and cdmAuraDetails.durationObject ~= nil)),
+  })
+  return cdmLine, auraLine
+end
+
+local function BuildCooldownStateDebugSummary(state)
+  if type(state) ~= "table" then
+    return "state=nil"
+  end
+
+  return BuildDebugBits({
+    string.format("show=%s", tostring(state.show)),
+    string.format("matched=%s", tostring(state.matched)),
+    string.format("active=%s", tostring(state.active)),
+    string.format("ready=%s", tostring(state.isReady)),
+    string.format("enabled=%s", tostring(state.isEnabled ~= false)),
+    string.format("src=%s", tostring(state.source or "")),
+    string.format("dur=%s", QuantizeTime(state.duration)),
+    string.format("exp=%s", QuantizeTime(state.expirationTime)),
+    string.format("stacks=%s", tostring(state.stacks or "")),
+    string.format("text=%s", tostring(state.stackText or "")),
+    string.format("status=%s", tostring(state.statusText or "")),
+  })
+end
+
+local function BuildCooldownRenderDebugSummary(region, state, now)
+  region = type(region) == "table" and region or nil
+  state = type(state) == "table" and state or nil
+  now = SafeNumber(now) or GetTime()
+
+  local regionKind = "unknown"
+  if region and region.bar then
+    regionKind = "bar"
+  elseif region and region.cooldown then
+    regionKind = "icon"
+  elseif region and region.rows then
+    regionKind = "aura_bar_list"
+  end
+
+  local expirationTime = SafeNumber(state and state.expirationTime) or 0
+  local numericRemaining = expirationTime > 0 and math.max(0, expirationTime - now) or nil
+  local objectRemaining = GetDurationObjectRemaining(state and state.durationObject or nil)
+  local barValue, barMin, barMax = nil, nil, nil
+  if region and region.bar and region.bar.GetValue then
+    local ok, value = pcall(region.bar.GetValue, region.bar)
+    if ok then
+      barValue = SafeNumber(value)
+    end
+  end
+  if region and region.bar and region.bar.GetMinMaxValues then
+    local ok, minValue, maxValue = pcall(region.bar.GetMinMaxValues, region.bar)
+    if ok then
+      barMin = SafeNumber(minValue)
+      barMax = SafeNumber(maxValue)
+    end
+  end
+
+  local timerText = region and region.timerText and region.timerText.GetText and region.timerText:GetText() or nil
+  return BuildDebugBits({
+    string.format("kind=%s", tostring(regionKind)),
+    string.format("stateObj=%s", tostring(state and state.durationObject ~= nil or false)),
+    string.format("progress=%s", tostring(state and state.progressType or "")),
+    string.format("numRem=%s", QuantizeTime(numericRemaining)),
+    string.format("objRem=%s", QuantizeTime(objectRemaining)),
+    string.format("barMin=%s", QuantizeTime(barMin)),
+    string.format("barMax=%s", QuantizeTime(barMax)),
+    string.format("barValue=%s", QuantizeTime(barValue)),
+    string.format("timerShown=%s", tostring(region and region.timerText and region.timerText.IsShown and region.timerText:IsShown() or false)),
+    string.format("timerText=%s", tostring(timerText or "")),
+    string.format("nativeShown=%s", tostring(region and region.timerCooldown and region.timerCooldown.IsShown and region.timerCooldown:IsShown() or false)),
+    string.format("swipeShown=%s", tostring(region and region.cooldown and region.cooldown.IsShown and region.cooldown:IsShown() or false)),
+  })
+end
+
+function provider:IsCooldownDebugSpell(spellId)
+  spellId = tonumber(spellId or 0) or 0
+  return spellId > 0 and spellId == (tonumber(self.cooldownDebugSpellID or 0) or 0)
+end
+
+function provider:IsCooldownDebugAura(aura, state)
+  if self:IsCooldownDebugSpell(state and state.spellId) then
+    return true
+  end
+
+  if type(aura) ~= "table" then
+    return false
+  end
+
+  for _, trigger in IterateSpellCooldownTriggers(aura) do
+    for _, spellId in ipairs(GetSpellIDs(trigger)) do
+      if self:IsCooldownDebugSpell(spellId) then
+        return true
+      end
+    end
+  end
+
+  return false
+end
+
+function provider:AppendCooldownDebugHistory(lines)
+  if type(lines) ~= "table" or #lines == 0 then
+    return
+  end
+
+  self.cooldownDebugHistory = self.cooldownDebugHistory or {}
+  self.cooldownDebugHistoryMaxLines = tonumber(self.cooldownDebugHistoryMaxLines or 240) or 240
+
+  for _, line in ipairs(lines) do
+    self.cooldownDebugHistory[#self.cooldownDebugHistory + 1] = tostring(line)
+  end
+
+  while #self.cooldownDebugHistory > self.cooldownDebugHistoryMaxLines do
+    table.remove(self.cooldownDebugHistory, 1)
+  end
+end
+
+function provider:BuildCooldownDebugLines(spellId, reason, aura, state, extra)
+  spellId = tonumber(spellId or 0) or 0
+  if spellId <= 0 then
+    return {}
+  end
+
+  local now = GetTime()
+  local cache = self.cache and self.cache[spellId] or nil
+  local cdmState = GetCDMState(spellId)
+  local cdmAuraDetails = GetCDMAuraDetails(GetCDMAuraState(spellId), spellId)
+  local querySummaries = {}
+  for _, queryId in ipairs(BuildCooldownQueryIDs(spellId, cache, cdmState)) do
+    querySummaries[#querySummaries + 1] = BuildCooldownQueryDebugSummary(spellId, queryId)
+  end
+
+  local lastCastAt = self.recentCasts and self.recentCasts[spellId] or nil
+  local recentCastAge = (type(lastCastAt) == "number" and lastCastAt > 0) and (now - lastCastAt) or nil
+  local lastPlayerCast = self.cooldownDebugLastPlayerCast
+  local recentPlayerCastAge = (type(lastPlayerCast and lastPlayerCast.at) == "number" and lastPlayerCast.at > 0)
+    and (now - lastPlayerCast.at)
+    or nil
+  local cdmLine, cdmAuraLine = BuildCDMDebugSummary(cdmState, cdmAuraDetails)
+  local header = BuildDebugBits({
+    string.format("t=%s", QuantizeTime(now)),
+    string.format("spell=%s", GetCooldownDebugSpellLabel(spellId)),
+    string.format("reason=%s", tostring(reason or "")),
+    aura and aura.name and string.format("aura=%s", tostring(aura.name)) or nil,
+    extra and extra ~= "" and extra or nil,
+  })
+
+  local lines = {
+    header,
+    "  cache " .. BuildCacheDebugSummary(cache),
+    "  recentCast age=" .. tostring(recentCastAge and QuantizeTime(recentCastAge) or ""),
+    "  queries " .. table.concat(querySummaries, " || "),
+    "  charge " .. BuildChargeDebugSummary(spellId),
+    "  cdm " .. cdmLine,
+    "  cdmAura " .. cdmAuraLine,
+  }
+
+  if recentPlayerCastAge and recentPlayerCastAge <= 2 then
+    lines[#lines + 1] = "  playerCast " .. BuildRecentPlayerCastDebugSummary(lastPlayerCast, recentPlayerCastAge)
+  end
+
+  if state then
+    lines[#lines + 1] = "  final " .. BuildCooldownStateDebugSummary(state)
+    if state.debugExtra and state.debugExtra ~= "" then
+      lines[#lines + 1] = "  decision " .. tostring(state.debugExtra)
+    end
+  end
+
+  return lines
+end
+
+function provider:LogCooldownDebug(spellId, reason, aura, state, extra)
+  if not self:IsCooldownDebugSpell(spellId) then
+    return
+  end
+
+  local lines = self:BuildCooldownDebugLines(spellId, reason, aura, state, extra)
+  self:AppendCooldownDebugHistory(lines)
+
+  if ns.Debug and ns.Debug.Log then
+    for _, line in ipairs(lines) do
+      ns.Debug:Log("CDWatch", line)
+    end
+  end
+end
+
+function provider:LogCooldownRenderDebug(aura, state, region, reason, extra)
+  if not self:IsCooldownDebugAura(aura, state) then
+    return
+  end
+
+  local spellId = tonumber(state and state.spellId or self.cooldownDebugSpellID or 0) or 0
+  if spellId <= 0 then
+    return
+  end
+
+  self.cooldownDebugLastRenderSignatures = self.cooldownDebugLastRenderSignatures or {}
+  local stateKey = tostring(aura and aura.id or spellId)
+  local now = GetTime()
+  local expirationTime = SafeNumber(state and state.expirationTime) or 0
+  local numericRemaining = expirationTime > 0 and math.max(0, expirationTime - now) or 0
+  local objectRemaining = GetDurationObjectRemaining(state and state.durationObject or nil) or 0
+  local renderSignature = table.concat({
+    tostring(reason or ""),
+    tostring(state and state.show),
+    tostring(state and state.active),
+    tostring(state and state.isReady),
+    tostring(state and state.source or ""),
+    QuantizeTime(state and state.duration),
+    QuantizeTime(expirationTime > 0 and expirationTime or nil),
+    QuantizeTime(numericRemaining > 0 and numericRemaining or nil),
+    QuantizeTime(objectRemaining > 0 and objectRemaining or nil),
+    tostring(state and state.durationObject ~= nil),
+    tostring(region and region.timerCooldown and region.timerCooldown.IsShown and region.timerCooldown:IsShown() or false),
+    tostring(region and region.cooldown and region.cooldown.IsShown and region.cooldown:IsShown() or false),
+    tostring(region and region.timerText and region.timerText.GetText and region.timerText:GetText() or ""),
+  }, "|")
+
+  if self.cooldownDebugLastRenderSignatures[stateKey] == renderSignature then
+    return
+  end
+  self.cooldownDebugLastRenderSignatures[stateKey] = renderSignature
+
+  local lines = {
+    BuildDebugBits({
+      string.format("t=%s", QuantizeTime(now)),
+      string.format("spell=%s", GetCooldownDebugSpellLabel(spellId)),
+      string.format("reason=%s", tostring(reason or "render")),
+      aura and aura.name and string.format("aura=%s", tostring(aura.name)) or nil,
+      extra and extra ~= "" and extra or nil,
+    }),
+    "  render " .. BuildCooldownRenderDebugSummary(region, state, now),
+    "  final " .. BuildCooldownStateDebugSummary(state),
+  }
+  if state and state.debugExtra and state.debugExtra ~= "" then
+    lines[#lines + 1] = "  decision " .. tostring(state.debugExtra)
+  end
+
+  self:AppendCooldownDebugHistory(lines)
+  if ns.Debug and ns.Debug.Log then
+    for _, line in ipairs(lines) do
+      ns.Debug:Log("CDRender", line)
+    end
+  end
+end
+
+function provider:QueueCooldownDebugReason(spellId, reason)
+  if not self:IsCooldownDebugSpell(spellId) then
+    return
+  end
+
+  self.cooldownDebugPendingReasons = self.cooldownDebugPendingReasons or {}
+  self.cooldownDebugPendingReasons[spellId] = {
+    reason = tostring(reason or "event"),
+    expiresAt = GetTime() + 0.25,
+  }
+end
+
+function provider:GetCooldownDebugReason(spellId)
+  if not self:IsCooldownDebugSpell(spellId) then
+    return nil
+  end
+
+  local pending = self.cooldownDebugPendingReasons and self.cooldownDebugPendingReasons[spellId] or nil
+  if type(pending) ~= "table" then
+    return nil
+  end
+  if (pending.expiresAt or 0) < GetTime() then
+    self.cooldownDebugPendingReasons[spellId] = nil
+    return nil
+  end
+  return pending.reason
+end
+
+function provider:SetCooldownDebugSpell(spellId)
+  spellId = tonumber(spellId or 0) or 0
+  self.cooldownDebugSpellID = spellId > 0 and spellId or nil
+  self.cooldownDebugHistory = {}
+  self.cooldownDebugPendingReasons = {}
+  self.cooldownDebugLastEvalSignatures = {}
+  self.cooldownDebugLastRenderSignatures = {}
+  self.cooldownDebugLastPlayerCast = nil
+  self.cooldownDebugHistoryMaxLines = tonumber(self.cooldownDebugHistoryMaxLines or 240) or 240
+  if self.cooldownDebugSpellID then
+    self:LogCooldownDebug(self.cooldownDebugSpellID, "watch_start")
+  end
+end
+
+function provider:ClearCooldownDebugSpell()
+  local watchedSpellId = tonumber(self.cooldownDebugSpellID or 0) or 0
+  if watchedSpellId > 0 then
+    local lines = self:BuildCooldownDebugLines(watchedSpellId, "watch_stop")
+    self:AppendCooldownDebugHistory(lines)
+    if ns.Debug and ns.Debug.Log then
+      for _, line in ipairs(lines) do
+        ns.Debug:Log("CDWatch", line)
+      end
+    end
+  end
+  self.cooldownDebugSpellID = nil
+  self.cooldownDebugPendingReasons = {}
+  self.cooldownDebugLastEvalSignatures = {}
+  self.cooldownDebugLastRenderSignatures = {}
+  self.cooldownDebugLastPlayerCast = nil
+end
+
+function provider:GetCooldownDebugStatusLine()
+  local watchedSpellId = tonumber(self.cooldownDebugSpellID or 0) or 0
+  if watchedSpellId <= 0 then
+    return "Cooldown debug watch is off."
+  end
+  return string.format(
+    "Cooldown debug watch: %s | historyLines=%d",
+    GetCooldownDebugSpellLabel(watchedSpellId),
+    #(self.cooldownDebugHistory or {})
+  )
+end
+
+function provider:GetCooldownDebugSpellLabel()
+  local watchedSpellId = tonumber(self.cooldownDebugSpellID or 0) or 0
+  if watchedSpellId <= 0 then
+    return nil
+  end
+  return GetCooldownDebugSpellLabel(watchedSpellId)
+end
+
+function provider:ShowCooldownDebugHistory()
+  local lines = self.cooldownDebugHistory
+  if type(lines) ~= "table" or #lines == 0 then
+    lines = { "No cooldown debug history captured yet." }
+  end
+
+  if ns.Debug and ns.Debug.ShowSnapshot then
+    ns.Debug:ShowSnapshot("PopAuras Cooldown Debug", lines, true)
+  elseif ns.Debug and ns.Debug.Log then
+    ns.Debug:Clear()
+    for _, line in ipairs(lines) do
+      ns.Debug:Log("CDWatch", line)
+    end
+  end
+end
+
+function provider:CaptureCooldownDebugSnapshot(reason, extra)
+  local watchedSpellId = tonumber(self.cooldownDebugSpellID or 0) or 0
+  if watchedSpellId <= 0 then
+    return false
+  end
+  self:LogCooldownDebug(watchedSpellId, reason or "manual_snapshot", nil, nil, extra)
+  return true
+end
+
+function provider:ResolveCooldownDebugSpellID(query)
+  query = tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if query == "" then
+    return nil
+  end
+
+  local numeric = tonumber(query)
+  if numeric and numeric > 0 then
+    return numeric
+  end
+
+  if C_Spell and C_Spell.GetSpellInfo then
+    local ok, spellInfo = pcall(C_Spell.GetSpellInfo, query)
+    if ok and type(spellInfo) == "table" then
+      local spellId = tonumber(spellInfo.spellID or spellInfo.spellId or spellInfo.id or 0) or 0
+      if spellId > 0 then
+        return spellId
+      end
+    end
+  end
+
+  EnsureSpellAuraIndex(self)
+  local lowered = query:lower()
+  local partialMatch = nil
+  for _, spellId in ipairs(self.watchedSpellIDs or {}) do
+    local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellId) or nil
+    local normalizedName = type(spellName) == "string" and spellName:lower() or nil
+    if normalizedName == lowered then
+      return spellId
+    end
+    if normalizedName and normalizedName:find(lowered, 1, true) then
+      if partialMatch and partialMatch ~= spellId then
+        return nil, "Multiple configured cooldown spells match that name. Use the numeric spell ID instead."
+      end
+      partialMatch = spellId
+    end
+  end
+
+  if partialMatch then
+    return partialMatch
+  end
+
+  return nil, "No cooldown spell matched that name. Use the numeric spell ID if needed."
+end
+
+function provider:GetTrackedCooldownSpellIDs()
+  EnsureSpellAuraIndex(self)
+
+  local trackedSpellIDs = {}
+  local seenSpellIDs = {}
+
+  for _, spellID in ipairs(self.watchedSpellIDs or {}) do
+    spellID = tonumber(spellID or 0) or 0
+    if spellID > 0 and not seenSpellIDs[spellID] then
+      seenSpellIDs[spellID] = true
+      trackedSpellIDs[#trackedSpellIDs + 1] = spellID
+    end
+  end
+
+  local debugSpellId = tonumber(self.cooldownDebugSpellID or 0) or 0
+  if debugSpellId > 0 and not seenSpellIDs[debugSpellId] then
+    trackedSpellIDs[#trackedSpellIDs + 1] = debugSpellId
+  end
+
+  table.sort(trackedSpellIDs)
+  return trackedSpellIDs
+end
+
+EnsureSpellAuraIndex = function(self)
   if not ns.Registry or not ns.Registry.GetFlatOrder then
     self.spellAuraIndex = {}
     self.watchedSpellIDs = {}
@@ -999,9 +1550,8 @@ function provider:GetAffectedAuras(event, ...)
 end
 
 function provider:PruneCache()
-  EnsureSpellAuraIndex(self)
   local activeSpellIDs = {}
-  for _, spellID in ipairs(self.watchedSpellIDs or {}) do
+  for _, spellID in ipairs(self:GetTrackedCooldownSpellIDs()) do
     activeSpellIDs[spellID] = true
   end
 
@@ -1020,16 +1570,21 @@ function provider:PruneCache()
 end
 
 function provider:GetChangedSpellIDsForCooldownEvent()
-  EnsureSpellAuraIndex(self)
-
   self.cooldownEventSignatures = self.cooldownEventSignatures or {}
   local changedSpellIDs = {}
 
-  for _, spellID in ipairs(self.watchedSpellIDs or {}) do
-    local signature = BuildCooldownEventSignature(spellID, self.cache[spellID])
-    if self.cooldownEventSignatures[spellID] ~= signature then
-      self.cooldownEventSignatures[spellID] = signature
+  for _, spellID in ipairs(self:GetTrackedCooldownSpellIDs()) do
+    local cache = self.cache[spellID]
+    if ShouldClearExpiredReadyCooldownCache(spellID, cache) then
+      ClearReadyCooldownCache(cache)
+      self.cooldownEventSignatures[spellID] = BuildCooldownEventSignature(spellID, cache)
       changedSpellIDs[#changedSpellIDs + 1] = spellID
+    else
+      local signature = BuildCooldownEventSignature(spellID, cache)
+      if self.cooldownEventSignatures[spellID] ~= signature then
+        self.cooldownEventSignatures[spellID] = signature
+        changedSpellIDs[#changedSpellIDs + 1] = spellID
+      end
     end
   end
 
@@ -1103,6 +1658,61 @@ local function InferReadyChargeCount(cache, maxCharges, isReady, cooldownIsOnGCD
   return maxCharges
 end
 
+ClearReadyCooldownCache = function(cache)
+  if type(cache) ~= "table" then
+    return
+  end
+
+  cache.expirationTime = 0
+  cache.active = false
+  cache.deferredByActiveAura = nil
+  cache.deferredExpirationTime = nil
+
+  local maxCharges = SafeNumber(cache.maxCharges)
+  if cache.isChargeSpell == true and maxCharges and maxCharges > 1 then
+    cache.currentCharges = maxCharges
+  end
+end
+
+ShouldClearExpiredReadyCooldownCache = function(spellId, cache)
+  cache = type(cache) == "table" and cache or nil
+  if not cache or cache.active ~= true then
+    return false
+  end
+
+  local expirationTime = SafeNumber(cache.expirationTime) or 0
+  local now = GetTime()
+  if expirationTime <= 0 or expirationTime > now then
+    return false
+  end
+
+  local cdmState = GetCDMState(spellId)
+  if IsUsableCDMCooldownState(cdmState) then
+    return false
+  end
+
+  local _, cooldown, cooldownDuration, cooldownExpirationTime, cooldownDurationObject, cooldownIsOnGCD =
+    SelectBestCooldownQuery(spellId, cache, cdmState)
+  if not CooldownLooksReady(
+    cooldown,
+    cooldownDuration,
+    cooldownExpirationTime,
+    cooldownDurationObject,
+    cooldownIsOnGCD
+  ) then
+    return false
+  end
+
+  if C_Spell and C_Spell.GetSpellCharges then
+    local chargeInfo = C_Spell.GetSpellCharges(spellId)
+    if IsChargeCooldownActive(chargeInfo) then
+      return false
+    end
+  end
+
+  return true
+end
+
 local function AdvanceCachedCharges(cache)
   if type(cache) ~= "table" or cache.isChargeSpell ~= true then
     return
@@ -1134,9 +1744,44 @@ end
 
 function provider:HandleEvent(event, ...)
   if event == "SPELL_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_CHARGES" then
+    local watchedSpellId = tonumber(self.cooldownDebugSpellID or 0) or 0
     local changedSpellIDs = self:GetChangedSpellIDsForCooldownEvent()
     if #changedSpellIDs == 0 then
+      if watchedSpellId > 0 then
+        self:LogCooldownDebug(
+          watchedSpellId,
+          "event:" .. tostring(event) .. ":no_change",
+          nil,
+          nil,
+          "changed=false"
+        )
+      end
       return {}
+    end
+    local watchedSpellChanged = false
+    for _, spellId in ipairs(changedSpellIDs) do
+      if watchedSpellId > 0 and spellId == watchedSpellId then
+        watchedSpellChanged = true
+      end
+      if self:IsCooldownDebugSpell(spellId) then
+        self:LogCooldownDebug(
+          spellId,
+          "event:" .. tostring(event),
+          nil,
+          nil,
+          string.format("changed=true affected=%d", #self:GetAffectedAurasForSpellIDs({ spellId }))
+        )
+        self:QueueCooldownDebugReason(spellId, event)
+      end
+    end
+    if watchedSpellId > 0 and not watchedSpellChanged then
+      self:LogCooldownDebug(
+        watchedSpellId,
+        "event:" .. tostring(event) .. ":no_watch_change",
+        nil,
+        nil,
+        string.format("changed=false changedCount=%d", #changedSpellIDs)
+      )
     end
     return self:GetAffectedAurasForSpellIDs(changedSpellIDs)
   end
@@ -1147,12 +1792,29 @@ function provider:HandleEvent(event, ...)
       return {}
     end
 
+    local now = GetTime()
+    if self.cooldownDebugSpellID then
+      self.cooldownDebugLastPlayerCast = {
+        spellId = spellId,
+        at = now,
+      }
+    end
+
     local affectedAuraIds = self:GetAffectedAurasForSpellIDs({ spellId })
+    if self:IsCooldownDebugSpell(spellId) then
+      self:LogCooldownDebug(
+        spellId,
+        "event:UNIT_SPELLCAST_SUCCEEDED",
+        nil,
+        nil,
+        string.format("castSpell=%s affected=%d", tostring(spellId), #affectedAuraIds)
+      )
+      self:QueueCooldownDebugReason(spellId, "UNIT_SPELLCAST_SUCCEEDED")
+    end
     if #affectedAuraIds == 0 then
       return affectedAuraIds
     end
 
-    local now = GetTime()
     self.recentCasts = self.recentCasts or {}
     local lastCastAt = self.recentCasts[spellId]
     if lastCastAt and (now - lastCastAt) < 0.15 then
@@ -1223,12 +1885,25 @@ function provider:HandleEvent(event, ...)
             if inferredCharges and inferredCharges > 0 then
               self.cache[linkedSpellID].currentCharges = math.max(0, inferredCharges - 1)
             end
+            if self:IsCooldownDebugSpell(linkedSpellID) then
+              self:LogCooldownDebug(
+                linkedSpellID,
+                "event:UNIT_SPELLCAST_SUCCEEDED",
+                aura,
+                nil,
+                string.format("castSpell=%s injectedCooldown=%s", tostring(spellId), QuantizeTime(baseCooldown))
+              )
+              self:QueueCooldownDebugReason(linkedSpellID, "UNIT_SPELLCAST_SUCCEEDED")
+            end
           end
         end
       end
     end
     return affectedAuraIds
   elseif event == "PLAYER_ENTERING_WORLD" or event == "SPELLS_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "PLAYER_SPECIALIZATION_CHANGED" or event == "TRAIT_CONFIG_UPDATED" then
+    if self.cooldownDebugSpellID then
+      self:LogCooldownDebug(self.cooldownDebugSpellID, "event:" .. tostring(event))
+    end
     self.spellAuraIndex = nil
     self.watchedSpellIDs = nil
     self.spellAuraIndexOrder = nil
@@ -1377,14 +2052,13 @@ function provider:Evaluate(trigger, aura)
 
     local liveDuration = cooldown and SafeNumber(cooldown.duration)
     local cooldownActive = IsCooldownActive(cooldown)
-    local cooldownRemaining = (cooldownExpirationTime and cooldownExpirationTime > GetTime()) and (cooldownExpirationTime - GetTime()) or 0
+    local cooldownHasUsableWindow = cooldownDuration and cooldownDuration > 0 and cooldownExpirationTime > GetTime()
     local cooldownLooksLikeGCD = IsLikelyGCD(cooldownDuration)
       or IsLikelyGCD(liveDuration)
-      or IsLikelyGCD(cooldownRemaining)
 
     -- Some direct spell cooldown queries still expose the active GCD as a short
-    -- duration object. Drop that timing before the duration-object path can mark
-    -- the spell cooldown aura active.
+    -- duration object. Filter that from the primary query, but do not classify a
+    -- legitimate cooldown as GCD just because its remaining time is now short.
     if cooldownLooksLikeGCD or cooldownIsOnGCD == true then
       cooldownDuration = 0
       cooldownExpirationTime = 0
@@ -1394,6 +2068,10 @@ function provider:Evaluate(trigger, aura)
 
     local cooldownDurationObjectRemaining = GetDurationObjectRemaining(cooldownDurationObject)
     local cooldownApiActive = SafeBoolean(cooldown and cooldown.isActive) == true
+    local usedCachedTimingForApiDuration = false
+    local renderableCooldownDurationObject = cooldownDurationObject ~= nil
+      and cooldownDurationObjectRemaining ~= nil
+      and cooldownDurationObjectRemaining > 0
     local hasCooldownDurationObject = cooldownDurationObject ~= nil
       and cooldownIsOnGCD ~= true
       and cooldownLooksLikeGCD ~= true
@@ -1402,17 +2080,28 @@ function provider:Evaluate(trigger, aura)
         or cooldownApiActive
         or cooldownActive
       )
-    if isReady and (hasCooldownDurationObject or (cooldownActive and cooldownExpirationTime > GetTime() and cooldownDuration > 0)) then
+    if isReady and (hasCooldownDurationObject or (cooldownActive and cooldownHasUsableWindow)) then
       isReady = false
-      duration = cooldownDuration
-      expirationTime = cooldownExpirationTime
-      activeDurationObject = cooldownDurationObject
-      if cooldownDuration and cooldownDuration > 0 then
+      activeDurationObject = renderableCooldownDurationObject and cooldownDurationObject or nil
+
+      if cooldownHasUsableWindow then
+        duration = cooldownDuration
+        expirationTime = cooldownExpirationTime
         cache.duration = cooldownDuration
+        cache.expirationTime = cooldownExpirationTime
+      elseif hasCooldownDurationObject then
+        local cachedExpirationTime = cache.expirationTime or sharedCache.expirationTime
+        local cachedDuration = cache.duration or sharedCache.duration or configuredCooldown
+        if cachedExpirationTime and cachedExpirationTime > GetTime() and cachedDuration and cachedDuration > 0 then
+          duration = cachedDuration
+          expirationTime = cachedExpirationTime
+          usedCachedTimingForApiDuration = true
+        else
+          duration = 0
+          expirationTime = 0
+        end
       end
-      if cooldownExpirationTime and cooldownExpirationTime > 0 then
-      cache.expirationTime = cooldownExpirationTime
-      end
+
       cache.active = true
       cache.source = hasCooldownDurationObject and "api_duration" or "api"
       cache.deferredByActiveAura = nil
@@ -1680,6 +2369,7 @@ function provider:Evaluate(trigger, aura)
         string.format("learnedGrace=%s", tostring(learnedCastGraceElapsed ~= true)),
         string.format("staleCacheSuppressed=%s", tostring(suppressStaleCachedCooldown == true)),
         string.format("durObj=%s", tostring(hasCooldownDurationObject)),
+        string.format("apiFallbackCache=%s", tostring(usedCachedTimingForApiDuration == true)),
         string.format("chargeObj=%s", tostring(chargeDurationObject ~= nil)),
         string.format("chargeCount=%s", tostring(currentCharges ~= nil and currentCharges or "")),
         string.format("chargeMax=%s", tostring(cache.maxCharges ~= nil and cache.maxCharges or "")),
@@ -1748,6 +2438,46 @@ function provider:Evaluate(trigger, aura)
     end
     if sharedCache.duration and (not self.cache[spellId].duration or self.cache[spellId].duration <= 0) then
       self.cache[spellId].duration = sharedCache.duration
+    end
+  end
+
+  local watchedSpellId = nil
+  for _, spellId in ipairs(spellIDs) do
+    if self:IsCooldownDebugSpell(spellId) then
+      watchedSpellId = spellId
+      break
+    end
+  end
+
+  if watchedSpellId then
+    self.cooldownDebugLastEvalSignatures = self.cooldownDebugLastEvalSignatures or {}
+    local stateKey = tostring(aura and aura.id or watchedSpellId)
+    local evalSignature = table.concat({
+      tostring(finalState.show),
+      tostring(finalState.matched),
+      tostring(finalState.active),
+      tostring(finalState.isReady),
+      tostring(finalState.source or ""),
+      QuantizeTime(finalState.duration),
+      QuantizeTime(finalState.expirationTime),
+      tostring(finalState.stacks or ""),
+      tostring(finalState.stackText or ""),
+      tostring(finalState.statusText or ""),
+      tostring(finalState.debugExtra or ""),
+    }, "|")
+    local pendingReason = self:GetCooldownDebugReason(watchedSpellId)
+    if pendingReason or self.cooldownDebugLastEvalSignatures[stateKey] ~= evalSignature then
+      self.cooldownDebugLastEvalSignatures[stateKey] = evalSignature
+      self:LogCooldownDebug(
+        watchedSpellId,
+        pendingReason and ("eval:" .. tostring(pendingReason)) or "eval:state_changed",
+        aura,
+        finalState,
+        string.format("triggerSpellIDs=%s", table.concat(spellIDs, ","))
+      )
+      if pendingReason and self.cooldownDebugPendingReasons then
+        self.cooldownDebugPendingReasons[watchedSpellId] = nil
+      end
     end
   end
 

@@ -7,12 +7,17 @@ ns.Registry = Registry
 
 Registry.treeDirty = true
 Registry.flatOrderCache = nil
+Registry.flatOrderIndexCache = nil
 
 function Registry:MarkDirty()
   self.treeDirty = true
   self.flatOrderCache = nil
+  self.flatOrderIndexCache = nil
   if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
     ns.TriggerBase:InvalidateProviderCaches()
+  end
+  if ns.runtime and ns.runtime.MarkMissingRegionsDirty then
+    ns.runtime:MarkMissingRegionsDirty()
   end
 end
 
@@ -128,6 +133,7 @@ function Registry:NormalizeTree()
   ns.db.order = normalizedOrder
   self.treeDirty = false
   self.flatOrderCache = nil
+  self.flatOrderIndexCache = nil
 end
 
 function Registry:CreateAura(kind, triggerType)
@@ -331,6 +337,7 @@ function Registry:GetFlatOrder()
   end
 
   local results = {}
+  local indexes = {}
   local visited = {}
 
   local function appendAura(auraId)
@@ -345,6 +352,7 @@ function Registry:GetFlatOrder()
 
     visited[auraId] = true
     results[#results + 1] = auraId
+    indexes[auraId] = #results
 
     for _, childId in ipairs(aura.children or {}) do
       appendAura(childId)
@@ -356,7 +364,13 @@ function Registry:GetFlatOrder()
   end
 
   self.flatOrderCache = results
+  self.flatOrderIndexCache = indexes
   return results
+end
+
+function Registry:GetFlatOrderIndexes()
+  self:GetFlatOrder()
+  return self.flatOrderIndexCache or {}
 end
 
 function Registry:CollectAuraIds(predicate)

@@ -309,6 +309,19 @@ function BarRegion:OnTimerUpdate(now)
 
   local remainingFromObject = ns.TextResolver:GetDurationObjectRemaining(state, now)
   if remainingFromObject ~= nil then
+    local numericRemaining = (tonumber(state.expirationTime or 0) or 0) > 0 and math.max(0, (state.expirationTime or 0) - now) or nil
+    if numericRemaining and math.abs(numericRemaining - remainingFromObject) > 0.75 then
+      local cooldownProvider = ns.providers and ns.providers.spell_cooldown or nil
+      if cooldownProvider and cooldownProvider.LogCooldownRenderDebug then
+        cooldownProvider:LogCooldownRenderDebug(
+          aura,
+          state,
+          self,
+          "render:tick_mismatch",
+          string.format("numRem=%0.3f objRem=%0.3f", numericRemaining, remainingFromObject)
+        )
+      end
+    end
     if remainingFromObject <= 0 then
       ns.runtime:RefreshAura(aura.id)
       return false

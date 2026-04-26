@@ -193,6 +193,11 @@ function ns.Render:RenderAura(aura, state)
     region = self:CreateRegion(aura)
     ns.runtime:SetRegion(aura.id, region)
   end
-  region:Update(aura, state or ns.runtime:GetPresentation(aura.id) or ns.Schema.NormalizeRuntimeState())
+  local presentation = state or ns.runtime:GetPresentation(aura.id) or ns.Schema.NormalizeRuntimeState()
+  region:Update(aura, presentation)
+  local cooldownProvider = ns.providers and ns.providers.spell_cooldown or nil
+  if cooldownProvider and cooldownProvider.LogCooldownRenderDebug then
+    cooldownProvider:LogCooldownRenderDebug(aura, presentation, region, "render:update")
+  end
   ProfileFinish(renderBucket, renderProfile)
 end

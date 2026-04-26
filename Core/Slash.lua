@@ -119,6 +119,23 @@ local function ShowPerfDebugReport(lines)
   end
 end
 
+local function ShowLiveDebugWindow()
+  if not (ns.Debug and ns.Debug.CreateWindow) then
+    return
+  end
+
+  local frame = ns.Debug:CreateWindow()
+  if ns.Debug.ResumeLive then
+    ns.Debug:ResumeLive()
+  end
+  if not frame:IsShown() then
+    frame:Show()
+  end
+  if ns.Debug.RefreshWindow then
+    ns.Debug:RefreshWindow()
+  end
+end
+
 local function GetHelpLines()
   return {
     "PopAuras commands:",
@@ -126,6 +143,8 @@ local function GetHelpLines()
     "/pa help - show this command list",
     "/pa debug - open the debug window",
     "/pa memory - print memory and cache stats",
+    "/pa cddebug <spell id|exact name> - watch one cooldown with targeted debug logging",
+    "/pa cddebug now|show|status|off - snapshot, open history, check status, or stop watching",
     "/pa perf - toggle the on-screen perf button",
     "/pa perf start - start perf capture",
     "/pa perf stop - stop perf capture, print report, and open a copyable debug report",
@@ -279,7 +298,8 @@ local function TogglePerfOverlay()
 end
 
 local function HandleSlashCommand(msg)
-  msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+  local rawMsg = tostring(msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  msg = rawMsg:lower()
   if msg == "debug" then
     if ns.Debug and ns.Debug.ToggleWindow then
       ns.Debug:ToggleWindow()
@@ -292,6 +312,65 @@ local function HandleSlashCommand(msg)
   end
   if msg == "help" then
     WriteChatLines(GetHelpLines())
+    return
+  end
+  if msg == "cddebug" or msg:find("^cddebug%s") then
+    local provider = ns.providers and ns.providers.spell_cooldown or nil
+    if not provider then
+      WriteChatLine("Spell cooldown debug is unavailable right now.")
+      return
+    end
+
+    local command = msg:match("^cddebug%s*(.-)%s*$") or ""
+    local rawCommand = rawMsg:match("^cddebug%s*(.-)%s*$") or ""
+    if command == "" or command == "status" then
+      if provider.GetCooldownDebugStatusLine then
+        WriteChatLine(provider:GetCooldownDebugStatusLine())
+      end
+      return
+    end
+    if command == "off" or command == "stop" or command == "clear" then
+      if provider.ClearCooldownDebugSpell then
+        provider:ClearCooldownDebugSpell()
+      end
+      WriteChatLine("Cooldown debug watch stopped.")
+      return
+    end
+    if command == "show" or command == "report" then
+      if provider.ShowCooldownDebugHistory then
+        provider:ShowCooldownDebugHistory()
+      end
+      return
+    end
+    if command == "now" or command == "snapshot" then
+      if provider.CaptureCooldownDebugSnapshot and provider:CaptureCooldownDebugSnapshot("manual_snapshot") then
+        WriteChatLine("Captured a cooldown debug snapshot.")
+      else
+        WriteChatLine("Enable cooldown debug first with /pa cddebug <spell id|exact name>.")
+      end
+      return
+    end
+
+    local spellId, resolveError = nil, nil
+    if provider.ResolveCooldownDebugSpellID then
+      spellId, resolveError = provider:ResolveCooldownDebugSpellID(rawCommand)
+    end
+    if type(spellId) ~= "number" or spellId <= 0 then
+      WriteChatLine(resolveError or "Unable to resolve that cooldown spell. Use the numeric spell ID if needed.")
+      return
+    end
+
+    if ns.Debug and ns.Debug.Clear then
+      ns.Debug:Clear()
+    end
+    ShowLiveDebugWindow()
+    if provider.SetCooldownDebugSpell then
+      provider:SetCooldownDebugSpell(spellId)
+    end
+    WriteChatLine(string.format(
+      "Watching cooldown debug for %s. Reproduce the issue, then use /pa cddebug show.",
+      (provider.GetCooldownDebugSpellLabel and provider:GetCooldownDebugSpellLabel()) or tostring(spellId)
+    ))
     return
   end
   if msg == "perf" or msg:find("^perf%s") then

@@ -11,6 +11,7 @@ RuntimeStore.activationCounter = 0
 RuntimeStore.timedRegions = {}
 RuntimeStore.timedStateAuras = {}
 RuntimeStore.timerElapsed = 0
+RuntimeStore.missingRegionsDirty = true
 
 local TIMED_UPDATE_INTERVAL = 0.05
 
@@ -130,6 +131,10 @@ function RuntimeStore:SetRegion(auraId, region)
   self.regions[auraId] = region
 end
 
+function RuntimeStore:MarkMissingRegionsDirty()
+  self.missingRegionsDirty = true
+end
+
 function RuntimeStore:EnsureTimerDriver()
   if self.timerFrame then
     return
@@ -223,6 +228,10 @@ function RuntimeStore:UnregisterTimedRegion(auraId)
 end
 
 function RuntimeStore:ReleaseMissingRegions()
+  if self.missingRegionsDirty ~= true then
+    return
+  end
+
   for auraId, region in pairs(self.regions) do
     if not ns.Registry:GetAura(auraId) then
       self:UnregisterTimedRegion(auraId)
@@ -238,6 +247,8 @@ function RuntimeStore:ReleaseMissingRegions()
       self.timedStateAuras[auraId] = nil
     end
   end
+
+  self.missingRegionsDirty = false
 end
 
 function RuntimeStore:GetActivationOrder(auraId)
@@ -263,6 +274,10 @@ local function GetAuraDepth(auraId)
     cursor = ns.Registry:GetAura(cursor.parentId)
   end
   return depth
+end
+
+local function GetFlatOrderIndex(indexes, auraId)
+  return indexes and indexes[auraId] or math.huge
 end
 
 function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
@@ -373,25 +388,49 @@ function RuntimeStore:RefreshAuras(auraIds, skipVisibilitySync)
     groupSet[ancestorId] = true
   end
 
-  for _, auraId in ipairs(ns.Registry:GetFlatOrder()) do
-    if leafSet[auraId] then
-      self:RefreshAura(auraId, true)
+  local flatOrderIndexes = ns.Registry.GetFlatOrderIndexes and ns.Registry:GetFlatOrderIndexes() or nil
+  local leafEntries = {}
+  for auraId in pairs(leafSet) do
+    leafEntries[#leafEntries + 1] = {
+      auraId = auraId,
+      index = GetFlatOrderIndex(flatOrderIndexes, auraId),
+    }
+  end
+  table.sort(leafEntries, function(left, right)
+    if left.index == right.index then
+      return tostring(left.auraId) < tostring(right.auraId)
     end
+    return left.index < right.index
+  end)
+
+  for _, entry in ipairs(leafEntries) do
+    self:RefreshAura(entry.auraId, true)
   end
 
   local groups = {}
   for auraId, depth in pairs(ancestorDepths) do
-    groups[#groups + 1] = { auraId = auraId, depth = depth }
+    groups[#groups + 1] = {
+      auraId = auraId,
+      depth = depth,
+      index = GetFlatOrderIndex(flatOrderIndexes, auraId),
+    }
   end
   for auraId in pairs(groupSet) do
     if not ancestorDepths[auraId] then
-      groups[#groups + 1] = { auraId = auraId, depth = 0 }
+      groups[#groups + 1] = {
+        auraId = auraId,
+        depth = 0,
+        index = GetFlatOrderIndex(flatOrderIndexes, auraId),
+      }
     end
   end
 
   table.sort(groups, function(left, right)
     if left.depth == right.depth then
-      return tostring(left.auraId) < tostring(right.auraId)
+      if left.index == right.index then
+        return tostring(left.auraId) < tostring(right.auraId)
+      end
+      return left.index < right.index
     end
     return left.depth > right.depth
   end)
