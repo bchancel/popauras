@@ -333,7 +333,7 @@ local function GetSpellCooldownTiming(spellId, cooldown)
         expirationTime = now + remaining
       elseif endTime and endTime > now then
         expirationTime = endTime
-      elseif startTime and duration and duration > 0 then
+      elseif startTime and startTime > 0 and duration and duration > 0 then
         expirationTime = startTime + duration
       end
       if duration <= 0 and startTime and endTime and endTime > startTime then
@@ -352,7 +352,7 @@ local function GetSpellCooldownTiming(spellId, cooldown)
   if expirationTime <= 0 then
     local startTime = cooldown and SafeNumber(cooldown.startTime)
     local liveDuration = cooldown and SafeNumber(cooldown.duration)
-    if startTime and liveDuration and liveDuration > 0 and isOnGCD ~= true and not IsLikelyGCD(liveDuration) then
+    if startTime and startTime > 0 and liveDuration and liveDuration > 0 and isOnGCD ~= true and not IsLikelyGCD(liveDuration) then
       expirationTime = startTime + liveDuration
     end
   end
@@ -556,7 +556,7 @@ local function GetSpellChargeTiming(spellId, chargeInfo)
         expirationTime = now + remaining
       elseif endTime and endTime > now then
         expirationTime = endTime
-      elseif startTime and duration and duration > 0 then
+      elseif startTime and startTime > 0 and duration and duration > 0 then
         expirationTime = startTime + duration
       end
       if duration <= 0 and startTime and endTime and endTime > startTime then
@@ -567,7 +567,7 @@ local function GetSpellChargeTiming(spellId, chargeInfo)
 
   if expirationTime <= 0 then
     local startTime = chargeInfo and SafeNumber(chargeInfo.cooldownStartTime)
-    if startTime and duration and duration > 0 then
+    if startTime and startTime > 0 and duration and duration > 0 then
       expirationTime = startTime + duration
     end
   end
@@ -586,6 +586,13 @@ local function GetCDMState(spellId)
   return ns.CooldownManager:GetCooldownStateForSpell(spellId)
 end
 
+local function HasRecoverableCDMObjectSignal(cdmState)
+  return type(cdmState) == "table"
+    and cdmState.active == true
+    and cdmState.isOnGCD ~= true
+    and cdmState.durationObject ~= nil
+end
+
 local function IsUsableCDMCooldownState(cdmState)
   if type(cdmState) ~= "table" or cdmState.active ~= true then
     return false
@@ -597,6 +604,24 @@ local function IsUsableCDMCooldownState(cdmState)
   end
 
   return IsUsableCooldownDuration(cdmState.duration, cdmState.expirationTime, false)
+end
+
+local function GetRecentCastFallbackCooldownDuration(spellId, cache, sharedCache, configuredCooldown, cdmState)
+  local candidates = {
+    SafeNumber(cache and cache.duration),
+    SafeNumber(sharedCache and sharedCache.duration),
+    SafeNumber(configuredCooldown),
+    SafeNumber(cdmState and cdmState.maxDuration),
+    GetBaseCooldownSeconds(spellId),
+  }
+
+  for _, candidate in ipairs(candidates) do
+    if candidate and candidate > 0 and not IsLikelyGCD(candidate) then
+      return candidate
+    end
+  end
+
+  return 0
 end
 
 local function GetCDMAuraState(spellId)
@@ -643,7 +668,7 @@ local function GetSecretSafeAuraTiming(unit, auraInstanceID, auraData)
         expirationTime = now + remaining
       elseif endTime and endTime > now then
         expirationTime = endTime
-      elseif startTime and duration and duration > 0 then
+      elseif startTime and startTime > 0 and duration and duration > 0 then
         expirationTime = startTime + duration
       end
       if duration <= 0 and startTime and endTime and endTime > startTime then
@@ -655,7 +680,7 @@ local function GetSecretSafeAuraTiming(unit, auraInstanceID, auraData)
         startTime = SafeNumber(rawDurationObject.startTime) or startTime
         if remaining and remaining > 0 then
           expirationTime = now + remaining
-        elseif startTime and duration and duration > 0 then
+        elseif startTime and startTime > 0 and duration and duration > 0 then
           expirationTime = startTime + duration
         end
       end
@@ -2283,6 +2308,26 @@ function provider:Evaluate(trigger, aura)
       cache.deferredByActiveAura = nil
       cache.deferredExpirationTime = nil
       cacheExpirationTime = 0
+    end
+    if isReady and not activeAuraOnly and not cdmStateActive and HasRecoverableCDMObjectSignal(cdmState) and lastCastAt then
+      local fallbackDuration = GetRecentCastFallbackCooldownDuration(spellId, cache, sharedCache, configuredCooldown, cdmState)
+      local fallbackExpirationTime = fallbackDuration > 0 and (lastCastAt + fallbackDuration) or 0
+      if fallbackExpirationTime > (GetTime() + 0.15) then
+        isReady = false
+        duration = fallbackDuration
+        expirationTime = fallbackExpirationTime
+        activeDurationObject = nil
+        cache.duration = fallbackDuration
+        cache.expirationTime = fallbackExpirationTime
+        cache.active = true
+        cache.cooldownID = cdmState.cooldownID or cache.cooldownID
+        cache.source = "cdm_recent_cast"
+        cache.deferredByActiveAura = nil
+        cache.deferredExpirationTime = nil
+        source = "cdm_recent_cast"
+        cacheExpirationTime = fallbackExpirationTime
+        cacheDuration = fallbackDuration
+      end
     end
     if isReady and not activeAuraOnly and cacheExpirationTime and cacheExpirationTime > GetTime() then
       isReady = false

@@ -639,8 +639,8 @@ local function FindAura(unit, matchData, isHelpful, trigger)
 
   if not requirePlayerCaster and AuraUtil and AuraUtil.FindAuraBySpellID then
     for _, spellId in ipairs(spellIDs) do
-      local aura = AuraUtil.FindAuraBySpellID(spellId, unit, filter)
-      if aura then
+      local ok, aura = pcall(AuraUtil.FindAuraBySpellID, spellId, unit, filter)
+      if ok and aura then
         return aura, BuildAuraLookupInfo(aura, "aurautil_spell_id", isHelpful, "querySpellId", spellId, false)
       end
     end
@@ -648,8 +648,8 @@ local function FindAura(unit, matchData, isHelpful, trigger)
 
   if not requirePlayerCaster and AuraUtil and AuraUtil.FindAuraByName then
     for _, spellName in ipairs(matchData.exactNames or EMPTY_MATCH_DATA.exactNames) do
-      local aura = AuraUtil.FindAuraByName(spellName, unit, filter)
-      if aura then
+      local ok, aura = pcall(AuraUtil.FindAuraByName, spellName, unit, filter)
+      if ok and aura then
         return aura, BuildAuraLookupInfo(aura, "aurautil_name", isHelpful, "querySpellName", spellName, false)
       end
     end
