@@ -1,3 +1,7 @@
+# v0.4.1
+- Player buff icons and aura list rows can now right-click to cancel buffs
+- Improved aura and unit handling for secret-value / Blizzard AuraUtil edge cases
+
 # v0.3.11
 - Fixed CDM-backed spell cooldown bars getting stuck on stale timers when Cooldown Manager already showed the spell as ready
 - Reduced spell cooldown overhead during `SPELL_UPDATE_COOLDOWN` and `SPELL_UPDATE_CHARGES` 

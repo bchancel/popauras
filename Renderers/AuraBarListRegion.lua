@@ -467,23 +467,27 @@ local function BuildPreviewEntries()
     {
       name = "Power Word: Fortitude",
       icon = 135987,
+      helpful = true,
       duration = 30,
       expirationTime = now + 30,
       hasExpiration = true,
       progressType = "timed",
       value = 30,
       total = 30,
+      source = "preview",
       unit = "player",
     },
     {
       name = "Renew",
       icon = 135953,
+      helpful = true,
       duration = 12,
       expirationTime = now + 12,
       hasExpiration = true,
       progressType = "timed",
       value = 12,
       total = 12,
+      source = "preview",
       unit = "player",
       stacks = 2,
       stackText = "2",
@@ -493,12 +497,14 @@ local function BuildPreviewEntries()
     {
       name = "Weakened Soul",
       icon = 136214,
+      helpful = false,
       duration = 8,
       expirationTime = now + 8,
       hasExpiration = true,
       progressType = "timed",
       value = 8,
       total = 8,
+      source = "preview",
       unit = "player",
     },
   }
@@ -625,6 +631,7 @@ function AuraBarListRegion:ApplyRow(aura, row, entry)
   local barAlpha = (entry and isVisuallyPermanent == true)
     and GetPermanentAlpha(display)
     or 1
+  local editorOpen = BaseRegion:IsEditModeActive() == true
 
   row:Show()
   row:SetAlpha(1)
@@ -645,6 +652,12 @@ function AuraBarListRegion:ApplyRow(aura, row, entry)
 
   local tooltipsEnabled = BaseRegion:CanMove(aura) ~= true
   row._popAurasAuraEntry = tooltipsEnabled and entry or nil
+  local rowCancelEnabled = false
+  if not editorOpen then
+    rowCancelEnabled = BaseRegion:ConfigureAuraCancellation(row, entry)
+  else
+    BaseRegion:ConfigureAuraCancellation(row, nil)
+  end
 
   if display.icon ~= false then
     local iconSize = display.iconMatchBarSize and ((orientation == "VERTICAL") and row:GetWidth() or row:GetHeight()) or (display.iconSize or row:GetHeight())
@@ -652,14 +665,21 @@ function AuraBarListRegion:ApplyRow(aura, row, entry)
     ApplyIconPlacement(row.iconHolder, row, display)
     row.icon:SetTexture(Spells:ResolveDisplayIcon(aura, entry))
     row.iconHolder._popAurasAuraEntry = tooltipsEnabled and entry or nil
-    row.iconHolder:EnableMouse(tooltipsEnabled)
+    local iconCancelEnabled = false
+    if not editorOpen then
+      iconCancelEnabled = BaseRegion:ConfigureAuraCancellation(row.iconHolder, entry)
+    else
+      BaseRegion:ConfigureAuraCancellation(row.iconHolder, nil)
+    end
+    row.iconHolder:EnableMouse(tooltipsEnabled or iconCancelEnabled)
     row.iconHolder:Show()
   else
     row.iconHolder._popAurasAuraEntry = nil
+    BaseRegion:ConfigureAuraCancellation(row.iconHolder, nil)
     row.iconHolder:EnableMouse(false)
     row.iconHolder:Hide()
   end
-  row:EnableMouse(tooltipsEnabled)
+  row:EnableMouse(tooltipsEnabled or rowCancelEnabled)
 
   row.labelText:SetShown(display.showName == true)
   row.stackText:SetShown(display.showStacks == true)

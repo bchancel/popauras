@@ -46,6 +46,26 @@ local function MergeStates(base, nextState, op)
     end
     if nextState.auraInstanceID ~= nil then
       base.auraInstanceID = nextState.auraInstanceID
+      base.helpful = nextState.helpful
+      base.auraIndex = nextState.auraIndex
+      if nextState.unit ~= nil then
+        base.unit = nextState.unit
+      end
+      if nextState.spellId ~= nil then
+        base.spellId = nextState.spellId
+      end
+    end
+    if base.unit == nil and nextState.unit ~= nil then
+      base.unit = nextState.unit
+    end
+    if base.helpful == nil and nextState.helpful ~= nil then
+      base.helpful = nextState.helpful
+    end
+    if base.auraIndex == nil and nextState.auraIndex ~= nil then
+      base.auraIndex = nextState.auraIndex
+    end
+    if base.spellId == nil and nextState.spellId ~= nil then
+      base.spellId = nextState.spellId
     end
     if nextState.durationObject or (nextState.duration and nextState.duration > 0) then
       base.duration = nextState.duration

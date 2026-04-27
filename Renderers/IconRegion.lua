@@ -21,6 +21,7 @@ function IconRegion:New(aura)
 
   instance.cooldown = CreateFrame("Cooldown", nil, instance.frame, "CooldownFrameTemplate")
   instance.cooldown:SetAllPoints()
+  instance.cooldown:EnableMouse(false)
 
   instance.overlay = CreateFrame("Frame", nil, instance.frame)
   instance.overlay:SetAllPoints()
@@ -200,6 +201,13 @@ function IconRegion:Update(aura, state)
   BaseRegion:ApplyAnchor(aura, self.frame)
   BaseRegion:ApplyFrameLayer(aura, self.frame, self.overlay)
   BaseRegion:ApplyCommonAppearance(aura, self.frame, state)
+  local cancelEnabled = false
+  if state.show and BaseRegion:IsEditModeActive() ~= true then
+    cancelEnabled = BaseRegion:ConfigureAuraCancellation(self.frame, state)
+  else
+    BaseRegion:ConfigureAuraCancellation(self.frame, nil)
+  end
+  self.frame:EnableMouse(BaseRegion:CanMove(aura) == true or cancelEnabled)
   self.icon:SetTexture(Spells:ResolveDisplayIcon(aura, state))
   local remainingFromObject = ns.TextResolver:GetDurationObjectRemaining(state)
   local readyLookActive = aura.display.readyLook == true and ns.TextResolver:IsReadyState(state, remainingFromObject)

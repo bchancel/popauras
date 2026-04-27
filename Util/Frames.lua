@@ -14,6 +14,9 @@ function Frames.MakeMovable(frame, onStop)
     if InCombatLockdown() then
       return
     end
+    if not (ns.ui and ns.ui.MainWindow and ns.ui.MainWindow.IsOpen and ns.ui.MainWindow:IsOpen()) then
+      return
+    end
     self:StartMoving()
   end)
   frame:SetScript("OnDragStop", function(self)

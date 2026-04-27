@@ -1216,6 +1216,7 @@ local function BuildStateFromAuraData(auraData, matchedUnit, helpful, fallbackNa
     return nil
   end
   local auraInstanceID = auraData.auraInstanceID
+  local auraIndex = SafeAuraNumber(auraData.index, nil)
   local duration, expirationTime, durationObject = GetSecretSafeAuraTiming(matchedUnit, auraInstanceID, auraData)
   local stacks, stackText, stackDisplayValue, hasStackDisplayValue = GetSecretSafeAuraStacks(matchedUnit, auraInstanceID, auraData)
   if (stacks or 0) <= 0 and trigger and matchedUnit then
@@ -1275,6 +1276,8 @@ local function BuildStateFromAuraData(auraData, matchedUnit, helpful, fallbackNa
     value = duration,
     total = duration,
     unit = matchedUnit,
+    helpful = helpful,
+    auraIndex = auraIndex,
     auraInstanceID = auraInstanceID,
     spellId = auraSpellId,
     source = "aura",
@@ -1349,6 +1352,8 @@ local function CloneRuntimeState(state)
     isUsable = state.isUsable,
     isReady = state.isReady,
     unit = state.unit,
+    helpful = state.helpful,
+    auraIndex = state.auraIndex,
     auraInstanceID = state.auraInstanceID,
     spellId = state.spellId,
     itemId = state.itemId,

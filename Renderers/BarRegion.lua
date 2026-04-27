@@ -56,6 +56,7 @@ function BarRegion:New(aura)
 
   instance.timerCooldown = CreateFrame("Cooldown", nil, instance.overlay, "CooldownFrameTemplate")
   instance.timerCooldown:SetAllPoints()
+  instance.timerCooldown:EnableMouse(false)
   if instance.timerCooldown.SetDrawSwipe then
     instance.timerCooldown:SetDrawSwipe(false)
   end
@@ -223,6 +224,13 @@ function BarRegion:Update(aura, state)
 
   local glowTarget = aura.display.icon and self.iconHolder or self.frame
   BaseRegion:ApplyCommonAppearance(aura, self.frame, state, glowTarget)
+  local cancelEnabled = false
+  if state.show and BaseRegion:IsEditModeActive() ~= true then
+    cancelEnabled = BaseRegion:ConfigureAuraCancellation(self.frame, state)
+  else
+    BaseRegion:ConfigureAuraCancellation(self.frame, nil)
+  end
+  self.frame:EnableMouse(BaseRegion:CanMove(aura) == true or cancelEnabled)
 
   self.labelText:SetShown(aura.display.showName == true)
   self.timerText:SetShown(aura.display.showTimer == true and not useNativeCooldownText)
@@ -242,7 +250,11 @@ function BarRegion:Update(aura, state)
 
   local remaining = state.progressType == "timed" and math.max(0, (state.expirationTime or 0) - GetTime()) or state.value
   local total = state.progressType == "timed" and (state.duration > 0 and state.duration or remaining) or math.max(1, state.total or 1)
-  if state.durationObject and self.bar.SetTimerDuration then
+  local usingDurationObjectTimer = state.durationObject ~= nil and self.bar.SetTimerDuration ~= nil
+  local transitioningToOpaqueObjectTimer = usingDurationObjectTimer
+    and self._usingDurationObjectTimer ~= true
+    and remainingFromObject == nil
+  if usingDurationObjectTimer then
     local direction = STATUS_BAR_DIRECTION and (
       aura.display.reverse == true
         and STATUS_BAR_DIRECTION.ElapsedTime
@@ -250,6 +262,9 @@ function BarRegion:Update(aura, state)
     ) or nil
     local interpolation = STATUS_BAR_INTERPOLATION and STATUS_BAR_INTERPOLATION.Immediate or nil
     self.bar:SetMinMaxValues(0, 1)
+    if transitioningToOpaqueObjectTimer then
+      self.bar:SetValue(aura.display.reverse == true and 1 or 0)
+    end
     if interpolation ~= nil or direction ~= nil then
       self.bar:SetTimerDuration(state.durationObject, interpolation, direction)
     else
@@ -298,6 +313,8 @@ function BarRegion:Update(aura, state)
   else
     ns.runtime:UnregisterTimedRegion(aura.id)
   end
+
+  self._usingDurationObjectTimer = usingDurationObjectTimer == true
 end
 
 function BarRegion:OnTimerUpdate(now)

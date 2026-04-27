@@ -196,13 +196,202 @@ function BaseRegion:CreateFrame(aura)
   return frame
 end
 
-function BaseRegion:CanMove(aura)
-  return aura
-    and not aura.parentId
-    and ns.ui
+function BaseRegion:IsEditModeActive()
+  return ns.ui
     and ns.ui.MainWindow
     and ns.ui.MainWindow.IsOpen
     and ns.ui.MainWindow:IsOpen()
+end
+
+function BaseRegion:CanMove(aura)
+  return aura
+    and not aura.parentId
+    and self:IsEditModeActive()
+end
+
+local function GetAuraCancelName(cancelData)
+  local name = cancelData and cancelData.name or nil
+  if type(name) == "string" and name ~= "" then
+    return name
+  end
+  return nil
+end
+
+local function GetAuraCancelIndex(cancelData)
+  local index = tonumber((cancelData and (cancelData.index or cancelData.auraIndex)) or 0) or 0
+  if index > 0 then
+    return index
+  end
+  return nil
+end
+
+local function CanCancelPlayerAura(cancelData)
+  if type(cancelData) ~= "table" then
+    return false
+  end
+  if cancelData.source == "preview" then
+    return false
+  end
+  if cancelData.unit ~= "player" or cancelData.helpful ~= true then
+    return false
+  end
+
+  local auraInstanceID = tonumber(cancelData.auraInstanceID or 0) or 0
+  if auraInstanceID > 0 and C_UnitAuras and C_UnitAuras.CancelAuraByAuraInstanceID then
+    return true
+  end
+
+  local auraIndex = GetAuraCancelIndex(cancelData)
+  if auraIndex ~= nil and CancelUnitBuff then
+    return true
+  end
+
+  local auraName = GetAuraCancelName(cancelData)
+  if auraName ~= nil and (CancelUnitBuff or CancelSpellByName) then
+    return true
+  end
+
+  return false
+end
+
+local function TryCancelPlayerAura(cancelData)
+  if not CanCancelPlayerAura(cancelData) then
+    return false
+  end
+
+  local function IsAuraStillPresent()
+    local auraInstanceID = tonumber(cancelData.auraInstanceID or 0) or 0
+    if auraInstanceID > 0 and C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+      local ok, auraData = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, "player", auraInstanceID)
+      return ok and auraData ~= nil
+    end
+
+    local spellId = tonumber(cancelData.spellId or 0) or 0
+    if spellId > 0 then
+      if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local ok, auraData = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellId)
+        return ok and auraData ~= nil
+      end
+      if GetPlayerAuraBySpellID then
+        local ok, auraData = pcall(GetPlayerAuraBySpellID, spellId)
+        return ok and auraData ~= nil
+      end
+    end
+
+    local auraName = GetAuraCancelName(cancelData)
+    if auraName ~= nil and AuraUtil and AuraUtil.FindAuraByName then
+      local ok, auraData = pcall(AuraUtil.FindAuraByName, auraName, "player", "HELPFUL")
+      return ok and auraData ~= nil
+    end
+
+    return false
+  end
+
+  local function TryCancelCall(func, ...)
+    if type(func) ~= "function" then
+      return false
+    end
+
+    local ok = pcall(func, ...)
+    if not ok then
+      return false
+    end
+
+    return IsAuraStillPresent() ~= true
+  end
+
+  local function DoesAuraIndexMatch(auraIndex)
+    if auraIndex == nil then
+      return false
+    end
+
+    local targetSpellId = tonumber(cancelData.spellId or 0) or 0
+    local targetName = GetAuraCancelName(cancelData)
+    local liveSpellId, liveName = 0, nil
+
+    if C_UnitAuras and C_UnitAuras.GetBuffDataByIndex then
+      local ok, auraData = pcall(C_UnitAuras.GetBuffDataByIndex, "player", auraIndex)
+      if ok and auraData then
+        liveSpellId = tonumber(auraData.spellId or 0) or 0
+        liveName = auraData.name
+      end
+    elseif UnitBuff then
+      local results = { pcall(UnitBuff, "player", auraIndex) }
+      if results[1] then
+        liveName = results[2]
+        liveSpellId = tonumber(results[11] or 0) or 0
+      end
+    end
+
+    if targetSpellId > 0 and liveSpellId > 0 then
+      return targetSpellId == liveSpellId
+    end
+    if type(targetName) == "string" and targetName ~= "" and type(liveName) == "string" and liveName ~= "" then
+      return targetName == liveName
+    end
+
+    return liveSpellId > 0 or (type(liveName) == "string" and liveName ~= "")
+  end
+
+  local unit = cancelData.unit or "player"
+  local auraInstanceID = tonumber(cancelData.auraInstanceID or 0) or 0
+  if auraInstanceID > 0 and C_UnitAuras and C_UnitAuras.CancelAuraByAuraInstanceID then
+    if TryCancelCall(C_UnitAuras.CancelAuraByAuraInstanceID, unit, auraInstanceID) then
+      return true
+    end
+  end
+
+  local auraIndex = GetAuraCancelIndex(cancelData)
+  if auraIndex ~= nil and CancelUnitBuff and DoesAuraIndexMatch(auraIndex) then
+    if TryCancelCall(CancelUnitBuff, unit, auraIndex, "HELPFUL") then
+      return true
+    end
+    if TryCancelCall(CancelUnitBuff, unit, auraIndex) then
+      return true
+    end
+  end
+
+  local auraName = GetAuraCancelName(cancelData)
+  if auraName ~= nil and CancelSpellByName then
+    if TryCancelCall(CancelSpellByName, auraName) then
+      return true
+    end
+  end
+
+  if auraName ~= nil and CancelUnitBuff then
+    if TryCancelCall(CancelUnitBuff, unit, auraName, "HELPFUL") then
+      return true
+    end
+    if TryCancelCall(CancelUnitBuff, unit, auraName) then
+      return true
+    end
+  end
+
+  return false
+end
+
+function BaseRegion:ConfigureAuraCancellation(frame, cancelData)
+  if not frame then
+    return false
+  end
+
+  if frame._popAurasAuraCancelHooked ~= true then
+    frame:HookScript("OnMouseUp", function(self, mouseButton)
+      if mouseButton ~= "RightButton" then
+        return
+      end
+      TryCancelPlayerAura(self._popAurasAuraCancelData)
+    end)
+    frame._popAurasAuraCancelHooked = true
+  end
+
+  if CanCancelPlayerAura(cancelData) then
+    frame._popAurasAuraCancelData = cancelData
+    return true
+  end
+
+  frame._popAurasAuraCancelData = nil
+  return false
 end
 
 function BaseRegion:ApplyAnchor(aura, frame)

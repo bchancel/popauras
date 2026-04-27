@@ -181,6 +181,30 @@ local function GetDurationObjectRemaining(durationObject)
   return nil
 end
 
+local function GetDurationObjectTiming(durationObject)
+  if not durationObject then
+    return 0, 0, nil
+  end
+
+  local now = GetTime()
+  local remaining = GetDurationObjectRemaining(durationObject)
+  local totalDuration = CallDurationObjectMethod(durationObject, "GetTotalDuration") or 0
+  local endTime = CallDurationObjectMethod(durationObject, "GetEndTime") or 0
+  local expirationTime = 0
+
+  if endTime > now then
+    expirationTime = endTime
+  elseif remaining ~= nil and remaining > 0 then
+    expirationTime = now + remaining
+  end
+
+  if totalDuration <= 0 and remaining ~= nil and remaining > 0 then
+    totalDuration = remaining
+  end
+
+  return totalDuration, expirationTime, remaining
+end
+
 local function IsLikelyGCD(duration)
   return type(duration) == "number" and duration > 0 and duration <= 1.6
 end
@@ -1053,6 +1077,7 @@ local function BuildChargeDebugSummary(spellId)
 end
 
 local function BuildCDMDebugSummary(cdmState, cdmAuraDetails)
+  local cdmObjectDuration, cdmObjectExpirationTime, cdmObjectRemaining = GetDurationObjectTiming(cdmState and cdmState.durationObject or nil)
   local cdmLine = BuildDebugBits({
     string.format("id=%s", tostring(cdmState and cdmState.cooldownID or "")),
     string.format("active=%s", tostring(cdmState and cdmState.active == true)),
@@ -1065,6 +1090,9 @@ local function BuildCDMDebugSummary(cdmState, cdmAuraDetails)
     string.format("count=%s", tostring(cdmState and cdmState.count or "")),
     string.format("text=%s", tostring(cdmState and cdmState.countText or "")),
     string.format("obj=%s", tostring(cdmState and cdmState.durationObject ~= nil)),
+    string.format("objDur=%s", QuantizeTime(cdmObjectDuration > 0 and cdmObjectDuration or nil)),
+    string.format("objExp=%s", QuantizeTime(cdmObjectExpirationTime > 0 and cdmObjectExpirationTime or nil)),
+    string.format("objRem=%s", QuantizeTime(cdmObjectRemaining)),
   })
   local auraLine = BuildDebugBits({
     string.format("active=%s", tostring(cdmAuraDetails and cdmAuraDetails.active == true)),
@@ -2309,7 +2337,17 @@ function provider:Evaluate(trigger, aura)
       cache.deferredExpirationTime = nil
       cacheExpirationTime = 0
     end
-    if isReady and not activeAuraOnly and not cdmStateActive and HasRecoverableCDMObjectSignal(cdmState) and lastCastAt then
+    local hasSingleChargeStyleCooldown = allowChargeTracking
+      and type(chargeInfo) == "table"
+      and (SafeNumber(chargeInfo.maxCharges) or 0) == 1
+
+    if isReady
+      and not activeAuraOnly
+      and not cdmStateActive
+      and hasSingleChargeStyleCooldown
+      and HasRecoverableCDMObjectSignal(cdmState)
+      and lastCastAt
+    then
       local fallbackDuration = GetRecentCastFallbackCooldownDuration(spellId, cache, sharedCache, configuredCooldown, cdmState)
       local fallbackExpirationTime = fallbackDuration > 0 and (lastCastAt + fallbackDuration) or 0
       if fallbackExpirationTime > (GetTime() + 0.15) then
@@ -2333,6 +2371,9 @@ function provider:Evaluate(trigger, aura)
       isReady = false
       duration = cacheDuration or GetConfiguredCooldown(trigger, spellId)
       expirationTime = cacheExpirationTime
+      if activeDurationObject == nil and (cache.source == "api_duration" or sharedCache.source == "api_duration") and HasRecoverableCDMObjectSignal(cdmState) then
+        activeDurationObject = cdmState.durationObject
+      end
       source = cache.source or sharedCache.source or "learned_cast"
     end
 
@@ -2341,6 +2382,16 @@ function provider:Evaluate(trigger, aura)
       duration = 0
       expirationTime = 0
       cache.active = false
+    end
+
+    if not isReady
+      and activeDurationObject == nil
+      and source == "api_duration"
+      and type(cdmState) == "table"
+      and cdmState.durationObject ~= nil
+      and cdmState.isOnGCD ~= true
+    then
+      activeDurationObject = cdmState.durationObject
     end
 
     if not cache.duration or cache.duration <= 0 then
