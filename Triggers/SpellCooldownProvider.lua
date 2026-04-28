@@ -1919,6 +1919,12 @@ function provider:HandleEvent(event, ...)
               baseCooldown = configuredCooldown
               break
             end
+
+            local staticBaseCooldown = GetBaseCooldownSeconds(linkedSpellID)
+            if staticBaseCooldown and staticBaseCooldown > 0 and not IsLikelyGCD(staticBaseCooldown) then
+              baseCooldown = staticBaseCooldown
+              break
+            end
           end
         end
 

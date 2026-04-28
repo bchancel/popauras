@@ -1,3 +1,6 @@
+# v0.4.2
+- Improved spell cooldowns when CDM fails to give stack data
+
 # v0.4.1
 - Player buff icons and aura list rows can now right-click to cancel buffs
 - Improved aura and unit handling for secret-value / Blizzard AuraUtil edge cases
