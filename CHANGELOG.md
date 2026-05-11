@@ -1,3 +1,6 @@
+# v0.4.4
+- Improved talent loadout selector to support multiple selected layouts across specs and characters
+
 # v0.4.3
 - Fixed issue with hidden controller auras and Blizzard spell alert suppression setup
 - Added ability to load based on saved talent loadout

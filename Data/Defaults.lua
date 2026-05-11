@@ -134,6 +134,7 @@ Defaults.load = {
   talent = false,
   talents = {},
   savedLoadoutMode = "any",
+  savedLoadoutSelections = {},
   savedLoadoutId = 0,
   savedLoadoutName = "",
   savedLoadoutSpecId = 0,
@@ -288,6 +289,67 @@ function Defaults:ApplyTriggerDefaults(trigger)
   return trigger
 end
 
+local function NormalizeSavedLoadoutNameKey(value)
+  value = tostring(value or "")
+  value = value:gsub("^%s+", ""):gsub("%s+$", "")
+  if value == "" then
+    return ""
+  end
+  return string.lower(value)
+end
+
+local function BuildSavedLoadoutSelectionKey(classToken, specID, configID, name)
+  classToken = tostring(classToken or "")
+  specID = tonumber(specID or 0) or 0
+  configID = tonumber(configID or 0) or 0
+  if classToken == "" or specID <= 0 then
+    return nil
+  end
+
+  local nameKey = NormalizeSavedLoadoutNameKey(name)
+  if nameKey ~= "" then
+    return string.format("%s:%d:name:%s", classToken, specID, nameKey)
+  end
+
+  if configID == 0 then
+    return nil
+  end
+
+  return string.format("%s:%d:config:%d", classToken, specID, configID)
+end
+
+local function ApplyLegacySavedLoadoutSelection(load)
+  if type(load) ~= "table" then
+    return
+  end
+
+  load.savedLoadoutSelections = type(load.savedLoadoutSelections) == "table" and load.savedLoadoutSelections or {}
+  if next(load.savedLoadoutSelections) ~= nil then
+    return
+  end
+
+  local configID = tonumber(load.savedLoadoutId or 0) or 0
+  local specID = tonumber(load.savedLoadoutSpecId or 0) or 0
+  local classToken = tostring(load.savedLoadoutClassToken or "")
+  if configID == 0 or specID <= 0 or classToken == "" then
+    return
+  end
+
+  local key = BuildSavedLoadoutSelectionKey(classToken, specID, configID, load.savedLoadoutName)
+  if not key then
+    return
+  end
+
+  load.savedLoadoutSelections[key] = {
+    classToken = classToken,
+    className = classToken,
+    specID = specID,
+    specName = "",
+    configID = configID,
+    name = tostring(load.savedLoadoutName or ""),
+  }
+end
+
 function Defaults:ApplyAuraDefaults(aura)
   if type(aura) ~= "table" then
     return aura
@@ -317,6 +379,7 @@ function Defaults:ApplyAuraDefaults(aura)
   end
 
   aura.load = Tables.MergeDefaults(type(aura.load) == "table" and aura.load or {}, self.load)
+  ApplyLegacySavedLoadoutSelection(aura.load)
   aura.display = Tables.MergeDefaults(type(aura.display) == "table" and aura.display or {}, self.display)
   aura.position = Tables.MergeDefaults(type(aura.position) == "table" and aura.position or {}, self.position)
   aura.text = Tables.MergeDefaults(type(aura.text) == "table" and aura.text or {}, self.text)

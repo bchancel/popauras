@@ -30,6 +30,127 @@ local function GetPlayerClassToken()
   return classToken
 end
 
+local function NormalizeSavedLoadoutNameKey(value)
+  value = tostring(value or "")
+  value = value:gsub("^%s+", ""):gsub("%s+$", "")
+  if value == "" then
+    return ""
+  end
+  return string.lower(value)
+end
+
+local function BuildSavedLoadoutKey(classToken, specID, configID, name)
+  classToken = tostring(classToken or "")
+  specID = tonumber(specID or 0) or 0
+  configID = tonumber(configID or 0) or 0
+  if classToken == "" or specID <= 0 then
+    return nil
+  end
+
+  local nameKey = NormalizeSavedLoadoutNameKey(name)
+  if nameKey ~= "" then
+    return string.format("%s:%d:name:%s", classToken, specID, nameKey)
+  end
+
+  if configID == 0 then
+    return nil
+  end
+
+  return string.format("%s:%d:config:%d", classToken, specID, configID)
+end
+
+local function ParseSavedLoadoutKey(key)
+  local legacyClassToken, legacySpecID, legacyConfigID = tostring(key or ""):match("^([^:]+):(-?%d+):(-?%d+)$")
+  legacySpecID = tonumber(legacySpecID or 0) or 0
+  legacyConfigID = tonumber(legacyConfigID or 0) or 0
+  if legacyClassToken and legacyClassToken ~= "" and legacySpecID > 0 and legacyConfigID ~= 0 then
+    return legacyClassToken, legacySpecID, legacyConfigID, ""
+  end
+
+  local classToken, specID, keyType, keyValue = tostring(key or ""):match("^([^:]+):(-?%d+):([^:]+):(.*)$")
+  specID = tonumber(specID or 0) or 0
+  if not classToken or classToken == "" or specID <= 0 then
+    return nil, 0, 0, ""
+  end
+
+  if keyType == "config" then
+    local configID = tonumber(keyValue or 0) or 0
+    if configID == 0 then
+      return nil, 0, 0, ""
+    end
+    return classToken, specID, configID, ""
+  end
+
+  if keyType == "name" then
+    local nameKey = NormalizeSavedLoadoutNameKey(keyValue)
+    if nameKey == "" then
+      return nil, 0, 0, ""
+    end
+    return classToken, specID, 0, nameKey
+  end
+
+  return nil, 0, 0, ""
+end
+
+local function GetSavedLoadoutSelections(load)
+  local results = {}
+  local selections = type(load and load.savedLoadoutSelections) == "table" and load.savedLoadoutSelections or nil
+
+  if selections then
+    for key, entry in pairs(selections) do
+      local parsedClassToken, parsedSpecID, parsedConfigID, parsedNameKey = ParseSavedLoadoutKey(key)
+      local classToken = parsedClassToken
+      local specID = parsedSpecID
+      local configID = parsedConfigID
+      local nameKey = parsedNameKey
+
+      if type(entry) == "table" then
+        classToken = tostring(entry.classToken or classToken or "")
+        specID = tonumber(entry.specID or specID or 0) or 0
+        configID = tonumber(entry.configID or configID or 0) or 0
+        nameKey = NormalizeSavedLoadoutNameKey(entry.name or nameKey)
+      elseif entry ~= true then
+        classToken = ""
+        specID = 0
+        configID = 0
+        nameKey = ""
+      end
+
+      local normalizedKey = BuildSavedLoadoutKey(classToken, specID, configID, nameKey)
+      if normalizedKey then
+        results[#results + 1] = {
+          key = normalizedKey,
+          classToken = classToken,
+          specID = specID,
+          configID = configID,
+          nameKey = nameKey,
+        }
+      end
+    end
+  end
+
+  if #results == 0 then
+    local legacyName = NormalizeSavedLoadoutNameKey(load and load.savedLoadoutName)
+    local legacyKey = BuildSavedLoadoutKey(
+      load and load.savedLoadoutClassToken,
+      load and load.savedLoadoutSpecId,
+      load and load.savedLoadoutId,
+      legacyName
+    )
+    if legacyKey then
+      results[1] = {
+        key = legacyKey,
+        classToken = tostring(load and load.savedLoadoutClassToken or ""),
+        specID = tonumber(load and load.savedLoadoutSpecId or 0) or 0,
+        configID = tonumber(load and load.savedLoadoutId or 0) or 0,
+        nameKey = legacyName,
+      }
+    end
+  end
+
+  return results
+end
+
 function LoadEvaluator:GetCurrentSavedLoadoutInfo()
   if not (C_ClassTalents and C_ClassTalents.GetLastSelectedSavedConfigID and C_Traits and C_Traits.GetConfigInfo) then
     return nil, "Saved loadout APIs unavailable."
@@ -358,15 +479,26 @@ function LoadEvaluator:Matches(aura)
 
   local savedLoadoutMode = tostring(load.savedLoadoutMode or "any")
   if savedLoadoutMode == "only" or savedLoadoutMode == "except" then
-    local configuredLoadoutID = tonumber(load.savedLoadoutId or 0) or 0
-    local configuredSpecID = tonumber(load.savedLoadoutSpecId or 0) or 0
-    local configuredClassToken = tostring(load.savedLoadoutClassToken or "")
-
-    if configuredLoadoutID ~= 0 then
+    local selectedLoadouts = GetSavedLoadoutSelections(load)
+    if #selectedLoadouts > 0 then
       local currentInfo = self:GetCurrentSavedLoadoutInfo()
-      local sameClass = configuredClassToken == "" or (currentInfo and currentInfo.classToken == configuredClassToken)
-      local sameSpec = configuredSpecID <= 0 or (currentInfo and currentInfo.specID == configuredSpecID)
-      local loadoutMatches = currentInfo and currentInfo.configID == configuredLoadoutID and sameClass and sameSpec or false
+      local currentNameKey = NormalizeSavedLoadoutNameKey(currentInfo and currentInfo.name)
+      local loadoutMatches = false
+
+      if currentInfo then
+        for _, selectedEntry in ipairs(selectedLoadouts) do
+          if selectedEntry.classToken == currentInfo.classToken and selectedEntry.specID == currentInfo.specID then
+            if selectedEntry.configID ~= 0 and selectedEntry.configID == currentInfo.configID then
+              loadoutMatches = true
+              break
+            end
+            if selectedEntry.nameKey ~= "" and selectedEntry.nameKey == currentNameKey then
+              loadoutMatches = true
+              break
+            end
+          end
+        end
+      end
 
       if savedLoadoutMode == "only" and not loadoutMatches then
         return false

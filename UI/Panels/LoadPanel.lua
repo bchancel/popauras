@@ -47,9 +47,8 @@ local INSTANCE_TYPE_OPTIONS = {
 }
 
 local SAVED_LOADOUT_MODE_OPTIONS = {
-  { value = "any", label = "Any Saved Loadout" },
-  { value = "only", label = "Only Selected Loadout" },
-  { value = "except", label = "Except Selected Loadout" },
+  { value = "only", label = "Only Selected Layouts" },
+  { value = "except", label = "Except Selected Layouts" },
 }
 
 local function IsVisibilityEnabled(visibility, key)
@@ -169,11 +168,7 @@ local function GetPlayerSpecIndex()
 end
 
 local function NormalizeSavedLoadoutMode(value)
-  value = tostring(value or "any")
-  if value ~= "only" and value ~= "except" then
-    return "any"
-  end
-  return value
+  return tostring(value or "") == "except" and "except" or "only"
 end
 
 local function GetSavedLoadoutModeLabel(value)
@@ -193,33 +188,424 @@ local function GetCurrentSavedLoadoutInfo()
   return nil, "Saved loadout APIs unavailable."
 end
 
-local function GetSavedLoadoutDisplayName(load)
-  load = load or {}
-  local name = NormalizeText(load.savedLoadoutName)
-  local configID = tonumber(load.savedLoadoutId or 0) or 0
-  local specLabel = ""
-  local savedLoadoutSpecId = tonumber(load.savedLoadoutSpecId or 0) or 0
+local function NormalizeSavedLoadoutNameKey(value)
+  value = NormalizeText(value)
+  if value == "" then
+    return ""
+  end
+  return string.lower(value)
+end
 
-  if savedLoadoutSpecId > 0 then
-    local info = GetCurrentSavedLoadoutInfo()
-    if info and info.specID == savedLoadoutSpecId and info.specName and info.specName ~= "" then
-      specLabel = info.specName
+local function GetClassLabel(classToken)
+  local classInfo = CLASS_SPECS[tostring(classToken or "")]
+  return classInfo and classInfo.className or tostring(classToken or "")
+end
+
+local function GetCurrentSpecInfo()
+  local classToken = GetPlayerClassToken()
+  local specIndex = GetPlayerSpecIndex()
+  local specID, specName = 0, ""
+  if specIndex > 0 and GetSpecializationInfo then
+    specID, specName = GetSpecializationInfo(specIndex)
+  end
+  specID = tonumber(specID or 0) or 0
+  return {
+    classToken = classToken,
+    className = GetClassLabel(classToken),
+    specIndex = specIndex,
+    specID = specID,
+    specName = tostring(specName or ""),
+  }
+end
+
+local function BuildSavedLoadoutKey(classToken, specID, configID, name)
+  classToken = tostring(classToken or "")
+  specID = tonumber(specID or 0) or 0
+  configID = tonumber(configID or 0) or 0
+  if classToken == "" or specID <= 0 then
+    return nil
+  end
+
+  local nameKey = NormalizeSavedLoadoutNameKey(name)
+  if nameKey ~= "" then
+    return string.format("%s:%d:name:%s", classToken, specID, nameKey)
+  end
+
+  if configID == 0 then
+    return nil
+  end
+
+  return string.format("%s:%d:config:%d", classToken, specID, configID)
+end
+
+local function ParseSavedLoadoutKey(key)
+  local legacyClassToken, legacySpecID, legacyConfigID = tostring(key or ""):match("^([^:]+):(-?%d+):(-?%d+)$")
+  legacySpecID = tonumber(legacySpecID or 0) or 0
+  legacyConfigID = tonumber(legacyConfigID or 0) or 0
+  if legacyClassToken and legacyClassToken ~= "" and legacySpecID > 0 and legacyConfigID ~= 0 then
+    return legacyClassToken, legacySpecID, legacyConfigID, ""
+  end
+
+  local classToken, specID, keyType, keyValue = tostring(key or ""):match("^([^:]+):(-?%d+):([^:]+):(.*)$")
+  specID = tonumber(specID or 0) or 0
+  if not classToken or classToken == "" or specID <= 0 then
+    return nil, 0, 0, ""
+  end
+
+  if keyType == "config" then
+    local configID = tonumber(keyValue or 0) or 0
+    if configID == 0 then
+      return nil, 0, 0, ""
+    end
+    return classToken, specID, configID, ""
+  end
+
+  if keyType == "name" then
+    local nameKey = NormalizeSavedLoadoutNameKey(keyValue)
+    if nameKey == "" then
+      return nil, 0, 0, ""
+    end
+    return classToken, specID, 0, nameKey
+  end
+
+  return nil, 0, 0, ""
+end
+
+local function CreateSavedLoadoutSelectionEntry(classToken, specID, configID, name, specName, className)
+  local resolvedName = NormalizeText(name)
+  if resolvedName == "" then
+    resolvedName = tonumber(configID or 0) == -2 and "Starter Build" or ("Loadout " .. tostring(configID))
+  end
+
+  local key = BuildSavedLoadoutKey(classToken, specID, configID, resolvedName)
+  if not key then
+    return nil
+  end
+
+  return {
+    key = key,
+    classToken = tostring(classToken or ""),
+    className = NormalizeText(className) ~= "" and NormalizeText(className) or GetClassLabel(classToken),
+    specID = tonumber(specID or 0) or 0,
+    specName = NormalizeText(specName),
+    configID = tonumber(configID or 0) or 0,
+    name = resolvedName,
+    nameKey = NormalizeSavedLoadoutNameKey(resolvedName),
+  }
+end
+
+local function EnsureSavedLoadoutSelections(load)
+  if type(load) ~= "table" then
+    return {}
+  end
+
+  local rawSelections = EnsureMap(load.savedLoadoutSelections)
+  if next(rawSelections) == nil then
+    local legacyEntry = CreateSavedLoadoutSelectionEntry(
+      load.savedLoadoutClassToken,
+      load.savedLoadoutSpecId,
+      load.savedLoadoutId,
+      load.savedLoadoutName,
+      "",
+      GetClassLabel(load.savedLoadoutClassToken)
+    )
+    if legacyEntry then
+      rawSelections[legacyEntry.key] = legacyEntry
     end
   end
 
-  if name == "" and configID ~= 0 then
-    name = configID == -2 and "Starter Build" or ("Loadout " .. tostring(configID))
+  local normalizedSelections = {}
+  for key, entry in pairs(rawSelections) do
+    local normalized = nil
+    if entry == true then
+      local classToken, specID, configID, nameKey = ParseSavedLoadoutKey(key)
+      normalized = CreateSavedLoadoutSelectionEntry(classToken, specID, configID, nameKey, "", GetClassLabel(classToken))
+    elseif type(entry) == "table" then
+      local classToken, specID, configID, nameKey = ParseSavedLoadoutKey(key)
+      normalized = CreateSavedLoadoutSelectionEntry(
+        entry.classToken or classToken,
+        entry.specID or specID,
+        entry.configID or configID,
+        entry.name or nameKey,
+        entry.specName,
+        entry.className
+      )
+    end
+
+    if normalized then
+      normalizedSelections[normalized.key] = normalized
+    end
   end
 
-  if name == "" then
-    return ""
+  load.savedLoadoutSelections = normalizedSelections
+  return load.savedLoadoutSelections
+end
+
+local function EnsureSavedLoadoutCatalog()
+  ns.session = ns.session or {}
+  ns.session.savedLoadoutCatalog = ns.session.savedLoadoutCatalog or {}
+  return ns.session.savedLoadoutCatalog
+end
+
+local function GetSavedLoadoutName(configID, fallbackName)
+  local configInfo = C_Traits and C_Traits.GetConfigInfo and C_Traits.GetConfigInfo(configID) or nil
+  local name = NormalizeText(configInfo and configInfo.name or fallbackName)
+  if name ~= "" then
+    return name
+  end
+  configID = tonumber(configID or 0) or 0
+  return configID == -2 and "Starter Build" or ("Loadout " .. tostring(configID))
+end
+
+local function RefreshCurrentSavedLoadoutCatalog()
+  if not (C_ClassTalents and C_ClassTalents.GetConfigIDsBySpecID and C_Traits and C_Traits.GetConfigInfo) then
+    return nil, "Saved layout APIs unavailable."
   end
 
+  local specInfo = GetCurrentSpecInfo()
+  if not specInfo.classToken or specInfo.classToken == "" or specInfo.specID <= 0 then
+    return nil, "No active specialization."
+  end
+
+  local entries = {}
+  local order = {}
+  local function addEntry(configID, preferredName)
+    local entry = CreateSavedLoadoutSelectionEntry(
+      specInfo.classToken,
+      specInfo.specID,
+      configID,
+      preferredName or GetSavedLoadoutName(configID),
+      specInfo.specName,
+      specInfo.className
+    )
+    if entry and not entries[entry.key] then
+      entries[entry.key] = entry
+      order[#order + 1] = entry.key
+    end
+  end
+
+  for _, configID in ipairs(C_ClassTalents.GetConfigIDsBySpecID(specInfo.specID) or {}) do
+    addEntry(configID)
+  end
+
+  local currentInfo = GetCurrentSavedLoadoutInfo()
+  if currentInfo and currentInfo.classToken == specInfo.classToken and currentInfo.specID == specInfo.specID then
+    addEntry(currentInfo.configID, currentInfo.name)
+  end
+
+  if #order == 0 then
+    return nil, "No saved layouts found for the current specialization yet."
+  end
+
+  table.sort(order, function(leftKey, rightKey)
+    local left = entries[leftKey]
+    local right = entries[rightKey]
+    if left.name == right.name then
+      return left.configID < right.configID
+    end
+    return string.lower(left.name) < string.lower(right.name)
+  end)
+
+  local catalog = EnsureSavedLoadoutCatalog()
+  catalog[specInfo.classToken] = catalog[specInfo.classToken] or {}
+  catalog[specInfo.classToken][specInfo.specID] = {
+    classToken = specInfo.classToken,
+    className = specInfo.className,
+    specID = specInfo.specID,
+    specName = specInfo.specName,
+    entries = entries,
+    order = order,
+  }
+
+  return catalog[specInfo.classToken][specInfo.specID], nil
+end
+
+local function GetCurrentSavedLoadoutCatalog(load)
+  local specInfo = GetCurrentSpecInfo()
+  if not specInfo.classToken or specInfo.classToken == "" or specInfo.specID <= 0 then
+    return nil, "No active specialization."
+  end
+
+  local catalog = EnsureSavedLoadoutCatalog()
+  local base = catalog[specInfo.classToken] and catalog[specInfo.classToken][specInfo.specID] or nil
+  local mergedEntries = {}
+  local mergedOrder = {}
+  local selectedLookup = EnsureSavedLoadoutSelections(load)
+
+  if base and type(base.entries) == "table" then
+    for _, key in ipairs(base.order or {}) do
+      local entry = base.entries[key]
+      if entry then
+        entry.offSpec = false
+        entry.fromSelectionList = false
+        entry.missing = false
+        mergedEntries[key] = entry
+        mergedOrder[#mergedOrder + 1] = key
+      end
+    end
+  end
+
+  for key, entry in pairs(selectedLookup) do
+    if type(entry) == "table" then
+      if not mergedEntries[key] then
+        local cloned = CreateSavedLoadoutSelectionEntry(
+          entry.classToken,
+          entry.specID,
+          entry.configID,
+          entry.name,
+          entry.specName ~= "" and entry.specName or specInfo.specName,
+          entry.className ~= "" and entry.className or specInfo.className
+        )
+        if cloned then
+          cloned.offSpec = cloned.classToken ~= specInfo.classToken or tonumber(cloned.specID or 0) ~= specInfo.specID
+          cloned.fromSelectionList = true
+          cloned.missing = not cloned.offSpec
+          mergedEntries[key] = cloned
+          mergedOrder[#mergedOrder + 1] = key
+        end
+      end
+    end
+  end
+
+  if #mergedOrder == 0 then
+    return nil, "Refresh Layouts to load the current specialization's saved layouts."
+  end
+
+  local currentInfo = GetCurrentSavedLoadoutInfo()
+  table.sort(mergedOrder, function(leftKey, rightKey)
+    local left = mergedEntries[leftKey]
+    local right = mergedEntries[rightKey]
+    local leftCurrentSpec = left and left.classToken == specInfo.classToken and tonumber(left.specID or 0) == specInfo.specID or false
+    local rightCurrentSpec = right and right.classToken == specInfo.classToken and tonumber(right.specID or 0) == specInfo.specID or false
+    if leftCurrentSpec ~= rightCurrentSpec then
+      return leftCurrentSpec
+    end
+    local leftCurrent = currentInfo and left
+      and currentInfo.classToken == left.classToken
+      and tonumber(currentInfo.specID or 0) == tonumber(left.specID or 0)
+      and tonumber(currentInfo.configID or 0) == tonumber(left.configID or 0)
+      or false
+    local rightCurrent = currentInfo and right
+      and currentInfo.classToken == right.classToken
+      and tonumber(currentInfo.specID or 0) == tonumber(right.specID or 0)
+      and tonumber(currentInfo.configID or 0) == tonumber(right.configID or 0)
+      or false
+    if leftCurrent ~= rightCurrent then
+      return leftCurrent
+    end
+    local leftSelected = selectedLookup[leftKey] ~= nil
+    local rightSelected = selectedLookup[rightKey] ~= nil
+    if leftSelected ~= rightSelected then
+      return leftSelected
+    end
+    if not leftCurrentSpec and not rightCurrentSpec then
+      local leftClass = NormalizeText(left.className)
+      local rightClass = NormalizeText(right.className)
+      if leftClass ~= rightClass then
+        return leftClass < rightClass
+      end
+      local leftSpec = NormalizeText(left.specName)
+      local rightSpec = NormalizeText(right.specName)
+      if leftSpec ~= rightSpec then
+        return leftSpec < rightSpec
+      end
+    end
+    if left.name == right.name then
+      return left.configID < right.configID
+    end
+    return string.lower(left.name) < string.lower(right.name)
+  end)
+
+  return {
+    classToken = specInfo.classToken,
+    className = specInfo.className,
+    specID = specInfo.specID,
+    specName = specInfo.specName,
+    entries = mergedEntries,
+    order = mergedOrder,
+  }, nil
+end
+
+local function GetSavedLoadoutSelectionEntries(load)
+  local entries = {}
+  for _, entry in pairs(EnsureSavedLoadoutSelections(load)) do
+    if type(entry) == "table" then
+      entries[#entries + 1] = entry
+    end
+  end
+  table.sort(entries, function(left, right)
+    local leftClass = NormalizeText(left.className)
+    local rightClass = NormalizeText(right.className)
+    if leftClass == rightClass then
+      local leftSpec = NormalizeText(left.specName)
+      local rightSpec = NormalizeText(right.specName)
+      if leftSpec == rightSpec then
+        return string.lower(left.name or "") < string.lower(right.name or "")
+      end
+      return leftSpec < rightSpec
+    end
+    return leftClass < rightClass
+  end)
+  return entries
+end
+
+local function GetSavedLoadoutGroupLabel(entry)
+  local classLabel = NormalizeText(entry and entry.className)
+  local specLabel = NormalizeText(entry and entry.specName)
+  if classLabel ~= "" and specLabel ~= "" then
+    return string.format("%s / %s", classLabel, specLabel)
+  end
   if specLabel ~= "" then
-    return string.format("%s (%s)", name, specLabel)
+    return specLabel
+  end
+  if classLabel ~= "" then
+    return classLabel
+  end
+  return "Selected Layouts"
+end
+
+local function BuildSavedLoadoutHint(load)
+  load = load or {}
+  local mode = NormalizeSavedLoadoutMode(load.savedLoadoutMode)
+  local selectedEntries = GetSavedLoadoutSelectionEntries(load)
+  local currentInfo = GetCurrentSavedLoadoutInfo()
+  local lines = {}
+
+  if #selectedEntries == 0 then
+    lines[#lines + 1] = "|cffaaaaaaNo filtered layouts selected. Refresh Layouts for the current spec, then choose one or more layouts.|r"
+  else
+    local grouped = {}
+    local labels = {}
+    for _, entry in ipairs(selectedEntries) do
+      local groupLabel = GetSavedLoadoutGroupLabel(entry)
+      if not grouped[groupLabel] then
+        grouped[groupLabel] = {}
+        labels[#labels + 1] = groupLabel
+      end
+      grouped[groupLabel][#grouped[groupLabel] + 1] = entry.name
+    end
+    table.sort(labels)
+    lines[#lines + 1] = string.format("|cff88ff88%s Selected Layouts:|r %d", mode == "except" and "Except" or "Only", #selectedEntries)
+    for _, groupLabel in ipairs(labels) do
+      table.sort(grouped[groupLabel])
+      local displayNames = {}
+      for index, name in ipairs(grouped[groupLabel]) do
+        if index <= 3 then
+          displayNames[#displayNames + 1] = name
+        end
+      end
+      if #grouped[groupLabel] > 3 then
+        displayNames[#displayNames + 1] = string.format("+%d more", #grouped[groupLabel] - 3)
+      end
+      lines[#lines + 1] = string.format("|cff88ff88%s:|r %s", groupLabel, table.concat(displayNames, ", "))
+    end
   end
 
-  return name
+  if currentInfo and currentInfo.name and currentInfo.name ~= "" then
+    lines[#lines + 1] = string.format("|cffaaaaaaCurrent: %s|r", currentInfo.name)
+  end
+
+  return table.concat(lines, "\n")
 end
 
 local function SetDropdown(dropdown, value, label)
@@ -330,49 +716,6 @@ local function PruneTalentSelections(load, groups)
     end
   end
   return changed
-end
-
-local function CaptureCurrentSavedLoadout(load)
-  if type(load) ~= "table" then
-    return nil, "No load data available."
-  end
-
-  local info, reason = GetCurrentSavedLoadoutInfo()
-  if not info then
-    return nil, reason
-  end
-
-  load.savedLoadoutId = tonumber(info.configID or 0) or 0
-  load.savedLoadoutName = tostring(info.name or "")
-  load.savedLoadoutSpecId = tonumber(info.specID or 0) or 0
-  load.savedLoadoutClassToken = tostring(info.classToken or "")
-
-  return info
-end
-
-local function BuildSavedLoadoutHint(load)
-  load = load or {}
-  local mode = NormalizeSavedLoadoutMode(load.savedLoadoutMode)
-  local configuredName = GetSavedLoadoutDisplayName(load)
-  local currentInfo = GetCurrentSavedLoadoutInfo()
-
-  if mode == "any" then
-    if currentInfo then
-      return string.format("|cffaaaaaaCurrent saved loadout: %s|r", tostring(currentInfo.name or configuredName or "Unknown"))
-    end
-    return "|cffaaaaaaNo saved loadout filter.|r"
-  end
-
-  if configuredName == "" then
-    return "|cffff8888Use Current Loadout to capture a saved loadout for this filter.|r"
-  end
-
-  local prefix = mode == "except" and "Except" or "Only"
-  local line = string.format("|cff88ff88%s:|r %s", prefix, configuredName)
-  if currentInfo and currentInfo.name and currentInfo.name ~= "" then
-    line = string.format("%s  |cffaaaaaaCurrent: %s|r", line, currentInfo.name)
-  end
-  return line
 end
 
 local function ResolveEntryInfo(configID, entryID)
@@ -737,6 +1080,147 @@ local function RenderTalentList(frame, parent, groups, load, query, onChanged, s
   return entries, contentHeight
 end
 
+local function HideSavedLoadoutRows(frame)
+  for _, row in ipairs(frame.savedLoadoutRows or {}) do
+    row:Hide()
+  end
+end
+
+local function BuildSavedLoadoutListEntries(specCatalog, query)
+  local entries = {}
+  local needle = string.lower(tostring(query or ""))
+  if not specCatalog or type(specCatalog.entries) ~= "table" then
+    return entries
+  end
+
+  for _, key in ipairs(specCatalog.order or {}) do
+    local entry = specCatalog.entries[key]
+    local label = entry and tostring(entry.name or "") or ""
+    local haystack = string.lower(table.concat({
+      label,
+      tostring(entry and entry.specName or ""),
+      tostring(entry and entry.className or ""),
+    }, " "))
+    if entry and (needle == "" or haystack:find(needle, 1, true)) then
+      entries[#entries + 1] = entry
+    end
+  end
+
+  return entries
+end
+
+local function RenderSavedLoadoutList(frame, parent, specCatalog, load, query, onChanged)
+  frame.savedLoadoutRows = frame.savedLoadoutRows or {}
+  HideSavedLoadoutRows(frame)
+
+  local entries = BuildSavedLoadoutListEntries(specCatalog, query)
+  local currentInfo = GetCurrentSavedLoadoutInfo()
+  local anchor = parent
+  local contentHeight = 0
+
+  for index, entry in ipairs(entries) do
+    local row = frame.savedLoadoutRows[index]
+    if not row then
+      row = CreateFrame("Frame", nil, parent)
+      row:SetSize(660, 24)
+      row.check = Frames.CreateCheckbox(row, "")
+      row.check:SetPoint("LEFT", 0, 0)
+      if row.check.Text then
+        row.check.Text:SetText("")
+        row.check.Text:Hide()
+      end
+      row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      row.label:SetPoint("LEFT", row.check, "RIGHT", 6, 0)
+      row.label:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+      row.label:SetJustifyH("LEFT")
+      row:SetScript("OnEnter", function(selfRow)
+        GameTooltip:SetOwner(selfRow, "ANCHOR_RIGHT")
+        GameTooltip:SetText(selfRow.entryName or "Layout")
+        GameTooltip:AddLine(string.format("Config ID: %s", tostring(selfRow.entryConfigID or "?")), 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Check to include this layout in the filter set for this aura.", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Selections match by layout name within this class and spec, so the same named layout can stay shared across characters.", 0.8, 0.8, 0.8, true)
+        if selfRow.entryOffSpec then
+          GameTooltip:AddLine("This layout came from the aura's saved selection list for another class or spec, and stays here until you remove it.", 0.8, 0.8, 0.8, true)
+        elseif selfRow.entryMissing then
+          GameTooltip:AddLine("This saved selection is not in the current refreshed list, but it remains preserved until you remove it.", 1, 0.4, 0.4, true)
+        end
+        GameTooltip:Show()
+      end)
+      row:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+      end)
+      row.check:SetScript("OnEnter", row:GetScript("OnEnter"))
+      row.check:SetScript("OnLeave", row:GetScript("OnLeave"))
+      frame.savedLoadoutRows[index] = row
+    else
+      row:SetParent(parent)
+    end
+
+    row.entryKey = entry.key
+    row.entryName = entry.name
+    row.entryConfigID = entry.configID
+    row.entryClassToken = entry.classToken
+    row.entryClassName = entry.className
+    row.entrySpecID = entry.specID
+    row.entrySpecName = entry.specName
+    row.entryMissing = entry.missing == true
+    row.entryOffSpec = entry.offSpec == true
+    local isCurrent = currentInfo
+      and currentInfo.classToken == entry.classToken
+      and tonumber(currentInfo.specID or 0) == tonumber(entry.specID or 0)
+      and tonumber(currentInfo.configID or 0) == tonumber(entry.configID or 0)
+
+    local label = tostring(entry.name or "Unknown Layout")
+    if entry.offSpec == true then
+      label = string.format("%s: %s", GetSavedLoadoutGroupLabel(entry), label)
+    end
+    if isCurrent then
+      label = label .. " |cffaaaaaa(Current)|r"
+    end
+    if entry.missing == true then
+      label = label .. " |cffff8888(Missing)|r"
+    elseif entry.offSpec == true then
+      label = label .. " |cffaaaaaa(Selected)|r"
+    end
+
+    row.label:SetText(label)
+    row.check:SetChecked(EnsureSavedLoadoutSelections(load)[entry.key] ~= nil)
+    row:ClearAllPoints()
+    if anchor == parent then
+      row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
+    else
+      row:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -6)
+    end
+    row.check:SetScript("OnClick", function(selfCheck)
+      local owner = selfCheck:GetParent()
+      local liveSelections = EnsureSavedLoadoutSelections(load)
+      if selfCheck:GetChecked() == true then
+        liveSelections[owner.entryKey] = CreateSavedLoadoutSelectionEntry(
+          owner.entryClassToken,
+          owner.entrySpecID,
+          owner.entryConfigID,
+          owner.entryName,
+          owner.entrySpecName,
+          owner.entryClassName
+        )
+        if tostring(load.savedLoadoutMode or "") == "any" then
+          load.savedLoadoutMode = "only"
+        end
+      else
+        liveSelections[owner.entryKey] = nil
+      end
+      if onChanged then
+        onChanged()
+      end
+    end)
+    row:Show()
+    anchor = row
+    contentHeight = contentHeight + 30
+  end
+
+  return entries, contentHeight
+end
+
 function Panel:ApplyCurrent()
   if self.suppressUpdates then
     return
@@ -749,7 +1233,8 @@ function Panel:ApplyCurrent()
   aura.load.specs = aura.load.specs or {}
   aura.load.talents = aura.load.talents or {}
   aura.load.visibility = aura.load.visibility or {}
-  aura.load.savedLoadoutMode = aura.load.savedLoadoutMode or "any"
+  aura.load.savedLoadoutSelections = EnsureSavedLoadoutSelections(aura.load)
+  aura.load.savedLoadoutMode = NormalizeSavedLoadoutMode(aura.load.savedLoadoutMode)
   aura.enabled = self.frame.enabledCheck:GetChecked() == true
   aura.load.combat = UIDropDownMenu_GetSelectedValue(self.frame.combatDropDown) or "any"
   for classToken, check in pairs(self.frame.classChecks) do
@@ -788,6 +1273,7 @@ function Panel:RefreshSpecSection(aura)
   load.classes = EnsureMap(load.classes)
   load.specs = EnsureMap(load.specs)
   load.talents = EnsureMap(load.talents)
+  load.savedLoadoutSelections = EnsureSavedLoadoutSelections(load)
   load.savedLoadoutMode = NormalizeSavedLoadoutMode(load.savedLoadoutMode)
   PruneSpecSelections(load)
 
@@ -884,6 +1370,7 @@ end
 function Panel:RefreshTalentSection(aura, topAnchor)
   local load = aura.load or {}
   load.talents = EnsureMap(load.talents)
+  load.savedLoadoutSelections = EnsureSavedLoadoutSelections(load)
   load.savedLoadoutMode = NormalizeSavedLoadoutMode(load.savedLoadoutMode)
   local classCollapsed = self.frame.collapsedSections and self.frame.collapsedSections.class == true
   local hasClasses = CountEnabled(EnsureMap(load.classes)) > 0
@@ -948,13 +1435,16 @@ function Panel:RefreshTalentSection(aura, topAnchor)
   self.frame.savedLoadoutCaptureButton:ClearAllPoints()
   self.frame.savedLoadoutCaptureButton:SetPoint("TOPLEFT", self.frame.savedLoadoutModeDropDown, "TOPRIGHT", 26, 0)
   self.frame.savedLoadoutCaptureButton:Show()
+  self.frame.savedLoadoutPickerButton:ClearAllPoints()
+  self.frame.savedLoadoutPickerButton:SetPoint("TOPLEFT", self.frame.savedLoadoutModeDropDown, "BOTTOMLEFT", 14, -12)
+  self.frame.savedLoadoutPickerButton:Show()
   self.frame.savedLoadoutHint:ClearAllPoints()
-  self.frame.savedLoadoutHint:SetPoint("TOPLEFT", self.frame.savedLoadoutModeDropDown, "BOTTOMLEFT", 14, -10)
+  self.frame.savedLoadoutHint:SetPoint("TOPLEFT", self.frame.savedLoadoutPickerButton, "BOTTOMLEFT", -14, -10)
   self.frame.savedLoadoutHint:SetText(BuildSavedLoadoutHint(load))
   self.frame.savedLoadoutHint:Show()
   SetDropdown(self.frame.savedLoadoutModeDropDown, load.savedLoadoutMode, GetSavedLoadoutModeLabel(load.savedLoadoutMode))
   classBottomAnchor = self.frame.savedLoadoutHint
-  savedLoadoutContentHeight = 94
+  savedLoadoutContentHeight = 126
 
   self.frame.visibilityHeader:ClearAllPoints()
   self.frame.visibilityHeader:SetPoint("TOPLEFT", classBottomAnchor, "BOTTOMLEFT", 0, -24)
@@ -1052,6 +1542,68 @@ function Panel:ShowTalentPicker(aura, groups)
   refreshList()
 end
 
+function Panel:ShowSavedLoadoutPicker(aura)
+  local frame = self.frame
+  if not frame or not frame.savedLoadoutModal or not aura then
+    return
+  end
+
+  aura.load = aura.load or {}
+  local specCatalog, reason = GetCurrentSavedLoadoutCatalog(aura.load)
+  if not specCatalog then
+    specCatalog, reason = RefreshCurrentSavedLoadoutCatalog()
+  end
+  if not specCatalog then
+    self.frame.savedLoadoutHint:SetText(string.format("|cffff8888%s|r", tostring(reason or "No saved layouts available.")))
+    return
+  end
+
+  local modal = frame.savedLoadoutModal
+  modal.title:SetText(string.format("Layout Picker: %s", tostring(aura.name or "Aura")))
+  modal.hint:SetText(string.format(
+    "|cffaaaaaa%s / %s|r\nRefresh Layouts for the current spec to load its available choices. Already selected layouts from other characters or specs stay appended below so you can keep or remove them. Matching is based on layout name within the class and spec.",
+    tostring(specCatalog.className or "Class"),
+    tostring(specCatalog.specName or "Spec")
+  ))
+  modal.searchInput:SetText("")
+  modal:Show()
+
+  local load = aura.load
+  EnsureSavedLoadoutSelections(load)
+
+  local function refreshList()
+    local query = modal.searchInput:GetText()
+    local activeCatalog, activeReason = GetCurrentSavedLoadoutCatalog(load)
+    if not activeCatalog then
+      modal.emptyText:SetText("|cffaaaaaa" .. tostring(activeReason or "No saved layouts available.") .. "|r")
+      modal.emptyText:Show()
+      HideSavedLoadoutRows(modal)
+      modal.content:SetSize(700, 420)
+      return
+    end
+
+    local entries, contentHeight = RenderSavedLoadoutList(modal, modal.content, activeCatalog, load, query, function()
+      Panel:RefreshSpecSection(aura)
+      Panel:ApplyCurrent()
+    end)
+    if #entries == 0 then
+      modal.emptyText:SetText("|cffaaaaaaNo layouts match that search.|r")
+      modal.emptyText:Show()
+    else
+      modal.emptyText:Hide()
+    end
+    modal.content:SetSize(700, math.max(420, contentHeight + 20))
+  end
+
+  modal.searchInput:SetScript("OnTextChanged", function()
+    refreshList()
+  end)
+  modal.searchInput:SetScript("OnEscapePressed", function(selfInput)
+    selfInput:ClearFocus()
+  end)
+  refreshList()
+end
+
 function Panel:Create(parent)
   local frame = CreateFrame("Frame", nil, parent)
   frame:SetAllPoints()
@@ -1130,11 +1682,13 @@ function Panel:Create(parent)
   frame.talentPickerButton:Hide()
   frame.talentHeaders = {}
   frame.talentRows = {}
-  frame.savedLoadoutHeader = Frames.CreateLabel(frame.content, "Saved Loadout", "GameFontNormal")
-  frame.savedLoadoutModeLabel = Frames.CreateLabel(frame.content, "Filter Mode", "GameFontNormal")
+  frame.savedLoadoutHeader = Frames.CreateLabel(frame.content, "Filter Layouts", "GameFontNormal")
+  frame.savedLoadoutModeLabel = Frames.CreateLabel(frame.content, "Mode", "GameFontNormal")
   frame.savedLoadoutModeDropDown = Frames.CreateDropdown(frame.content, 190)
-  frame.savedLoadoutCaptureButton = Frames.CreateButton(frame.content, "Use Current Loadout", 160, 22, function() end)
+  frame.savedLoadoutCaptureButton = Frames.CreateButton(frame.content, "Refresh Layouts", 160, 22, function() end)
   Frames.StyleSecondaryButton(frame.savedLoadoutCaptureButton)
+  frame.savedLoadoutPickerButton = Frames.CreateButton(frame.content, "Choose Layouts", 160, 22, function() end)
+  Frames.StyleSecondaryButton(frame.savedLoadoutPickerButton)
   frame.savedLoadoutHint = Frames.CreateLabel(frame.content, "", "GameFontHighlightSmall")
   frame.savedLoadoutHint:SetWidth(700)
   frame.savedLoadoutHint:SetJustifyH("LEFT")
@@ -1142,6 +1696,7 @@ function Panel:Create(parent)
   frame.savedLoadoutModeLabel:Hide()
   frame.savedLoadoutModeDropDown:Hide()
   frame.savedLoadoutCaptureButton:Hide()
+  frame.savedLoadoutPickerButton:Hide()
   frame.savedLoadoutHint:Hide()
 
   frame.visibilityHeader = Frames.CreateLabel(frame.content, "Visibility", "GameFontNormal")
@@ -1198,6 +1753,48 @@ function Panel:Create(parent)
   frame.talentModal.emptyText:SetJustifyH("LEFT")
   frame.talentModal.headers = {}
   frame.talentModal.rows = {}
+
+  frame.savedLoadoutModal = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+  frame.savedLoadoutModal:SetSize(760, 560)
+  frame.savedLoadoutModal:SetPoint("CENTER")
+  frame.savedLoadoutModal:SetFrameStrata("FULLSCREEN_DIALOG")
+  frame.savedLoadoutModal:SetFrameLevel(121)
+  frame.savedLoadoutModal:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+  })
+  frame.savedLoadoutModal:SetBackdropColor(0.08, 0.10, 0.15, 0.98)
+  frame.savedLoadoutModal:SetBackdropBorderColor(0.24, 0.31, 0.40, 1)
+  frame.savedLoadoutModal:Hide()
+
+  frame.savedLoadoutModal.title = Frames.CreateLabel(frame.savedLoadoutModal, "Layout Picker", "GameFontNormalLarge")
+  frame.savedLoadoutModal.title:SetPoint("TOPLEFT", 16, -16)
+  frame.savedLoadoutModal.hint = Frames.CreateLabel(frame.savedLoadoutModal, "", "GameFontHighlightSmall")
+  frame.savedLoadoutModal.hint:SetPoint("TOPLEFT", frame.savedLoadoutModal.title, "BOTTOMLEFT", 0, -4)
+  frame.savedLoadoutModal.hint:SetWidth(700)
+  frame.savedLoadoutModal.hint:SetJustifyH("LEFT")
+  frame.savedLoadoutModal.closeButton = Frames.CreateButton(frame.savedLoadoutModal, "Close", 100, 22, function()
+    frame.savedLoadoutModal:Hide()
+  end)
+  frame.savedLoadoutModal.closeButton:SetPoint("TOPRIGHT", -16, -16)
+  Frames.StyleSecondaryButton(frame.savedLoadoutModal.closeButton)
+  frame.savedLoadoutModal.searchInput = Frames.CreateInput(frame.savedLoadoutModal, 260, 24)
+  frame.savedLoadoutModal.searchInput:SetPoint("TOPLEFT", frame.savedLoadoutModal.title, "BOTTOMLEFT", 0, -46)
+  frame.savedLoadoutModal.searchInput:SetText("")
+  frame.savedLoadoutModal.searchLabel = Frames.CreateLabel(frame.savedLoadoutModal, "Search", "GameFontNormalSmall")
+  frame.savedLoadoutModal.searchLabel:SetPoint("BOTTOMLEFT", frame.savedLoadoutModal.searchInput, "TOPLEFT", 0, 4)
+  frame.savedLoadoutModal.scroll = CreateFrame("ScrollFrame", nil, frame.savedLoadoutModal, "UIPanelScrollFrameTemplate")
+  frame.savedLoadoutModal.scroll:SetPoint("TOPLEFT", frame.savedLoadoutModal.searchInput, "BOTTOMLEFT", 0, -16)
+  frame.savedLoadoutModal.scroll:SetPoint("BOTTOMRIGHT", -32, 16)
+  frame.savedLoadoutModal.content = CreateFrame("Frame", nil, frame.savedLoadoutModal.scroll)
+  frame.savedLoadoutModal.content:SetSize(700, 420)
+  frame.savedLoadoutModal.scroll:SetScrollChild(frame.savedLoadoutModal.content)
+  frame.savedLoadoutModal.emptyText = Frames.CreateLabel(frame.savedLoadoutModal.content, "", "GameFontHighlightSmall")
+  frame.savedLoadoutModal.emptyText:SetPoint("TOPLEFT", 0, 0)
+  frame.savedLoadoutModal.emptyText:SetWidth(640)
+  frame.savedLoadoutModal.emptyText:SetJustifyH("LEFT")
+  frame.savedLoadoutModal.savedLoadoutRows = {}
 
   frame.levelLabel = Frames.CreateLabel(frame.content, "Minimum Level", "GameFontNormal")
   frame.levelLabel:SetPoint("TOPLEFT", frame.classSection, "BOTTOMLEFT", 0, -24)
@@ -1328,12 +1925,21 @@ function Panel:Create(parent)
     end
 
     aura.load = aura.load or {}
-    local info = CaptureCurrentSavedLoadout(aura.load)
-    if info and NormalizeSavedLoadoutMode(aura.load.savedLoadoutMode) == "any" then
-      aura.load.savedLoadoutMode = "only"
+    EnsureSavedLoadoutSelections(aura.load)
+    local refreshedCatalog, reason = RefreshCurrentSavedLoadoutCatalog()
+    if not refreshedCatalog then
+      frame.savedLoadoutHint:SetText(string.format("|cffff8888%s|r", tostring(reason)))
+      return
     end
     Panel:RefreshSpecSection(aura)
     Panel:ApplyCurrent()
+  end)
+  frame.savedLoadoutPickerButton:SetScript("OnClick", function()
+    local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+    if not aura then
+      return
+    end
+    Panel:ShowSavedLoadoutPicker(aura)
   end)
 
   return frame
@@ -1344,6 +1950,7 @@ function Panel:Refresh(aura)
   aura.load.classes = EnsureMap(aura.load.classes)
   aura.load.specs = EnsureMap(aura.load.specs)
   aura.load.talents = EnsureMap(aura.load.talents)
+  aura.load.savedLoadoutSelections = EnsureSavedLoadoutSelections(aura.load)
   aura.load.savedLoadoutMode = NormalizeSavedLoadoutMode(aura.load.savedLoadoutMode)
   PruneSpecSelections(aura.load)
   local visibilitySelection = GetVisibilitySelection(aura.load or {})
