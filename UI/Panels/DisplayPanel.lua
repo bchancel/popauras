@@ -6,6 +6,7 @@ local BaseRegion = ns.renderers.BaseRegion
 local Colors = ns.util.Colors
 local Fonts = ns.util.Fonts
 local SoundPicker = ns.util.SoundPicker
+local Spells = ns.util.Spells
 
 local Panel = {}
 ns.panels.DisplayPanel = Panel
@@ -578,6 +579,78 @@ local function CommitIconOverride(input, aura)
   aura.display.iconOverrideName = value
 end
 
+local function CommitBlizzardSpellAlertOverride(input, aura)
+  local value = CommitString(input)
+  local numericValue = tonumber(value)
+  aura.display.blizzardSpellAlertSpellId = 0
+  aura.display.blizzardSpellAlertSpellName = ""
+
+  if value == "" or value == "0" then
+    return nil, nil
+  end
+
+  local spellId, resolvedName, error = 0, value, nil
+  if Spells and Spells.ResolveSpellReference then
+    spellId, resolvedName, error = Spells:ResolveSpellReference(value)
+  end
+  if spellId and spellId > 0 then
+    aura.display.blizzardSpellAlertSpellId = spellId
+    if numericValue then
+      local liveName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellId) or nil
+      aura.display.blizzardSpellAlertSpellName = liveName or ""
+    else
+      aura.display.blizzardSpellAlertSpellName = resolvedName or value
+    end
+    return spellId, nil
+  end
+
+  aura.display.blizzardSpellAlertSpellName = value
+  return 0, error or "Spell name not found in your spellbook."
+end
+
+local function GetBlizzardSpellAlertOverrideText(aura)
+  local display = aura and aura.display or {}
+  local spellId = tonumber(display.blizzardSpellAlertSpellId or 0) or 0
+  local configuredName = tostring(display.blizzardSpellAlertSpellName or "")
+  if spellId > 0 then
+    local syntheticName = "Spell " .. tostring(spellId)
+    if configuredName ~= "" and configuredName ~= syntheticName then
+      return configuredName
+    end
+    return tostring(spellId)
+  end
+
+  if configuredName ~= "" then
+    return configuredName
+  end
+
+  return ""
+end
+
+local function GetBlizzardSpellAlertHint(aura)
+  local display = aura and aura.display or {}
+  local spellId = tonumber(display.blizzardSpellAlertSpellId or 0) or 0
+  local spellName = tostring(display.blizzardSpellAlertSpellName or "")
+  if spellId > 0 then
+    local liveName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellId) or nil
+    local label = spellName ~= "" and spellName or liveName or ("Spell ID " .. tostring(spellId))
+    return string.format(
+      "|cff88ff88Suppressing Blizzard spell alert:|r %s (%d)\n|cffaaaaaaThis override applies from load rules even if the aura itself never shows. Use a Simple trigger set to Never if you want a controller-only aura.|r",
+      label,
+      spellId
+    )
+  end
+
+  if spellName ~= "" then
+    return string.format(
+      "|cffff8888Spell alert target unresolved:|r %s\n|cffaaaaaaEnter a spell name from your spellbook or a numeric spell ID. If this proc also exists as a player buff, trigger it once while the editor is open and PopAuras can learn the spell ID from your current aura. Use a Simple trigger set to Never if you want this aura to stay hidden and act only as a controller.|r",
+      spellName
+    )
+  end
+
+  return "|cffaaaaaaSelect a spell name or spell ID to suppress that Blizzard spell alert while this aura is loaded. This override applies from load rules even if the aura itself never shows. Use a Simple trigger set to Never if you want a hidden controller-only aura.|r"
+end
+
 function Panel:GetSelectedAura()
   return ns.Registry:GetAura(ns.db.ui.selectedAuraId)
 end
@@ -629,6 +702,7 @@ function Panel:UpdateControlStates()
   local showRaidFrameSection = not isGroup and not isText and isIconAura and frame.raidFrameSection:IsShown()
   local showRaidFrameControls = showRaidFrameSection and frame.showOnRaidFramesCheck:GetChecked() == true and frame.raidFrameSection.collapsed ~= true
   local soundEnabled = frame.soundEnabledCheck:GetChecked() == true
+  local blizzardSpellAlertEnabled = frame.hideBlizzardSpellAlertCheck and frame.hideBlizzardSpellAlertCheck:GetChecked() == true
 
   SetControlGroupEnabled({
     frame.barColorWrap.button, frame.barColorWrap.label,
@@ -723,6 +797,11 @@ function Panel:UpdateControlStates()
     frame.soundFileButton, frame.soundFileWrap.label,
     frame.soundChannelWrap.dropdown, frame.soundChannelWrap.label,
   }, soundEnabled and not isGroup and not isAuraBarList)
+  SetControlGroupEnabled({
+    frame.blizzardSpellAlertWrap.input,
+    frame.blizzardSpellAlertWrap.label,
+    frame.blizzardSpellAlertHint,
+  }, blizzardSpellAlertEnabled and not isGroup)
   if (not soundEnabled or isGroup or isAuraBarList) and SoundPicker then
     SoundPicker:HideIfDropdown(frame.soundFileWrap.dropdown)
   end
@@ -851,6 +930,8 @@ function Panel:ApplyCurrent()
   aura.display.soundMode = frame.soundReadyCheck:GetChecked() and "ready" or "activate"
   aura.display.soundFile = UIDropDownMenu_GetSelectedValue(frame.soundFileWrap.dropdown) or aura.display.soundFile or "None"
   aura.display.soundChannel = UIDropDownMenu_GetSelectedValue(frame.soundChannelWrap.dropdown) or aura.display.soundChannel or "Master"
+  aura.display.hideBlizzardSpellAlert = frame.hideBlizzardSpellAlertCheck:GetChecked() == true
+  CommitBlizzardSpellAlertOverride(frame.blizzardSpellAlertWrap.input, aura)
 
   if aura.kind == "text" then
     aura.display.icon = false
@@ -926,6 +1007,7 @@ function Panel:Create(parent)
   frame.timerSection = CreateSection(frame.content, "Duration Text", -1356, 260)
   frame.stacksSection = CreateSection(frame.content, "Stacks Text", -1632, 220)
   frame.soundSection = CreateSection(frame.content, "Sound", -1868, 164)
+  frame.blizzardSection = CreateSection(frame.content, "Blizzard UI", -2048, 176)
 
   local function HookSection(section, key)
     section.header:EnableMouse(true)
@@ -945,6 +1027,7 @@ function Panel:Create(parent)
   HookSection(frame.timerSection, "timer")
   HookSection(frame.stacksSection, "stacks")
   HookSection(frame.soundSection, "sound")
+  HookSection(frame.blizzardSection, "blizzard")
 
   frame.nameInputWrap = CreateLabeledInput(frame.canvasSection, "Aura Name", 12, -34, 420)
   frame.widthWrap = CreateLabeledInput(frame.canvasSection, "Width", 12, -88, 60)
@@ -1148,6 +1231,14 @@ function Panel:Create(parent)
   frame.soundHint:SetPoint("TOPLEFT", 12, -146)
   frame.soundHint:SetWidth(720)
 
+  frame.hideBlizzardSpellAlertCheck = Frames.CreateCheckbox(frame.blizzardSection, "Hide Blizzard Spell Alert")
+  frame.hideBlizzardSpellAlertCheck:SetPoint("TOPLEFT", 12, -34)
+  frame.blizzardSpellAlertWrap = CreateLabeledInput(frame.blizzardSection, "Spell Name or ID", 12, -70, 280)
+  frame.blizzardSpellAlertHint = Frames.CreateLabel(frame.blizzardSection, "", "GameFontDisableSmall")
+  frame.blizzardSpellAlertHint:SetPoint("TOPLEFT", 12, -132)
+  frame.blizzardSpellAlertHint:SetWidth(700)
+  frame.blizzardSpellAlertHint:SetJustifyH("LEFT")
+
   frame.nameControls = CreateTwoColumnTextSection(frame.nameSection, -34, "Name", true)
   frame.timerControls = CreateTwoColumnTextSection(frame.timerSection, -34, "Duration")
   frame.stacksControls = CreateTwoColumnTextSection(frame.stacksSection, -34, "Stack Count")
@@ -1249,6 +1340,11 @@ function Panel:Create(parent)
     frame.soundChannelWrap.label, frame.soundChannelWrap.dropdown,
     frame.soundHint
   )
+  RegisterSectionWidgets(frame.blizzardSection,
+    frame.hideBlizzardSpellAlertCheck,
+    frame.blizzardSpellAlertWrap.label, frame.blizzardSpellAlertWrap.input,
+    frame.blizzardSpellAlertHint
+  )
   frame.saveButton = Frames.CreateButton(frame.content, "Save", 150, 28, function()
     Panel:ApplyCurrent()
   end)
@@ -1289,6 +1385,7 @@ function Panel:Create(parent)
     frame.timerSection,
     frame.stacksSection,
     frame.soundSection,
+    frame.blizzardSection,
   }
 
   self.frame = frame
@@ -1301,6 +1398,7 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.levelWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.backgroundGammaWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.permanentAlphaWrap.input, function() Panel:ApplyCurrent() end)
+  self:WireLiveInput(frame.blizzardSpellAlertWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.groupSpacingWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.iconSizeWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.altIconIdWrap.input, function() Panel:ApplyCurrent() end)
@@ -1326,6 +1424,7 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.iconFinishFlashCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.iconMatchSizeCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.hideCDMIconCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.hideBlizzardSpellAlertCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showOnRaidFramesCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.raidFrameGlowCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.raidFrameDurationCheck, function() Panel:ApplyCurrent() end)
@@ -1595,6 +1694,9 @@ function Panel:Refresh(aura)
   self.frame.raidFrameXWrap.input:SetText(tostring(aura.display.raidFrameOffsetX or 0))
   self.frame.raidFrameYWrap.input:SetText(tostring(aura.display.raidFrameOffsetY or 11))
   self.frame.soundEnabledCheck:SetChecked(aura.display.soundEnabled == true)
+  self.frame.hideBlizzardSpellAlertCheck:SetChecked(aura.display.hideBlizzardSpellAlert == true)
+  self.frame.blizzardSpellAlertWrap.input:SetText(GetBlizzardSpellAlertOverrideText(aura))
+  self.frame.blizzardSpellAlertHint:SetText(GetBlizzardSpellAlertHint(aura))
 
   SetDropdown(self.frame.orientationWrap.dropdown, aura.display.orientation or "HORIZONTAL")
   SetDropdown(self.frame.anchorWrap.dropdown, aura.position.relativeTo or "UIParent")
@@ -1651,6 +1753,7 @@ function Panel:Refresh(aura)
   self.frame.timerSection:SetShown(not isGroup and not isText)
   self.frame.stacksSection:SetShown(not isGroup and not isText)
   self.frame.soundSection:SetShown(not isGroup and not isAuraBarList)
+  self.frame.blizzardSection:SetShown(not isGroup)
   if (isGroup or isAuraBarList) and SoundPicker then
     SoundPicker:HideIfDropdown(self.frame.soundFileWrap.dropdown)
   end
@@ -1667,6 +1770,7 @@ function Panel:Refresh(aura)
   SetSectionCollapsed(self.frame.timerSection, self.frame.collapsedSections.timer)
   SetSectionCollapsed(self.frame.stacksSection, self.frame.collapsedSections.stacks)
   SetSectionCollapsed(self.frame.soundSection, self.frame.collapsedSections.sound)
+  SetSectionCollapsed(self.frame.blizzardSection, self.frame.collapsedSections.blizzard)
 
   self.frame.orientationWrap.label:SetShown(not isGroup and not isText)
   self.frame.orientationWrap.dropdown:SetShown(not isGroup and not isText)
@@ -1724,6 +1828,7 @@ function Panel:Refresh(aura)
     self.frame.groupHint:SetText("Groups control child size, spacing, order, and growth.")
   end
   self.frame.iconSection.title:SetText(isAuraBarList and "Row Icon" or "Icon")
+  self.frame.blizzardSection.title:SetText("Blizzard UI")
 
   self:ApplyCanvasLayout(isGroup)
   self:LayoutSections()

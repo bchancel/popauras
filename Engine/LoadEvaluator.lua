@@ -17,9 +17,51 @@ local function GetPlayerSpecIndex()
   return 0
 end
 
+local function GetPlayerSpecID()
+  local specIndex = GetPlayerSpecIndex()
+  if specIndex > 0 and GetSpecializationInfo then
+    return tonumber((GetSpecializationInfo(specIndex))) or 0
+  end
+  return 0
+end
+
 local function GetPlayerClassToken()
   local _, classToken = UnitClass("player")
   return classToken
+end
+
+function LoadEvaluator:GetCurrentSavedLoadoutInfo()
+  if not (C_ClassTalents and C_ClassTalents.GetLastSelectedSavedConfigID and C_Traits and C_Traits.GetConfigInfo) then
+    return nil, "Saved loadout APIs unavailable."
+  end
+
+  local classToken = GetPlayerClassToken()
+  local specIndex = GetPlayerSpecIndex()
+  local specID = GetPlayerSpecID()
+  if not classToken or classToken == "" or specIndex <= 0 or specID <= 0 then
+    return nil, "No active specialization."
+  end
+
+  local configID = C_ClassTalents.GetLastSelectedSavedConfigID(specID)
+  if configID == nil then
+    return nil, "No saved talent loadout selected."
+  end
+
+  local configInfo = C_Traits.GetConfigInfo(configID)
+  local specName = select(2, GetSpecializationInfo(specIndex))
+  local loadoutName = configInfo and configInfo.name or nil
+  if not loadoutName or loadoutName == "" then
+    loadoutName = configID == -2 and "Starter Build" or ("Loadout " .. tostring(configID))
+  end
+
+  return {
+    classToken = classToken,
+    specIndex = specIndex,
+    specID = specID,
+    specName = specName or "",
+    configID = configID,
+    name = loadoutName,
+  }, nil
 end
 
 local function GetActiveTalentKeys()
@@ -309,6 +351,28 @@ function LoadEvaluator:Matches(aura)
     local hasAvailableTalents = next(availableTalents) ~= nil
     for talentKey, enabled in pairs(load.talents) do
       if enabled and (not hasAvailableTalents or availableTalents[talentKey]) and not activeTalents[talentKey] then
+        return false
+      end
+    end
+  end
+
+  local savedLoadoutMode = tostring(load.savedLoadoutMode or "any")
+  if savedLoadoutMode == "only" or savedLoadoutMode == "except" then
+    local configuredLoadoutID = tonumber(load.savedLoadoutId or 0) or 0
+    local configuredSpecID = tonumber(load.savedLoadoutSpecId or 0) or 0
+    local configuredClassToken = tostring(load.savedLoadoutClassToken or "")
+
+    if configuredLoadoutID ~= 0 then
+      local currentInfo = self:GetCurrentSavedLoadoutInfo()
+      local sameClass = configuredClassToken == "" or (currentInfo and currentInfo.classToken == configuredClassToken)
+      local sameSpec = configuredSpecID <= 0 or (currentInfo and currentInfo.specID == configuredSpecID)
+      local loadoutMatches = currentInfo and currentInfo.configID == configuredLoadoutID and sameClass and sameSpec or false
+
+      if savedLoadoutMode == "only" and not loadoutMatches then
+        return false
+      end
+
+      if savedLoadoutMode == "except" and loadoutMatches then
         return false
       end
     end

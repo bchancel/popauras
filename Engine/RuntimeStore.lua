@@ -356,6 +356,9 @@ function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
   if not skipVisibilitySync and ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Sync then
     ns.BlizzardAuraFrames:Sync()
   end
+  if not skipVisibilitySync and ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.Sync then
+    ns.BlizzardSpellAlerts:Sync()
+  end
   ProfileFinish("runtime:refresh_aura", refreshProfile)
 end
 
@@ -445,6 +448,9 @@ function RuntimeStore:RefreshAuras(auraIds, skipVisibilitySync)
   if not skipVisibilitySync and ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Sync then
     ns.BlizzardAuraFrames:Sync()
   end
+  if not skipVisibilitySync and ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.Sync then
+    ns.BlizzardSpellAlerts:Sync()
+  end
   ProfileFinish("runtime:refresh_batch", refreshProfile)
 end
 
@@ -473,6 +479,9 @@ function RuntimeStore:RefreshAll()
   end
   if ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Sync then
     ns.BlizzardAuraFrames:Sync()
+  end
+  if ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.Sync then
+    ns.BlizzardSpellAlerts:Sync()
   end
   ProfileFinish("runtime:refresh_all", refreshProfile)
 end

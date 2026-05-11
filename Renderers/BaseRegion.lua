@@ -211,6 +211,9 @@ end
 
 local function GetAuraCancelName(cancelData)
   local name = cancelData and cancelData.name or nil
+  if name ~= nil and issecretvalue and issecretvalue(name) then
+    return nil
+  end
   if type(name) == "string" and name ~= "" then
     return name
   end
@@ -218,9 +221,39 @@ local function GetAuraCancelName(cancelData)
 end
 
 local function GetAuraCancelIndex(cancelData)
-  local index = tonumber((cancelData and (cancelData.index or cancelData.auraIndex)) or 0) or 0
+  local index = cancelData and (cancelData.index or cancelData.auraIndex) or nil
+  if index ~= nil and issecretvalue and issecretvalue(index) then
+    return nil
+  end
+  index = tonumber(index or 0) or 0
   if index > 0 then
     return index
+  end
+  return nil
+end
+
+local function SafeNumericValue(value)
+  if value == nil then
+    return nil
+  end
+  if issecretvalue and issecretvalue(value) then
+    return nil
+  end
+  if type(value) == "number" then
+    return value
+  end
+  return nil
+end
+
+local function SafeStringValue(value)
+  if value == nil then
+    return nil
+  end
+  if issecretvalue and issecretvalue(value) then
+    return nil
+  end
+  if type(value) == "string" then
+    return value
   end
   return nil
 end
@@ -236,7 +269,7 @@ local function CanCancelPlayerAura(cancelData)
     return false
   end
 
-  local auraInstanceID = tonumber(cancelData.auraInstanceID or 0) or 0
+  local auraInstanceID = SafeNumericValue(cancelData.auraInstanceID) or 0
   if auraInstanceID > 0 and C_UnitAuras and C_UnitAuras.CancelAuraByAuraInstanceID then
     return true
   end
@@ -260,13 +293,13 @@ local function TryCancelPlayerAura(cancelData)
   end
 
   local function IsAuraStillPresent()
-    local auraInstanceID = tonumber(cancelData.auraInstanceID or 0) or 0
+    local auraInstanceID = SafeNumericValue(cancelData.auraInstanceID) or 0
     if auraInstanceID > 0 and C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
       local ok, auraData = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, "player", auraInstanceID)
       return ok and auraData ~= nil
     end
 
-    local spellId = tonumber(cancelData.spellId or 0) or 0
+    local spellId = SafeNumericValue(cancelData.spellId) or 0
     if spellId > 0 then
       if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
         local ok, auraData = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellId)
@@ -305,24 +338,29 @@ local function TryCancelPlayerAura(cancelData)
       return false
     end
 
-    local targetSpellId = tonumber(cancelData.spellId or 0) or 0
+    local targetAuraInstanceID = SafeNumericValue(cancelData.auraInstanceID) or 0
+    local targetSpellId = SafeNumericValue(cancelData.spellId) or 0
     local targetName = GetAuraCancelName(cancelData)
-    local liveSpellId, liveName = 0, nil
+    local liveAuraInstanceID, liveSpellId, liveName = 0, 0, nil
 
     if C_UnitAuras and C_UnitAuras.GetBuffDataByIndex then
       local ok, auraData = pcall(C_UnitAuras.GetBuffDataByIndex, "player", auraIndex)
       if ok and auraData then
-        liveSpellId = tonumber(auraData.spellId or 0) or 0
-        liveName = auraData.name
+        liveAuraInstanceID = SafeNumericValue(auraData.auraInstanceID) or 0
+        liveSpellId = SafeNumericValue(auraData.spellId) or 0
+        liveName = SafeStringValue(auraData.name)
       end
     elseif UnitBuff then
       local results = { pcall(UnitBuff, "player", auraIndex) }
       if results[1] then
-        liveName = results[2]
-        liveSpellId = tonumber(results[11] or 0) or 0
+        liveName = SafeStringValue(results[2])
+        liveSpellId = SafeNumericValue(results[11]) or 0
       end
     end
 
+    if targetAuraInstanceID > 0 and liveAuraInstanceID > 0 then
+      return targetAuraInstanceID == liveAuraInstanceID
+    end
     if targetSpellId > 0 and liveSpellId > 0 then
       return targetSpellId == liveSpellId
     end
@@ -330,11 +368,11 @@ local function TryCancelPlayerAura(cancelData)
       return targetName == liveName
     end
 
-    return liveSpellId > 0 or (type(liveName) == "string" and liveName ~= "")
+    return liveAuraInstanceID > 0 or liveSpellId > 0 or (type(liveName) == "string" and liveName ~= "")
   end
 
   local unit = cancelData.unit or "player"
-  local auraInstanceID = tonumber(cancelData.auraInstanceID or 0) or 0
+  local auraInstanceID = SafeNumericValue(cancelData.auraInstanceID) or 0
   if auraInstanceID > 0 and C_UnitAuras and C_UnitAuras.CancelAuraByAuraInstanceID then
     if TryCancelCall(C_UnitAuras.CancelAuraByAuraInstanceID, unit, auraInstanceID) then
       return true

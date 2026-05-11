@@ -2,7 +2,7 @@
 ## Title: PopAuras
 ## Notes: Midnight-safe WeakAuras-like addon focused on reliable bars and icons
 ## Author: Popabeast-Sargeras
-## Version: 0.4.2
+## Version: 0.4.3
 ## X-Curse-Project-ID: 1510249
 ## SavedVariables: PopAurasDB
 
@@ -36,6 +36,7 @@ Core\Profiler.lua
 Core\ShareLinks.lua
 Core\VersionCheck.lua
 Core\BlizzardAuraFrames.lua
+Core\BlizzardSpellAlerts.lua
 
 Engine\RuntimeStore.lua
 Engine\LoadEvaluator.lua

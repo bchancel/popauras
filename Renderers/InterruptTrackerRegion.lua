@@ -393,14 +393,13 @@ function InterruptTrackerRegion:AnnounceEntry(entry)
   if channel == "PARTY" and IsInGroup and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
     channel = "INSTANCE_CHAT"
   end
+  local canDirectSend = not (InCombatLockdown and InCombatLockdown())
   local sent = false
-  if C_ChatInfo and C_ChatInfo.SendChatMessage then
-    if channel == "YELL" or channel == "SAY" or channel == "INSTANCE_CHAT" or (channel == "PARTY" and IsInGroup()) then
+  if canDirectSend and (channel == "YELL" or channel == "SAY" or channel == "INSTANCE_CHAT" or (channel == "PARTY" and IsInGroup())) then
+    if C_ChatInfo and C_ChatInfo.SendChatMessage then
       C_ChatInfo.SendChatMessage(message, channel)
       sent = true
-    end
-  elseif SendChatMessage then
-    if channel == "YELL" or channel == "SAY" or channel == "INSTANCE_CHAT" or (channel == "PARTY" and IsInGroup()) then
+    elseif SendChatMessage then
       SendChatMessage(message, channel)
       sent = true
     end

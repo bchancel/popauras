@@ -1,3 +1,8 @@
+# v0.4.3
+- Fixed issue with hidden controller auras and Blizzard spell alert suppression setup
+- Added ability to load based on saved talent loadout
+- Added ability to suppress Blizzard spell alerts
+
 # v0.4.2
 - Improved spell cooldowns when CDM fails to give stack data
 

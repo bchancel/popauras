@@ -46,6 +46,12 @@ local INSTANCE_TYPE_OPTIONS = {
   { value = "pvp", label = "Battleground" },
 }
 
+local SAVED_LOADOUT_MODE_OPTIONS = {
+  { value = "any", label = "Any Saved Loadout" },
+  { value = "only", label = "Only Selected Loadout" },
+  { value = "except", label = "Except Selected Loadout" },
+}
+
 local function IsVisibilityEnabled(visibility, key)
   if type(visibility) ~= "table" then
     return true
@@ -162,6 +168,65 @@ local function GetPlayerSpecIndex()
   return 0
 end
 
+local function NormalizeSavedLoadoutMode(value)
+  value = tostring(value or "any")
+  if value ~= "only" and value ~= "except" then
+    return "any"
+  end
+  return value
+end
+
+local function GetSavedLoadoutModeLabel(value)
+  local normalized = NormalizeSavedLoadoutMode(value)
+  for _, entry in ipairs(SAVED_LOADOUT_MODE_OPTIONS) do
+    if entry.value == normalized then
+      return entry.label
+    end
+  end
+  return SAVED_LOADOUT_MODE_OPTIONS[1].label
+end
+
+local function GetCurrentSavedLoadoutInfo()
+  if ns.LoadEvaluator and ns.LoadEvaluator.GetCurrentSavedLoadoutInfo then
+    return ns.LoadEvaluator:GetCurrentSavedLoadoutInfo()
+  end
+  return nil, "Saved loadout APIs unavailable."
+end
+
+local function GetSavedLoadoutDisplayName(load)
+  load = load or {}
+  local name = NormalizeText(load.savedLoadoutName)
+  local configID = tonumber(load.savedLoadoutId or 0) or 0
+  local specLabel = ""
+  local savedLoadoutSpecId = tonumber(load.savedLoadoutSpecId or 0) or 0
+
+  if savedLoadoutSpecId > 0 then
+    local info = GetCurrentSavedLoadoutInfo()
+    if info and info.specID == savedLoadoutSpecId and info.specName and info.specName ~= "" then
+      specLabel = info.specName
+    end
+  end
+
+  if name == "" and configID ~= 0 then
+    name = configID == -2 and "Starter Build" or ("Loadout " .. tostring(configID))
+  end
+
+  if name == "" then
+    return ""
+  end
+
+  if specLabel ~= "" then
+    return string.format("%s (%s)", name, specLabel)
+  end
+
+  return name
+end
+
+local function SetDropdown(dropdown, value, label)
+  UIDropDownMenu_SetSelectedValue(dropdown, value)
+  UIDropDownMenu_SetText(dropdown, label or tostring(value or ""))
+end
+
 local GetRelevantTalentContext
 
 local function CountEnabled(map, predicate)
@@ -265,6 +330,49 @@ local function PruneTalentSelections(load, groups)
     end
   end
   return changed
+end
+
+local function CaptureCurrentSavedLoadout(load)
+  if type(load) ~= "table" then
+    return nil, "No load data available."
+  end
+
+  local info, reason = GetCurrentSavedLoadoutInfo()
+  if not info then
+    return nil, reason
+  end
+
+  load.savedLoadoutId = tonumber(info.configID or 0) or 0
+  load.savedLoadoutName = tostring(info.name or "")
+  load.savedLoadoutSpecId = tonumber(info.specID or 0) or 0
+  load.savedLoadoutClassToken = tostring(info.classToken or "")
+
+  return info
+end
+
+local function BuildSavedLoadoutHint(load)
+  load = load or {}
+  local mode = NormalizeSavedLoadoutMode(load.savedLoadoutMode)
+  local configuredName = GetSavedLoadoutDisplayName(load)
+  local currentInfo = GetCurrentSavedLoadoutInfo()
+
+  if mode == "any" then
+    if currentInfo then
+      return string.format("|cffaaaaaaCurrent saved loadout: %s|r", tostring(currentInfo.name or configuredName or "Unknown"))
+    end
+    return "|cffaaaaaaNo saved loadout filter.|r"
+  end
+
+  if configuredName == "" then
+    return "|cffff8888Use Current Loadout to capture a saved loadout for this filter.|r"
+  end
+
+  local prefix = mode == "except" and "Except" or "Only"
+  local line = string.format("|cff88ff88%s:|r %s", prefix, configuredName)
+  if currentInfo and currentInfo.name and currentInfo.name ~= "" then
+    line = string.format("%s  |cffaaaaaaCurrent: %s|r", line, currentInfo.name)
+  end
+  return line
 end
 
 local function ResolveEntryInfo(configID, entryID)
@@ -641,6 +749,7 @@ function Panel:ApplyCurrent()
   aura.load.specs = aura.load.specs or {}
   aura.load.talents = aura.load.talents or {}
   aura.load.visibility = aura.load.visibility or {}
+  aura.load.savedLoadoutMode = aura.load.savedLoadoutMode or "any"
   aura.enabled = self.frame.enabledCheck:GetChecked() == true
   aura.load.combat = UIDropDownMenu_GetSelectedValue(self.frame.combatDropDown) or "any"
   for classToken, check in pairs(self.frame.classChecks) do
@@ -651,6 +760,9 @@ function Panel:ApplyCurrent()
     aura.load.visibility[key] = check:GetChecked() == true
   end
   aura.load.talent = self.frame.talentEnabledCheck:GetChecked() == true
+  aura.load.savedLoadoutMode = NormalizeSavedLoadoutMode(
+    UIDropDownMenu_GetSelectedValue(self.frame.savedLoadoutModeDropDown) or aura.load.savedLoadoutMode
+  )
   aura.load.level = math.max(0, math.floor((tonumber(self.frame.levelInput:GetText()) or 0) + 0.5))
   aura.load.instanceType = UIDropDownMenu_GetSelectedValue(self.frame.instanceTypeDropDown) or ""
   aura.load.instanceId = math.max(0, math.floor((tonumber(self.frame.instanceIdInput:GetText()) or 0) + 0.5))
@@ -667,6 +779,7 @@ function Panel:ApplyCurrent()
   self.frame.encounterIdInput:SetText(aura.load.encounterId > 0 and tostring(aura.load.encounterId) or "")
   self.frame.equippedItemInput:SetText(aura.load.equippedItemId > 0 and tostring(aura.load.equippedItemId) or aura.load.equippedItemName or "")
   self.frame.equippedItemResolved:SetText(GetEquippedItemResolvedText(aura.load.equippedItemId, aura.load.equippedItemName))
+  self.frame.savedLoadoutHint:SetText(BuildSavedLoadoutHint(aura.load))
   ns.runtime:RefreshAura(aura.id)
 end
 
@@ -675,6 +788,7 @@ function Panel:RefreshSpecSection(aura)
   load.classes = EnsureMap(load.classes)
   load.specs = EnsureMap(load.specs)
   load.talents = EnsureMap(load.talents)
+  load.savedLoadoutMode = NormalizeSavedLoadoutMode(load.savedLoadoutMode)
   PruneSpecSelections(load)
 
   local hasClasses = false
@@ -770,6 +884,7 @@ end
 function Panel:RefreshTalentSection(aura, topAnchor)
   local load = aura.load or {}
   load.talents = EnsureMap(load.talents)
+  load.savedLoadoutMode = NormalizeSavedLoadoutMode(load.savedLoadoutMode)
   local classCollapsed = self.frame.collapsedSections and self.frame.collapsedSections.class == true
   local hasClasses = CountEnabled(EnsureMap(load.classes)) > 0
 
@@ -777,6 +892,7 @@ function Panel:RefreshTalentSection(aura, topAnchor)
 
   local classBottomAnchor = topAnchor
   local talentContentHeight = 0
+  local savedLoadoutContentHeight = 0
 
   if hasClasses and not classCollapsed then
     self.frame.talentEnabledCheck:SetChecked(load.talent == true)
@@ -819,6 +935,26 @@ function Panel:RefreshTalentSection(aura, topAnchor)
     self.frame.talentHint:Hide()
     self.frame.talentPickerButton:Hide()
   end
+
+  self.frame.savedLoadoutHeader:ClearAllPoints()
+  self.frame.savedLoadoutHeader:SetPoint("TOPLEFT", classBottomAnchor, "BOTTOMLEFT", 0, -18)
+  self.frame.savedLoadoutHeader:Show()
+  self.frame.savedLoadoutModeLabel:ClearAllPoints()
+  self.frame.savedLoadoutModeLabel:SetPoint("TOPLEFT", self.frame.savedLoadoutHeader, "BOTTOMLEFT", 0, -8)
+  self.frame.savedLoadoutModeLabel:Show()
+  self.frame.savedLoadoutModeDropDown:ClearAllPoints()
+  self.frame.savedLoadoutModeDropDown:SetPoint("TOPLEFT", self.frame.savedLoadoutModeLabel, "BOTTOMLEFT", -14, -4)
+  self.frame.savedLoadoutModeDropDown:Show()
+  self.frame.savedLoadoutCaptureButton:ClearAllPoints()
+  self.frame.savedLoadoutCaptureButton:SetPoint("TOPLEFT", self.frame.savedLoadoutModeDropDown, "TOPRIGHT", 26, 0)
+  self.frame.savedLoadoutCaptureButton:Show()
+  self.frame.savedLoadoutHint:ClearAllPoints()
+  self.frame.savedLoadoutHint:SetPoint("TOPLEFT", self.frame.savedLoadoutModeDropDown, "BOTTOMLEFT", 14, -10)
+  self.frame.savedLoadoutHint:SetText(BuildSavedLoadoutHint(load))
+  self.frame.savedLoadoutHint:Show()
+  SetDropdown(self.frame.savedLoadoutModeDropDown, load.savedLoadoutMode, GetSavedLoadoutModeLabel(load.savedLoadoutMode))
+  classBottomAnchor = self.frame.savedLoadoutHint
+  savedLoadoutContentHeight = 94
 
   self.frame.visibilityHeader:ClearAllPoints()
   self.frame.visibilityHeader:SetPoint("TOPLEFT", classBottomAnchor, "BOTTOMLEFT", 0, -24)
@@ -875,7 +1011,7 @@ function Panel:RefreshTalentSection(aura, topAnchor)
   end
   local classHeight = classCollapsed and 0 or (math.ceil(#CLASS_ORDER / 2) * 24)
   local specHeight = classCollapsed and 0 or (selectedSpecCount * 24)
-  self.frame.content:SetHeight(math.max(980, 640 + classHeight + specHeight + talentContentHeight))
+  self.frame.content:SetHeight(math.max(980, 640 + classHeight + specHeight + talentContentHeight + savedLoadoutContentHeight))
 end
 
 function Panel:ShowTalentPicker(aura, groups)
@@ -994,6 +1130,19 @@ function Panel:Create(parent)
   frame.talentPickerButton:Hide()
   frame.talentHeaders = {}
   frame.talentRows = {}
+  frame.savedLoadoutHeader = Frames.CreateLabel(frame.content, "Saved Loadout", "GameFontNormal")
+  frame.savedLoadoutModeLabel = Frames.CreateLabel(frame.content, "Filter Mode", "GameFontNormal")
+  frame.savedLoadoutModeDropDown = Frames.CreateDropdown(frame.content, 190)
+  frame.savedLoadoutCaptureButton = Frames.CreateButton(frame.content, "Use Current Loadout", 160, 22, function() end)
+  Frames.StyleSecondaryButton(frame.savedLoadoutCaptureButton)
+  frame.savedLoadoutHint = Frames.CreateLabel(frame.content, "", "GameFontHighlightSmall")
+  frame.savedLoadoutHint:SetWidth(700)
+  frame.savedLoadoutHint:SetJustifyH("LEFT")
+  frame.savedLoadoutHeader:Hide()
+  frame.savedLoadoutModeLabel:Hide()
+  frame.savedLoadoutModeDropDown:Hide()
+  frame.savedLoadoutCaptureButton:Hide()
+  frame.savedLoadoutHint:Hide()
 
   frame.visibilityHeader = Frames.CreateLabel(frame.content, "Visibility", "GameFontNormal")
   frame.visibilitySection = CreateFrame("Frame", nil, frame.content)
@@ -1160,6 +1309,32 @@ function Panel:Create(parent)
     Panel:RefreshSpecSection(aura)
     Panel:ApplyCurrent()
   end)
+  UIDropDownMenu_Initialize(frame.savedLoadoutModeDropDown, function(self, level)
+    for _, entry in ipairs(SAVED_LOADOUT_MODE_OPTIONS) do
+      local info = UIDropDownMenu_CreateInfo()
+      info.text = entry.label
+      info.value = entry.value
+      info.func = function()
+        SetDropdown(frame.savedLoadoutModeDropDown, entry.value, entry.label)
+        Panel:ApplyCurrent()
+      end
+      UIDropDownMenu_AddButton(info, level)
+    end
+  end)
+  frame.savedLoadoutCaptureButton:SetScript("OnClick", function()
+    local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+    if not aura then
+      return
+    end
+
+    aura.load = aura.load or {}
+    local info = CaptureCurrentSavedLoadout(aura.load)
+    if info and NormalizeSavedLoadoutMode(aura.load.savedLoadoutMode) == "any" then
+      aura.load.savedLoadoutMode = "only"
+    end
+    Panel:RefreshSpecSection(aura)
+    Panel:ApplyCurrent()
+  end)
 
   return frame
 end
@@ -1169,6 +1344,7 @@ function Panel:Refresh(aura)
   aura.load.classes = EnsureMap(aura.load.classes)
   aura.load.specs = EnsureMap(aura.load.specs)
   aura.load.talents = EnsureMap(aura.load.talents)
+  aura.load.savedLoadoutMode = NormalizeSavedLoadoutMode(aura.load.savedLoadoutMode)
   PruneSpecSelections(aura.load)
   local visibilitySelection = GetVisibilitySelection(aura.load or {})
   self.frame.enabledCheck:SetChecked(aura.enabled ~= false)
@@ -1185,6 +1361,8 @@ function Panel:Refresh(aura)
   UIDropDownMenu_SetText(self.frame.combatDropDown, CombatModeLabel(aura.load.combat or "any"))
   UIDropDownMenu_SetSelectedValue(self.frame.instanceTypeDropDown, aura.load.instanceType or "")
   UIDropDownMenu_SetText(self.frame.instanceTypeDropDown, GetInstanceTypeLabel(aura.load.instanceType or ""))
+  UIDropDownMenu_SetSelectedValue(self.frame.savedLoadoutModeDropDown, aura.load.savedLoadoutMode or "any")
+  UIDropDownMenu_SetText(self.frame.savedLoadoutModeDropDown, GetSavedLoadoutModeLabel(aura.load.savedLoadoutMode or "any"))
   for classToken, check in pairs(self.frame.classChecks) do
     check:SetChecked(aura.load.classes[classToken] == true)
     check:SetScript("OnClick", function(selfCheck)

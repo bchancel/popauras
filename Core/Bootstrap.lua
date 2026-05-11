@@ -21,6 +21,9 @@ Bootstrap:SetScript("OnEvent", function(_, event, addonName)
   if ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Initialize then
     ns.BlizzardAuraFrames:Initialize()
   end
+  if ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.Initialize then
+    ns.BlizzardSpellAlerts:Initialize()
+  end
   if ns.InterruptTracker and ns.InterruptTracker.Initialize then
     ns.InterruptTracker:Initialize()
   end
