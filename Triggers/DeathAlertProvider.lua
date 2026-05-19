@@ -5,7 +5,7 @@ local DEFAULT_MAX_ALERTS_PER_COMBAT = 7
 local provider = ns.TriggerBase:CreateProvider("death_alert", {
   events = {
     "UNIT_FLAGS",
-    "UNIT_HEALTH",
+    "UNIT_DIED",
     "GROUP_ROSTER_UPDATE",
     "PLAYER_ROLES_ASSIGNED",
     "PLAYER_ENTERING_WORLD",
@@ -21,6 +21,16 @@ local provider = ns.TriggerBase:CreateProvider("death_alert", {
 })
 
 local Strings = ns.util.Strings
+
+local function SafeGUID(value)
+  if issecretvalue and issecretvalue(value) then
+    return nil
+  end
+  if type(value) ~= "string" then
+    return nil
+  end
+  return value
+end
 
 local function GetDeathAlertTrigger(aura)
   local _, trigger = ns.TriggerBase:AnyTriggerMatches(aura, "death_alert")
@@ -68,7 +78,7 @@ local function BuildGroupRosterByGUID()
   local members = {}
   for _, unit in ipairs(GetGroupUnits()) do
     if UnitExists(unit) and UnitIsPlayer(unit) then
-      local guid = UnitGUID(unit)
+      local guid = SafeGUID(UnitGUID(unit))
       if guid then
         local name = Strings and Strings.GetSafeUnitDisplayName and Strings.GetSafeUnitDisplayName(unit, false) or nil
         local _, classToken = UnitClass(unit)
@@ -191,6 +201,62 @@ function provider:RefreshCombatCapWindow(roster)
   wipe(self.combatAlertCounts)
 end
 
+function provider:TriggerDeathAlertsForMember(member, now)
+  if type(member) ~= "table" then
+    return {}
+  end
+
+  local guid = SafeGUID(member.guid)
+  if not guid then
+    return {}
+  end
+
+  now = tonumber(now) or GetTime()
+  if self.recentDeaths[guid] and (now - self.recentDeaths[guid]) < 0.25 then
+    return {}
+  end
+
+  self.recentDeaths[guid] = now
+  self:PruneAlerts()
+
+  local affectedAuraIds = {}
+  for _, auraId in ipairs(self:GetDeathAlertAuraIds()) do
+    local aura = ns.Registry:GetAura(auraId)
+    local trigger = GetDeathAlertTrigger(aura)
+    if trigger and TriggerMatchesRole(trigger, member.role) then
+      local alertsThisCombat = tonumber(self.combatAlertCounts[auraId] or 0) or 0
+      local alertCap = GetAlertCap(trigger)
+      if not self.capWindowActive or alertCap == 0 or alertsThisCombat < alertCap then
+        local duration = tonumber(trigger.alertDuration or 2) or 2
+        duration = math.max(0.1, duration)
+        self.alerts[auraId] = {
+          guid = guid,
+          name = member.name,
+          classToken = member.classToken,
+          role = member.role,
+          color = GetClassColor(member.classToken),
+          startedAt = now,
+          duration = duration,
+          expirationTime = now + duration,
+        }
+
+        local soundName = GetRoleSound(trigger, member.role)
+        if ns.Interrupts and ns.Interrupts.PlaySound then
+          ns.Interrupts:PlaySound(soundName)
+        end
+
+        if self.capWindowActive then
+          self.combatAlertCounts[auraId] = alertsThisCombat + 1
+        end
+
+        affectedAuraIds[#affectedAuraIds + 1] = auraId
+      end
+    end
+  end
+
+  return affectedAuraIds
+end
+
 function provider:HandleEvent(event, ...)
   if event == "PLAYER_ENTERING_WORLD" then
     wipe(self.alerts)
@@ -223,7 +289,27 @@ function provider:HandleEvent(event, ...)
     return self:GetDeathAlertAuraIds()
   end
 
-  if event ~= "UNIT_FLAGS" and event ~= "UNIT_HEALTH" then
+  if event == "UNIT_DIED" then
+    local destGUID = SafeGUID(...)
+    if not destGUID then
+      return {}
+    end
+
+    local roster = BuildGroupRosterByGUID()
+    local member = roster[destGUID]
+    if not member then
+      return {}
+    end
+
+    if self.observedDeathState[destGUID] == true then
+      return {}
+    end
+
+    self.observedDeathState[destGUID] = true
+    return self:TriggerDeathAlertsForMember(member)
+  end
+
+  if event ~= "UNIT_FLAGS" then
     return {}
   end
 
@@ -236,13 +322,8 @@ function provider:HandleEvent(event, ...)
     return {}
   end
 
-  local destGUID = UnitGUID(unit)
-  if not destGUID or issecretvalue(destGUID) then
-    return {}
-  end
-
-  local now = GetTime()
-  if self.recentDeaths[destGUID] and (now - self.recentDeaths[destGUID]) < 0.25 then
+  local destGUID = SafeGUID(UnitGUID(unit))
+  if not destGUID then
     return {}
   end
 
@@ -265,45 +346,7 @@ function provider:HandleEvent(event, ...)
     return {}
   end
 
-  self.recentDeaths[destGUID] = now
-  self:PruneAlerts()
-
-  local affectedAuraIds = {}
-  for _, auraId in ipairs(self:GetDeathAlertAuraIds()) do
-    local aura = ns.Registry:GetAura(auraId)
-    local trigger = GetDeathAlertTrigger(aura)
-    if trigger and TriggerMatchesRole(trigger, member.role) then
-      local alertsThisCombat = tonumber(self.combatAlertCounts[auraId] or 0) or 0
-      local alertCap = GetAlertCap(trigger)
-      if not self.capWindowActive or alertCap == 0 or alertsThisCombat < alertCap then
-        local duration = tonumber(trigger.alertDuration or 2) or 2
-        duration = math.max(0.1, duration)
-        self.alerts[auraId] = {
-          guid = member.guid,
-          name = member.name,
-          classToken = member.classToken,
-          role = member.role,
-          color = GetClassColor(member.classToken),
-          startedAt = now,
-          duration = duration,
-          expirationTime = now + duration,
-        }
-
-        local soundName = GetRoleSound(trigger, member.role)
-        if ns.Interrupts and ns.Interrupts.PlaySound then
-          ns.Interrupts:PlaySound(soundName)
-        end
-
-        if self.capWindowActive then
-          self.combatAlertCounts[auraId] = alertsThisCombat + 1
-        end
-
-        affectedAuraIds[#affectedAuraIds + 1] = auraId
-      end
-    end
-  end
-
-  return affectedAuraIds
+  return self:TriggerDeathAlertsForMember(member)
 end
 
 function provider:Evaluate(trigger, aura)

@@ -1,3 +1,7 @@
+# v0.4.5
+- Death Alert now listens for `UNIT_DIED` instead of `UNIT_HEALTH`, reducing noisy health-event refreshes while still using `UNIT_FLAGS` for follow-up state cleanup
+- Fixed a Death Alert secret-GUID / Midnight taint error when handling death events
+
 # v0.4.4
 - Improved talent loadout selector to support multiple selected layouts across specs and characters
 
