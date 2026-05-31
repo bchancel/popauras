@@ -231,6 +231,9 @@ local function ApplyTriggerTypeDefaults(trigger)
     if trigger.showChargeCooldown == nil then
       trigger.showChargeCooldown = true
     end
+    if trigger.showAuraWindow == nil then
+      trigger.showAuraWindow = false
+    end
   elseif triggerType == "item_cooldown" then
     trigger.itemId = tonumber(trigger.itemId or 0) or 0
     trigger.itemName = trigger.itemName or ""
@@ -504,6 +507,7 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].showAlways = false
       aura.triggers[1].manualCooldown = 0
       aura.triggers[1].showChargeCooldown = true
+      aura.triggers[1].showAuraWindow = false
     elseif triggerType == "item_cooldown" then
       aura.triggers[1].itemId = 0
       aura.triggers[1].cooldownMatch = "cooldown"

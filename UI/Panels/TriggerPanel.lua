@@ -731,6 +731,7 @@ function Panel:ApplyCurrent()
   trigger.showAlways = frame.showAlwaysCheck:GetChecked() == true
   trigger.manualCooldown = tonumber(frame.manualCooldownInput:GetText()) or 0
   trigger.showChargeCooldown = frame.chargeCooldownCheck:GetChecked() == true
+  trigger.showAuraWindow = frame.cooldownAuraWindowCheck:GetChecked() == true
   trigger.auraType = UIDropDownMenu_GetSelectedValue(frame.auraTypeDropDown) or trigger.auraType or "buff"
   trigger.auraFilter = UIDropDownMenu_GetSelectedValue(frame.auraFilterDropDown) or trigger.auraFilter or "present"
   trigger.unit = UIDropDownMenu_GetSelectedValue(frame.auraUnitDropDown) or trigger.unit or "player"
@@ -1233,6 +1234,9 @@ function Panel:Create(parent)
   frame.chargeCooldownCheck = Frames.CreateCheckbox(frame, "Show cooldown while charges remain")
   frame.chargeCooldownCheck:SetPoint("TOPLEFT", frame.manualCooldownHint, "BOTTOMLEFT", 0, -12)
 
+  frame.cooldownAuraWindowCheck = Frames.CreateCheckbox(frame, "Show CDM aura/proc window when no cooldown is active")
+  frame.cooldownAuraWindowCheck:SetPoint("TOPLEFT", frame.chargeCooldownCheck, "BOTTOMLEFT", 0, -6)
+
   frame.chatChannelLabel = Frames.CreateLabel(frame, "Chat Channels", "GameFontNormal")
   frame.chatChannelLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
   frame.chatChannelChecks = {}
@@ -1266,7 +1270,7 @@ function Panel:Create(parent)
   UpdateChatTriggerLayout(frame)
 
   frame.debugCheck = Frames.CreateCheckbox(frame, "Debug Trigger")
-  frame.debugCheck:SetPoint("TOPLEFT", frame.chargeCooldownCheck, "BOTTOMLEFT", 0, -8)
+  frame.debugCheck:SetPoint("TOPLEFT", frame.cooldownAuraWindowCheck, "BOTTOMLEFT", 0, -8)
   frame.debugCheck:Hide()
 
   frame.saveButton = Frames.CreateButton(frame, "Apply Trigger", 120, 22, function()
@@ -1478,6 +1482,7 @@ function Panel:Create(parent)
   frame.auraListHideBlizzardBuffsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraListHideBlizzardDebuffsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.chargeCooldownCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.cooldownAuraWindowCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.deathTankCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.deathHealerCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.deathDPSCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
@@ -1656,6 +1661,8 @@ function Panel:Refresh(aura)
   self.frame.showAlwaysCheck:SetChecked(trigger.showAlways == true)
   self.frame.chargeCooldownCheck:SetShown(isSpellCooldown)
   self.frame.chargeCooldownCheck:SetChecked(trigger.showChargeCooldown ~= false)
+  self.frame.cooldownAuraWindowCheck:SetShown(isSpellCooldown)
+  self.frame.cooldownAuraWindowCheck:SetChecked(trigger.showAuraWindow == true)
   ApplyChatChannelSelection(self.frame, trigger)
   self.frame.chatSourceInput:SetText(trigger.chatSource or "")
   self.frame.chatDurationInput:SetText(isChat and tostring(NormalizeChatDuration(trigger.chatDuration)) or "")

@@ -106,8 +106,8 @@ function TextResolver:GetDurationObjectRemaining(state, now)
 
   local remainingValue = nil
   local hasNumericTiming = (tonumber(state.expirationTime or 0) or 0) > 0 or (tonumber(state.duration or 0) or 0) > 0
-  local preferDurationObjectOverAuraAPI = state.source == "cdm_aura" and state.durationObject ~= nil
-  local displayOnlyDurationObject = (state.source == "cdm" or state.source == "cdm_aura") and state.durationObject ~= nil and not hasNumericTiming
+  local preferDurationObjectOverAuraAPI = (state.source == "cdm_aura" or state.source == "cdm_aura_window") and state.durationObject ~= nil
+  local displayOnlyDurationObject = (state.source == "cdm" or state.source == "cdm_aura" or state.source == "cdm_aura_window") and state.durationObject ~= nil and not hasNumericTiming
   if not preferDurationObjectOverAuraAPI
     and C_UnitAuras and C_UnitAuras.GetAuraDurationRemaining
     and state.unit and state.auraInstanceID and (state.durationObject ~= nil or not hasNumericTiming) then
@@ -161,7 +161,7 @@ function TextResolver:GetTimerText(state, aura, remainingFromObject)
     return FormatTime(remainingFromObject, display.timerDecimals, useExtendedAuraListUnits)
   end
 
-  if (state.source == "aura" or state.source == "cdm_aura") and state.progressType ~= "timed" and (tonumber(state.duration or 0) or 0) <= 0 then
+  if (state.source == "aura" or state.source == "cdm_aura" or state.source == "cdm_aura_window") and state.progressType ~= "timed" and (tonumber(state.duration or 0) or 0) <= 0 then
     return ""
   end
 

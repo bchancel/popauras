@@ -37,6 +37,10 @@ local function ShouldPersistDisplay(trigger, aura)
   return not (aura and type(aura.triggers) == "table" and #aura.triggers > 1)
 end
 
+local function ShouldShowAuraWindow(trigger)
+  return trigger and trigger.showAuraWindow == true
+end
+
 local function GetSpellIDs(trigger)
   trigger = trigger or {}
   local signatureParts = { tostring(tonumber(trigger.spellId or 0) or 0) }
@@ -611,23 +615,41 @@ local function GetCDMState(spellId)
 end
 
 local function HasRecoverableCDMObjectSignal(cdmState)
+  local durationObjectSignal = type(cdmState) == "table" and (cdmState.durationObject or cdmState.signalDurationObject) or nil
   return type(cdmState) == "table"
-    and cdmState.active == true
+    and (cdmState.rawActive == true or cdmState.active == true or cdmState.isOnActualCooldown == true)
     and cdmState.isOnGCD ~= true
-    and cdmState.durationObject ~= nil
+    and durationObjectSignal ~= nil
 end
 
 local function IsUsableCDMCooldownState(cdmState)
-  if type(cdmState) ~= "table" or cdmState.active ~= true then
+  if type(cdmState) ~= "table" or cdmState.isOnGCD == true then
     return false
   end
 
-  if cdmState.durationObject ~= nil then
-    return cdmState.isOnActualCooldown == true
-      or IsUsableCooldownDuration(cdmState.duration, cdmState.expirationTime, false)
+  if cdmState.isOnActualCooldown == true then
+    return true
   end
 
-  return IsUsableCooldownDuration(cdmState.duration, cdmState.expirationTime, false)
+  if IsUsableCooldownDuration(cdmState.duration, cdmState.expirationTime, false) then
+    return true
+  end
+
+  local durationObjectRemaining = SafeNumber(cdmState.durationObjectRemaining)
+  if durationObjectRemaining == nil then
+    durationObjectRemaining = GetDurationObjectRemaining(cdmState.durationObject or cdmState.signalDurationObject)
+  end
+
+  return durationObjectRemaining ~= nil and durationObjectRemaining > 0
+end
+
+local function IsAuthoritativeCDMReadyState(cdmState)
+  return type(cdmState) == "table"
+    and cdmState.stateKind == "ready"
+    and cdmState.active ~= true
+    and cdmState.isOnActualCooldown ~= true
+    and cdmState.rawActive ~= true
+    and cdmState.hasDurationObjectSignal ~= true
 end
 
 local function GetRecentCastFallbackCooldownDuration(spellId, cache, sharedCache, configuredCooldown, cdmState)
@@ -1080,6 +1102,7 @@ local function BuildCDMDebugSummary(cdmState, cdmAuraDetails)
   local cdmObjectDuration, cdmObjectExpirationTime, cdmObjectRemaining = GetDurationObjectTiming(cdmState and cdmState.durationObject or nil)
   local cdmLine = BuildDebugBits({
     string.format("id=%s", tostring(cdmState and cdmState.cooldownID or "")),
+    string.format("kind=%s", tostring(cdmState and cdmState.stateKind or "")),
     string.format("active=%s", tostring(cdmState and cdmState.active == true)),
     string.format("rawActive=%s", tostring(cdmState and cdmState.rawActive == true)),
     string.format("actual=%s", tostring(cdmState and cdmState.isOnActualCooldown == true)),
@@ -2034,7 +2057,9 @@ function provider:Evaluate(trigger, aura)
     local configuredCooldown = GetConfiguredCooldown(trigger, spellId)
     local currentStackDisplayValue = nil
     local hasCurrentStackDisplayValue = false
-    local activeAuraOnly = false
+    local auraWindowEnabled = ShouldShowAuraWindow(trigger)
+    local auraWindowActive = false
+    local hasChargeCooldownSignal = false
 
     local cdmState = GetCDMState(spellId)
     local cdmStateActive = IsUsableCDMCooldownState(cdmState)
@@ -2085,30 +2110,12 @@ function provider:Evaluate(trigger, aura)
 
     local cdmAuraState = GetCDMAuraState(spellId)
     local cdmAuraDetails = GetCDMAuraDetails(cdmAuraState, spellId)
-    local cdmAuraData = cdmAuraState and cdmAuraState.auraData or nil
-    local cdmAuraStacks = cdmAuraDetails and cdmAuraDetails.stacks or 0
-    local cdmAuraDuration = cdmAuraDetails and cdmAuraDetails.duration or 0
-    local cdmAuraExpiration = cdmAuraDetails and cdmAuraDetails.expirationTime or 0
-    local cdmAuraActive = cdmAuraDetails and cdmAuraDetails.active or false
+    local cdmAuraStacks = auraWindowEnabled and cdmAuraDetails and cdmAuraDetails.stacks or 0
+    local cdmAuraDuration = auraWindowEnabled and cdmAuraDetails and cdmAuraDetails.duration or 0
+    local cdmAuraExpiration = auraWindowEnabled and cdmAuraDetails and cdmAuraDetails.expirationTime or 0
+    local cdmAuraActive = auraWindowEnabled and cdmAuraDetails and cdmAuraDetails.active or false
 
-    local cdmAuraStackText = cdmAuraDetails and cdmAuraDetails.stackText or nil
-    if cdmAuraStacks > 0 then
-      currentCharges = cdmAuraStacks
-      if sharedCharges == nil or cdmAuraStacks > sharedCharges then
-        sharedCharges = cdmAuraStacks
-      end
-      if sharedDisplayCharges == nil or cdmAuraStacks > sharedDisplayCharges then
-        sharedDisplayCharges = cdmAuraStacks
-      end
-      if not sharedStackText or sharedStackText == "" then
-        sharedStackText = cdmAuraStackText or tostring(cdmAuraStacks)
-      end
-      if cdmAuraDetails and cdmAuraDetails.hasStackDisplayValue == true then
-        currentStackDisplayValue = cdmAuraDetails.stackDisplayValue
-        hasCurrentStackDisplayValue = true
-      end
-    end
-
+    local cdmAuraStackText = auraWindowEnabled and cdmAuraDetails and cdmAuraDetails.stackText or nil
     local liveDuration = cooldown and SafeNumber(cooldown.duration)
     local cooldownActive = IsCooldownActive(cooldown)
     local cooldownHasUsableWindow = cooldownDuration and cooldownDuration > 0 and cooldownExpirationTime > GetTime()
@@ -2234,10 +2241,13 @@ function provider:Evaluate(trigger, aura)
         or chargeCooldownActive
       )
       local shouldShowChargeCooldown = hasRealCharges and missingCharges and (trigger.showChargeCooldown ~= false or noChargesAvailable)
-      if shouldShowChargeCooldown and isReady and (
+      hasChargeCooldownSignal = shouldShowChargeCooldown and (
         hasChargeDurationObject
         or (chargeCooldownActive and safeChargeDuration and safeChargeDuration > 0)
         or (cache.expirationTime and cache.expirationTime > GetTime() and (cache.duration or 0) > 0)
+      )
+      if shouldShowChargeCooldown and isReady and (
+        hasChargeCooldownSignal
       ) then
         isReady = false
         activeDurationObject = chargeDurationObject or activeDurationObject
@@ -2258,38 +2268,15 @@ function provider:Evaluate(trigger, aura)
       end
     end
 
-    activeAuraOnly = cdmAuraActive
+    auraWindowActive = cdmAuraActive
       and not cdmStateActive
       and not hasCooldownDurationObject
       and not cooldownActive
       and activeDurationObject == nil
+      and not hasChargeCooldownSignal
 
-    if activeAuraOnly then
-      if IsLearnedCastSource(cache.source) and (cache.expirationTime or 0) > GetTime() and (cache.duration or 0) > 0 then
-        cache.deferredByActiveAura = true
-        cache.deferredExpirationTime = cache.expirationTime
-        cache.expirationTime = 0
-        cache.active = false
-      end
-      isReady = false
-      duration = 0
-      expirationTime = 0
-      activeDurationObject = nil
-      source = "cdm_aura"
-      cache.source = "cdm_aura"
-      cache.active = false
-    elseif cache.deferredByActiveAura == true and isReady and (cache.duration or 0) > 0 then
-      local deferredExpirationTime = SafeNumber(cache.deferredExpirationTime)
-      if deferredExpirationTime and deferredExpirationTime > GetTime() then
-        cache.expirationTime = deferredExpirationTime
-        cache.active = true
-        cache.source = "learned_cast_deferred"
-      else
-        cache.expirationTime = 0
-        cache.active = false
-      end
-      cache.deferredByActiveAura = nil
-      cache.deferredExpirationTime = nil
+    if auraWindowActive and IsLearnedCastSource(cache.source) then
+      ClearReadyCooldownCache(cache)
     end
 
     local cooldownReadyNow = CooldownLooksReady(
@@ -2299,12 +2286,15 @@ function provider:Evaluate(trigger, aura)
       cooldownDurationObject,
       cooldownIsOnGCD
     )
+    local directCooldownReadyNow = cooldownQueryID == spellId and cooldownReadyNow
     local hasMissingChargeState = HasMissingCharges(cache.currentCharges, cache.maxCharges)
       or HasMissingCharges(currentCharges, cache.maxCharges)
       or HasMissingCharges(currentCharges, sharedMaxCharges)
+    local authoritativeReadyNow = directCooldownReadyNow
+      or IsAuthoritativeCDMReadyState(cdmState)
+      or auraWindowActive
     local suppressStaleCachedCooldown = learnedCastGraceElapsed
-      and cooldownReadyNow
-      and not activeAuraOnly
+      and authoritativeReadyNow
       and not cdmStateActive
       and not hasMissingChargeState
     if isReady
@@ -2348,7 +2338,6 @@ function provider:Evaluate(trigger, aura)
       and (SafeNumber(chargeInfo.maxCharges) or 0) == 1
 
     if isReady
-      and not activeAuraOnly
       and not cdmStateActive
       and hasSingleChargeStyleCooldown
       and HasRecoverableCDMObjectSignal(cdmState)
@@ -2373,7 +2362,7 @@ function provider:Evaluate(trigger, aura)
         cacheDuration = fallbackDuration
       end
     end
-    if isReady and not activeAuraOnly and cacheExpirationTime and cacheExpirationTime > GetTime() then
+    if isReady and cacheExpirationTime and cacheExpirationTime > GetTime() then
       isReady = false
       duration = cacheDuration or GetConfiguredCooldown(trigger, spellId)
       expirationTime = cacheExpirationTime
@@ -2384,10 +2373,33 @@ function provider:Evaluate(trigger, aura)
     end
 
     if not isReady and activeDurationObject == nil and expirationTime <= GetTime() then
-      isReady = true
-      duration = 0
-      expirationTime = 0
-      cache.active = false
+      local unresolvedApiDurationSignal = source == "api_duration"
+        and hasCooldownDurationObject
+        and cooldownReadyNow ~= true
+
+      if unresolvedApiDurationSignal and lastCastAt then
+        local fallbackDuration = GetRecentCastFallbackCooldownDuration(spellId, cache, sharedCache, configuredCooldown, cdmState)
+        local fallbackExpirationTime = fallbackDuration > 0 and (lastCastAt + fallbackDuration) or 0
+        if fallbackExpirationTime > (GetTime() + 0.15) then
+          duration = fallbackDuration
+          expirationTime = fallbackExpirationTime
+          cache.duration = fallbackDuration
+          cache.expirationTime = fallbackExpirationTime
+          cache.active = true
+          cache.source = "api_duration"
+          usedCachedTimingForApiDuration = true
+        else
+          isReady = true
+          duration = 0
+          expirationTime = 0
+          cache.active = false
+        end
+      else
+        isReady = true
+        duration = 0
+        expirationTime = 0
+        cache.active = false
+      end
     end
 
     if not isReady
@@ -2400,6 +2412,30 @@ function provider:Evaluate(trigger, aura)
       activeDurationObject = cdmState.durationObject
     end
 
+    if auraWindowActive then
+      isReady = false
+      duration = cdmAuraDuration or 0
+      expirationTime = cdmAuraExpiration or 0
+      activeDurationObject = cdmAuraDetails and cdmAuraDetails.durationObject or nil
+      source = "cdm_aura_window"
+      if cdmAuraStacks > 0 then
+        currentCharges = cdmAuraStacks
+        if sharedCharges == nil or cdmAuraStacks > sharedCharges then
+          sharedCharges = cdmAuraStacks
+        end
+        if sharedDisplayCharges == nil or cdmAuraStacks > sharedDisplayCharges then
+          sharedDisplayCharges = cdmAuraStacks
+        end
+        if not sharedStackText or sharedStackText == "" then
+          sharedStackText = cdmAuraStackText or tostring(cdmAuraStacks)
+        end
+      end
+      if cdmAuraDetails and cdmAuraDetails.hasStackDisplayValue == true then
+        currentStackDisplayValue = cdmAuraDetails.stackDisplayValue
+        hasCurrentStackDisplayValue = true
+      end
+    end
+
     if not cache.duration or cache.duration <= 0 then
       local baseCooldown = configuredCooldown
       if baseCooldown and baseCooldown > 0 then
@@ -2410,17 +2446,25 @@ function provider:Evaluate(trigger, aura)
     self.cache[spellId] = cache
 
     local candidateDisplayCharges = cdmCount
-      or cdmAuraStacks
-      or currentCharges
+    if candidateDisplayCharges == nil and auraWindowActive and cdmAuraStacks > 0 then
+      candidateDisplayCharges = cdmAuraStacks
+    end
+    if candidateDisplayCharges == nil then
+      candidateDisplayCharges = currentCharges
+    end
     local candidateStackText = cdmCountText
-      or cdmAuraStackText
-      or (candidateDisplayCharges ~= nil and candidateDisplayCharges > 0 and tostring(candidateDisplayCharges) or nil)
+    if (candidateStackText == nil or candidateStackText == "") and auraWindowActive and cdmAuraStackText and cdmAuraStackText ~= "" then
+      candidateStackText = cdmAuraStackText
+    end
+    if (candidateStackText == nil or candidateStackText == "") and candidateDisplayCharges ~= nil and candidateDisplayCharges > 0 then
+      candidateStackText = tostring(candidateDisplayCharges)
+    end
     local candidateStackDisplayValue = currentStackDisplayValue
     local candidateHasStackDisplayValue = hasCurrentStackDisplayValue
     local candidateProgressType = (activeDurationObject ~= nil or duration > 0 or expirationTime > GetTime()) and "timed" or "static"
     local candidateValue = duration
     local candidateTotal = duration
-    if activeAuraOnly then
+    if auraWindowActive and candidateProgressType == "static" then
       candidateProgressType = "static"
       candidateValue = 1
       candidateTotal = 1
@@ -2431,8 +2475,8 @@ function provider:Evaluate(trigger, aura)
       show = ShouldPersistDisplay(trigger, aura) or matched,
       matched = matched,
       active = not isReady,
-      icon = (cdmAuraDetails and cdmAuraDetails.icon) or icon,
-      name = (cdmAuraDetails and cdmAuraDetails.name) or name,
+      icon = (auraWindowActive and cdmAuraDetails and cdmAuraDetails.icon) or icon,
+      name = (auraWindowActive and cdmAuraDetails and cdmAuraDetails.name) or name,
       stacks = candidateDisplayCharges or 0,
       stackText = candidateStackText,
       stackDisplayValue = candidateStackDisplayValue,
@@ -2445,21 +2489,23 @@ function provider:Evaluate(trigger, aura)
       total = candidateTotal,
       isReady = isReady,
       isUsable = true,
-      auraInstanceID = cdmAuraDetails and cdmAuraDetails.auraInstanceID or nil,
-      unit = (cdmAuraDetails and cdmAuraDetails.unit) or nil,
+      auraInstanceID = auraWindowActive and cdmAuraDetails and cdmAuraDetails.auraInstanceID or nil,
+      unit = auraWindowActive and cdmAuraDetails and cdmAuraDetails.unit or nil,
       spellId = spellId,
       source = source,
-      statusText = isReady and "Ready" or ((source == "cdm_aura" and "Active") or "Cooldown"),
+      statusText = isReady and "Ready" or ((source == "cdm_aura_window" and "Active") or "Cooldown"),
       debugExtra = BuildDebugBits({
         string.format("spellIDs=%s", table.concat(spellIDs, ",")),
         string.format("cdmID=%s", tostring(cdmState and cdmState.cooldownID or cache.cooldownID or "")),
         string.format("cooldownQueryID=%s", tostring(cooldownQueryID or "")),
+        string.format("cdmKind=%s", tostring(cdmState and cdmState.stateKind or "")),
         string.format("cdmActive=%s", tostring(cdmStateActive == true)),
         string.format("cdmActiveRaw=%s", tostring(cdmState and (cdmState.rawActive == true or cdmState.active == true) or false)),
         string.format("cdmActual=%s", tostring(cdmState and cdmState.isOnActualCooldown == true or false)),
         string.format("cdmGCD=%s", tostring(cdmState and cdmState.isOnGCD == true or false)),
         string.format("cdmDur=%s", tostring(cdmState and cdmState.duration or "")),
         string.format("cdmObj=%s", tostring(cdmState and cdmState.durationObject ~= nil or false)),
+        string.format("cdmSignalObj=%s", tostring(cdmState and cdmState.hasDurationObjectSignal == true or false)),
         string.format("cdmCount=%s", tostring(cdmCount ~= nil and cdmCount or "")),
         string.format("cdmText=%s", tostring(cdmCountText or "")),
         string.format("cdmAura=%s", tostring(cdmAuraActive)),
@@ -2468,6 +2514,7 @@ function provider:Evaluate(trigger, aura)
         string.format("isOnGCD=%s", tostring(cooldownIsOnGCD == true)),
         string.format("gcdLike=%s", tostring(cooldownLooksLikeGCD == true)),
         string.format("cooldownReady=%s", tostring(cooldownReadyNow == true)),
+        string.format("directReady=%s", tostring(directCooldownReadyNow == true)),
         string.format("learnedGrace=%s", tostring(learnedCastGraceElapsed ~= true)),
         string.format("staleCacheSuppressed=%s", tostring(suppressStaleCachedCooldown == true)),
         string.format("durObj=%s", tostring(hasCooldownDurationObject)),
@@ -2476,7 +2523,8 @@ function provider:Evaluate(trigger, aura)
         string.format("chargeCount=%s", tostring(currentCharges ~= nil and currentCharges or "")),
         string.format("chargeMax=%s", tostring(cache.maxCharges ~= nil and cache.maxCharges or "")),
         string.format("chargeDisplay=%s", tostring(candidateDisplayCharges ~= nil and candidateDisplayCharges or "")),
-        string.format("activeAuraOnly=%s", tostring(activeAuraOnly == true)),
+        string.format("auraWindowEnabled=%s", tostring(auraWindowEnabled == true)),
+        string.format("auraWindowActive=%s", tostring(auraWindowActive == true)),
         string.format("apiActive=%s", tostring(cooldownActive)),
         string.format("matchMode=%s", tostring(matchMode)),
         string.format("matched=%s", tostring(matched)),
@@ -2494,7 +2542,7 @@ function provider:Evaluate(trigger, aura)
       if (candidate.stackText and candidate.stackText ~= "") or (candidate.stacks or 0) > 0 then
         candidatePriority = candidatePriority + 2
       end
-      if candidate.source == "cdm" or candidate.source == "cdm_aura" then
+      if candidate.source == "cdm" or candidate.source == "cdm_aura_window" then
         candidatePriority = candidatePriority + 1
       end
       if not fallbackState or candidatePriority > (fallbackPriority or -1) then

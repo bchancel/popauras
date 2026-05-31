@@ -1,3 +1,9 @@
+# v0.4.6
+- Reworked CDM-backed spell cooldown handling to prefer authoritative CDM / Blizzard active-state signals, improving reset, refund, and secret-safe timing reliability
+- Fixed CDM frame rebind / cache invalidation issues that could leave cooldown bars stale or trigger recursive overflow errors on login
+- Added an explicit spell cooldown option to show a CDM aura/proc window only when no real cooldown is active
+- Improved the cooldown debug window so it can be moved independently, minimized during combat, and uses a smaller default and minimized footprint
+
 # v0.4.5
 - Death Alert now listens for `UNIT_DIED` instead of `UNIT_HEALTH`, reducing noisy health-event refreshes while still using `UNIT_FLAGS` for follow-up state cleanup
 - Fixed a Death Alert secret-GUID / Midnight taint error when handling death events
