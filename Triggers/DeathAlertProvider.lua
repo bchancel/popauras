@@ -124,10 +124,27 @@ local function GetAlertCap(trigger)
   return math.max(0, math.min(20, cap))
 end
 
+local function IsFeigningDeath(unit)
+  if type(unit) ~= "string" or unit == "" or not UnitExists(unit) then
+    return false
+  end
+  return UnitIsFeignDeath and UnitIsFeignDeath(unit) == true or false
+end
+
+local function IsObservedDead(unit)
+  if type(unit) ~= "string" or unit == "" or not UnitExists(unit) then
+    return false
+  end
+  if UnitIsDeadOrGhost(unit) ~= true then
+    return false
+  end
+  return not IsFeigningDeath(unit)
+end
+
 local function AnyGroupMemberDead(roster)
   for _, member in pairs(roster or {}) do
     local unit = member and member.unit
-    if unit and UnitExists(unit) and UnitIsDeadOrGhost(unit) == true then
+    if IsObservedDead(unit) then
       return true
     end
   end
@@ -182,7 +199,7 @@ function provider:SyncObservedDeathState()
   for guid, member in pairs(roster) do
     local unit = member and member.unit
     if unit and UnitExists(unit) then
-      self.observedDeathState[guid] = UnitIsDeadOrGhost(unit) == true
+      self.observedDeathState[guid] = IsObservedDead(unit)
     end
   end
 end
@@ -305,6 +322,11 @@ function provider:HandleEvent(event, ...)
       return {}
     end
 
+    if IsFeigningDeath(member.unit) then
+      self.observedDeathState[destGUID] = false
+      return {}
+    end
+
     self.observedDeathState[destGUID] = true
     return self:TriggerDeathAlertsForMember(member)
   end
@@ -333,7 +355,7 @@ function provider:HandleEvent(event, ...)
     return {}
   end
 
-  local isDead = UnitIsDeadOrGhost(unit) == true
+  local isDead = IsObservedDead(unit)
   local wasDead = self.observedDeathState[destGUID] == true
   self.observedDeathState[destGUID] = isDead
 
