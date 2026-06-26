@@ -6,9 +6,9 @@ local Items = ns.util.Items
 local Panel = {}
 ns.panels.LoadPanel = Panel
 
-local CLASS_SPECS = {
+local STATIC_CLASS_SPECS = {
   DEATHKNIGHT = { className = "Death Knight", specs = { "Blood", "Frost", "Unholy" } },
-  DEMONHUNTER = { className = "Demon Hunter", specs = { "Havoc", "Vengeance" } },
+  DEMONHUNTER = { className = "Demon Hunter", specs = { "Havoc", "Vengeance", "Devourer" } },
   DRUID = { className = "Druid", specs = { "Balance", "Feral", "Guardian", "Restoration" } },
   EVOKER = { className = "Evoker", specs = { "Devastation", "Preservation", "Augmentation" } },
   HUNTER = { className = "Hunter", specs = { "Beast Mastery", "Marksmanship", "Survival" } },
@@ -22,10 +22,80 @@ local CLASS_SPECS = {
   WARRIOR = { className = "Warrior", specs = { "Arms", "Fury", "Protection" } },
 }
 
+local CLASS_FILE_TO_ID = {
+  WARRIOR = 1,
+  PALADIN = 2,
+  HUNTER = 3,
+  ROGUE = 4,
+  PRIEST = 5,
+  DEATHKNIGHT = 6,
+  SHAMAN = 7,
+  MAGE = 8,
+  WARLOCK = 9,
+  MONK = 10,
+  DRUID = 11,
+  DEMONHUNTER = 12,
+  EVOKER = 13,
+}
+
 local CLASS_ORDER = {
   "DEATHKNIGHT", "DEMONHUNTER", "DRUID", "EVOKER", "HUNTER", "MAGE", "MONK",
   "PALADIN", "PRIEST", "ROGUE", "SHAMAN", "WARLOCK", "WARRIOR",
 }
+
+local function CopySpecs(specs)
+  local copy = {}
+  for index, specName in ipairs(specs or {}) do
+    copy[index] = specName
+  end
+  return copy
+end
+
+local function BuildClassSpecs()
+  local classSpecs = {}
+
+  for classToken, info in pairs(STATIC_CLASS_SPECS) do
+    classSpecs[classToken] = {
+      className = info.className,
+      specs = CopySpecs(info.specs),
+    }
+  end
+
+  if not (GetNumSpecializationsForClassID and GetSpecializationInfoForClassID) then
+    return classSpecs
+  end
+
+  for _, classToken in ipairs(CLASS_ORDER) do
+    local classID = CLASS_FILE_TO_ID[classToken]
+    if classID then
+      local specCount = tonumber(GetNumSpecializationsForClassID(classID) or 0) or 0
+      if specCount > 0 then
+        local resolvedClassName = classSpecs[classToken] and classSpecs[classToken].className or classToken
+        if GetClassInfo then
+          local className = GetClassInfo(classID)
+          if type(className) == "string" and className ~= "" then
+            resolvedClassName = className
+          end
+        end
+
+        local resolvedSpecs = {}
+        for specIndex = 1, specCount do
+          local _, specName = GetSpecializationInfoForClassID(classID, specIndex)
+          resolvedSpecs[specIndex] = (type(specName) == "string" and specName ~= "") and specName or (classSpecs[classToken] and classSpecs[classToken].specs[specIndex]) or tostring(specIndex)
+        end
+
+        classSpecs[classToken] = {
+          className = resolvedClassName,
+          specs = resolvedSpecs,
+        }
+      end
+    end
+  end
+
+  return classSpecs
+end
+
+local CLASS_SPECS = BuildClassSpecs()
 
 local VISIBILITY_OPTIONS = {
   { key = "dungeon", label = "Dungeons" },
