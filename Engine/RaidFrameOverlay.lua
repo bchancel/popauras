@@ -571,10 +571,12 @@ function RaidFrameOverlay:Update(auraId, aura, state)
   end
 
   local desiredFrames = {}
+  local frameUnits = {}
   for _, unitId in ipairs(matchedUnits) do
     local unitFrames = ns.UnitFrameGlow:FindUnitFramesForUnit(unitId)
     for _, unitFrame in ipairs(unitFrames or {}) do
       desiredFrames[unitFrame] = true
+      frameUnits[unitFrame] = unitId
     end
   end
 
@@ -610,7 +612,8 @@ function RaidFrameOverlay:Update(auraId, aura, state)
     else
       AddIconToFrame(unitFrame, icon)
     end
-    ApplyIconState(icon, aura, state)
+    local unitState = type(state.unitStates) == "table" and state.unitStates[frameUnits[unitFrame]] or nil
+    ApplyIconState(icon, aura, unitState or state)
     affectedFrames[unitFrame] = true
   end
 

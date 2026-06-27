@@ -58,6 +58,9 @@ local function MergeStates(base, nextState, op)
     if base.unit == nil and nextState.unit ~= nil then
       base.unit = nextState.unit
     end
+    if base.unitStates == nil and nextState.unitStates ~= nil then
+      base.unitStates = nextState.unitStates
+    end
     if base.helpful == nil and nextState.helpful ~= nil then
       base.helpful = nextState.helpful
     end

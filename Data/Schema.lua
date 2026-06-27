@@ -30,6 +30,7 @@ function Schema.NormalizeRuntimeState(state)
   local isEnabled = state.isEnabled ~= false
   local unit = state.unit
   local matchedUnits = type(state.matchedUnits) == "table" and state.matchedUnits or nil
+  local unitStates = type(state.unitStates) == "table" and state.unitStates or nil
   local auraInstanceID = state.auraInstanceID
   local spellId = state.spellId
   local itemId = state.itemId
@@ -62,6 +63,7 @@ function Schema.NormalizeRuntimeState(state)
   state.isEnabled = isEnabled
   state.unit = unit
   state.matchedUnits = matchedUnits
+  state.unitStates = unitStates
   state.auraInstanceID = auraInstanceID
   state.spellId = spellId
   state.itemId = itemId

@@ -4,11 +4,13 @@ local provider = ns.TriggerBase:CreateProvider("aura", {
   events = {
     "UNIT_AURA",
     "UNIT_FLAGS",
+    "PLAYER_ENTERING_WORLD",
     "PLAYER_TARGET_CHANGED",
     "GROUP_ROSTER_UPDATE",
     "NAME_PLATE_UNIT_ADDED",
     "NAME_PLATE_UNIT_REMOVED",
     "UNIT_SPELLCAST_SUCCEEDED",
+    "ZONE_CHANGED_NEW_AREA",
   },
 })
 
@@ -21,11 +23,13 @@ local Strings = ns.util.Strings
 provider.pendingTargetAuras = provider.pendingTargetAuras or {}
 provider.cachedTargetAuras = provider.cachedTargetAuras or {}
 provider.learnedTargetDurations = provider.learnedTargetDurations or {}
+provider.groupAuraCache = provider.groupAuraCache or { units = {} }
 
 local TARGET_CACHE_TTL = 45
 local MAX_TARGET_CACHE_ENTRIES = 8
 local CACHE_PRUNE_INTERVAL = 5
 local REAL_TIME_MODIFIER = Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime or nil
+local GROUP_AURA_FILTERS = { "HELPFUL", "HARMFUL" }
 local spellIDsCache = setmetatable({}, { __mode = "k" })
 local spellNamesCache = setmetatable({}, { __mode = "k" })
 local spellNamesExactCache = setmetatable({}, { __mode = "k" })
@@ -971,6 +975,398 @@ local function UnitPassesAuraFilters(unit, trigger, aliveOnly)
     and UnitPassesNPCFilter(unit, trigger)
     and UnitPassesInstanceFilter(unit, trigger)
     and UnitPassesRangeFilter(unit, trigger)
+end
+
+local function GetGroupAuraCache()
+  provider.groupAuraCache = provider.groupAuraCache or { units = {} }
+  provider.groupAuraCache.units = provider.groupAuraCache.units or {}
+  return provider.groupAuraCache
+end
+
+local function ResetGroupAuraCache()
+  local previousGeneration = tonumber(provider.groupAuraCache and provider.groupAuraCache.generation or 0) or 0
+  provider.groupAuraCache = {
+    generation = previousGeneration + 1,
+    units = {},
+  }
+end
+
+local function GetGroupAuraUnitKey(unit)
+  if type(unit) ~= "string" or unit == "" then
+    return nil
+  end
+  return SafeUnitGUID(unit) or unit
+end
+
+local function GetGroupAuraUnitEntry(unit, create)
+  local key = GetGroupAuraUnitKey(unit)
+  if not key then
+    return nil
+  end
+
+  local cache = GetGroupAuraCache()
+  local entry = cache.units[key]
+  if not entry and create == true then
+    entry = {
+      key = key,
+      unit = unit,
+      guid = SafeUnitGUID(unit),
+      filters = {},
+      scanned = {},
+    }
+    cache.units[key] = entry
+  end
+
+  if entry then
+    entry.unit = unit
+    entry.guid = SafeUnitGUID(unit) or entry.guid
+    entry.filters = entry.filters or {}
+    entry.scanned = entry.scanned or {}
+  end
+
+  return entry
+end
+
+local function NewGroupAuraFilterStore()
+  return {
+    byInstance = {},
+    bySpellID = {},
+    byName = {},
+  }
+end
+
+local function GetGroupAuraFilterStore(unitEntry, filter)
+  if not unitEntry then
+    return nil
+  end
+  unitEntry.filters = unitEntry.filters or {}
+  if not unitEntry.filters[filter] then
+    unitEntry.filters[filter] = NewGroupAuraFilterStore()
+  end
+  return unitEntry.filters[filter]
+end
+
+local function RememberIndexedAuraChange(changes, spellID, nameKey)
+  if type(changes) ~= "table" then
+    return
+  end
+
+  spellID = tonumber(spellID or 0) or 0
+  if spellID > 0 and not changes.seenIDs[spellID] then
+    changes.seenIDs[spellID] = true
+    changes.spellIDs[#changes.spellIDs + 1] = spellID
+  end
+
+  if type(nameKey) == "string" and nameKey ~= "" and not changes.seenNames[nameKey] then
+    changes.seenNames[nameKey] = true
+    changes.spellNames[#changes.spellNames + 1] = nameKey
+  end
+end
+
+local function NewIndexedAuraChanges()
+  return {
+    spellIDs = {},
+    spellNames = {},
+    seenIDs = {},
+    seenNames = {},
+  }
+end
+
+local function ClearGroupAuraFilter(unitEntry, filter)
+  if not unitEntry then
+    return
+  end
+  unitEntry.filters = unitEntry.filters or {}
+  unitEntry.filters[filter] = NewGroupAuraFilterStore()
+  unitEntry.scanned = unitEntry.scanned or {}
+  unitEntry.scanned[filter] = false
+end
+
+local function RemoveIndexedGroupAura(unitEntry, auraInstanceID, changes)
+  auraInstanceID = SafeAuraNumber(auraInstanceID, nil)
+  if not unitEntry or not auraInstanceID then
+    return false
+  end
+
+  local removed = false
+  for _, filter in ipairs(GROUP_AURA_FILTERS) do
+    local store = unitEntry.filters and unitEntry.filters[filter] or nil
+    local indexed = store and store.byInstance and store.byInstance[auraInstanceID] or nil
+    if indexed then
+      store.byInstance[auraInstanceID] = nil
+
+      if indexed.spellID and store.bySpellID[indexed.spellID] then
+        store.bySpellID[indexed.spellID][auraInstanceID] = nil
+        if next(store.bySpellID[indexed.spellID]) == nil then
+          store.bySpellID[indexed.spellID] = nil
+        end
+      end
+
+      if indexed.nameKey and store.byName[indexed.nameKey] then
+        store.byName[indexed.nameKey][auraInstanceID] = nil
+        if next(store.byName[indexed.nameKey]) == nil then
+          store.byName[indexed.nameKey] = nil
+        end
+      end
+
+      RememberIndexedAuraChange(changes, indexed.spellID, indexed.nameKey)
+      removed = true
+    end
+  end
+
+  return removed
+end
+
+local function AuraIsVisibleForIndexedFilter(unit, auraData, filter)
+  if type(auraData) ~= "table" then
+    return false
+  end
+
+  local auraInstanceID = SafeAuraNumber(auraData.auraInstanceID, nil)
+  if auraInstanceID and C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID then
+    local ok, isFilteredOut = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, auraInstanceID, filter)
+    if ok and type(isFilteredOut) == "boolean" then
+      return not isFilteredOut
+    end
+  end
+
+  if AuraDataMatchesType then
+    return AuraDataMatchesType(auraData, unit, filter == "HELPFUL")
+  end
+
+  return true
+end
+
+local function AddIndexedGroupAuraToFilter(unitEntry, unit, auraData, filter, changes)
+  if not unitEntry or type(auraData) ~= "table" then
+    return false
+  end
+  if not AuraIsVisibleForIndexedFilter(unit, auraData, filter) then
+    return false
+  end
+
+  local auraInstanceID = SafeAuraNumber(auraData.auraInstanceID, nil)
+  if not auraInstanceID then
+    return false
+  end
+
+  local spellID = SafeSpellID(auraData.spellId)
+  local nameKey = SafeLower(auraData.name)
+  if not spellID and not nameKey then
+    return false
+  end
+
+  local store = GetGroupAuraFilterStore(unitEntry, filter)
+  local indexed = {
+    aura = auraData,
+    spellID = spellID,
+    nameKey = nameKey,
+  }
+  store.byInstance[auraInstanceID] = indexed
+
+  if spellID then
+    store.bySpellID[spellID] = store.bySpellID[spellID] or {}
+    store.bySpellID[spellID][auraInstanceID] = indexed
+  end
+
+  if nameKey then
+    store.byName[nameKey] = store.byName[nameKey] or {}
+    store.byName[nameKey][auraInstanceID] = indexed
+  end
+
+  RememberIndexedAuraChange(changes, spellID, nameKey)
+  return true
+end
+
+local function AddIndexedGroupAura(unitEntry, unit, auraData, changes)
+  local indexed = false
+  for _, filter in ipairs(GROUP_AURA_FILTERS) do
+    indexed = AddIndexedGroupAuraToFilter(unitEntry, unit, auraData, filter, changes) or indexed
+  end
+  return indexed
+end
+
+local function ScanGroupUnitFilterIntoCache(unit, filter)
+  local unitEntry = GetGroupAuraUnitEntry(unit, true)
+  if not unitEntry then
+    return false
+  end
+
+  ClearGroupAuraFilter(unitEntry, filter)
+  if UnitExists and not UnitExists(unit) then
+    unitEntry.scanned[filter] = true
+    return true
+  end
+
+  if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then
+    return false
+  end
+
+  local index = 1
+  while true do
+    local ok, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
+    if not ok or not auraData then
+      break
+    end
+    AddIndexedGroupAuraToFilter(unitEntry, unit, auraData, filter)
+    index = index + 1
+  end
+
+  unitEntry.scanned[filter] = true
+  unitEntry.scannedAt = GetTime()
+  return true
+end
+
+local function RefreshGroupUnitAuraCache(unit)
+  local scanned = false
+  for _, filter in ipairs(GROUP_AURA_FILTERS) do
+    scanned = ScanGroupUnitFilterIntoCache(unit, filter) or scanned
+  end
+  return scanned
+end
+
+local function EnsureGroupUnitFilterIndexed(unit, filter)
+  local unitEntry = GetGroupAuraUnitEntry(unit, true)
+  if not unitEntry then
+    return nil, false
+  end
+
+  if unitEntry.scanned[filter] ~= true then
+    return unitEntry, ScanGroupUnitFilterIntoCache(unit, filter)
+  end
+
+  return unitEntry, true
+end
+
+local function UpdateGroupUnitAuraCache(unit, unitAuraUpdateInfo)
+  local unitEntry = GetGroupAuraUnitEntry(unit, true)
+  if not unitEntry then
+    return nil, nil, true
+  end
+
+  if type(unitAuraUpdateInfo) ~= "table" or unitAuraUpdateInfo.isFullUpdate == true then
+    RefreshGroupUnitAuraCache(unit)
+    return nil, nil, true
+  end
+
+  local changes = NewIndexedAuraChanges()
+  local needsFullRefresh = false
+
+  if type(unitAuraUpdateInfo.removedAuraInstanceIDs) == "table" then
+    for _, auraInstanceID in ipairs(unitAuraUpdateInfo.removedAuraInstanceIDs) do
+      if not RemoveIndexedGroupAura(unitEntry, auraInstanceID, changes) then
+        needsFullRefresh = true
+      end
+    end
+  end
+
+  if type(unitAuraUpdateInfo.updatedAuraInstanceIDs) == "table" then
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+      for _, auraInstanceID in ipairs(unitAuraUpdateInfo.updatedAuraInstanceIDs) do
+        RemoveIndexedGroupAura(unitEntry, auraInstanceID, changes)
+        local ok, auraData = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, auraInstanceID)
+        if ok and auraData then
+          AddIndexedGroupAura(unitEntry, unit, auraData, changes)
+        else
+          needsFullRefresh = true
+        end
+      end
+    else
+      needsFullRefresh = true
+    end
+  end
+
+  if type(unitAuraUpdateInfo.addedAuras) == "table" then
+    for _, auraData in ipairs(unitAuraUpdateInfo.addedAuras) do
+      local auraInstanceID = SafeAuraNumber(auraData and auraData.auraInstanceID, nil)
+      if auraInstanceID then
+        RemoveIndexedGroupAura(unitEntry, auraInstanceID, changes)
+      end
+      AddIndexedGroupAura(unitEntry, unit, auraData, changes)
+    end
+  end
+
+  if needsFullRefresh then
+    RefreshGroupUnitAuraCache(unit)
+  end
+
+  return changes.spellIDs, changes.spellNames, needsFullRefresh
+end
+
+local function IndexedAuraMatchesTrigger(indexed, unit, helpful, trigger)
+  local auraData = indexed and indexed.aura or nil
+  if type(auraData) ~= "table" then
+    return false
+  end
+  if not AuraMatchesCasterFilter(trigger, auraData) then
+    return false
+  end
+  if AuraDataMatchesType and not AuraDataMatchesType(auraData, unit, helpful) then
+    return false
+  end
+  return true
+end
+
+local function FindIndexedGroupAura(unit, matchData, helpful, trigger)
+  local filter = helpful and "HELPFUL" or "HARMFUL"
+  local unitEntry, indexed = EnsureGroupUnitFilterIndexed(unit, filter)
+  if not indexed then
+    return nil, false
+  end
+
+  local store = unitEntry and unitEntry.filters and unitEntry.filters[filter] or nil
+  if not store then
+    return nil, true
+  end
+
+  for _, spellID in ipairs(matchData.spellIDs or EMPTY_MATCH_DATA.spellIDs) do
+    local matches = store.bySpellID[spellID]
+    if matches then
+      for _, indexedAura in pairs(matches) do
+        if IndexedAuraMatchesTrigger(indexedAura, unit, helpful, trigger) then
+          return indexedAura.aura, true
+        end
+      end
+    end
+  end
+
+  local checkedNames = {}
+  for _, spellName in ipairs(matchData.spellNames or EMPTY_MATCH_DATA.spellNames) do
+    checkedNames[spellName] = true
+    local matches = store.byName[spellName]
+    if matches then
+      for _, indexedAura in pairs(matches) do
+        if IndexedAuraMatchesTrigger(indexedAura, unit, helpful, trigger) then
+          return indexedAura.aura, true
+        end
+      end
+    end
+  end
+
+  for _, spellName in ipairs(matchData.exactNames or EMPTY_MATCH_DATA.exactNames) do
+    local nameKey = SafeLower(spellName)
+    if nameKey and not checkedNames[nameKey] then
+      checkedNames[nameKey] = true
+      local matches = store.byName[nameKey]
+      if matches then
+        for _, indexedAura in pairs(matches) do
+          if IndexedAuraMatchesTrigger(indexedAura, unit, helpful, trigger) then
+            return indexedAura.aura, true
+          end
+        end
+      end
+    end
+  end
+
+  return nil, true
+end
+
+local function FindGroupAura(unit, matchData, helpful, trigger)
+  local indexedAura, usedIndex = FindIndexedGroupAura(unit, matchData, helpful, trigger)
+  if usedIndex then
+    return indexedAura
+  end
+  return FindAura(unit, matchData, helpful, trigger)
 end
 
 local function BuildAuraFilterTrace(unit, trigger, aliveOnly)
@@ -1942,7 +2338,13 @@ function provider:HandleEvent(event, ...)
   PrunePendingTargetAuras()
   PruneOrphanedCaches()
 
+  if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+    ResetGroupAuraCache()
+    return true
+  end
+
   if event == "GROUP_ROSTER_UPDATE" then
+    ResetGroupAuraCache()
     return self:GetAffectedAurasForUnit("group")
   end
 
@@ -2061,14 +2463,14 @@ function provider:HandleEvent(event, ...)
           end
         end
       end
-      local changedSpellIDs, changedSpellNames, needsFullRefresh = CollectChangedAuraSpells(unit, unitAuraUpdateInfo)
+      local changedSpellIDs, changedSpellNames, needsFullRefresh = UpdateGroupUnitAuraCache(unit, unitAuraUpdateInfo)
       if not needsFullRefresh then
         return self:GetAffectedAurasForAuraChanges(changedSpellIDs, changedSpellNames, unit)
       end
       return self:GetAffectedAurasForUnit("player")
     end
     if IsGroupUnitToken(unit) then
-      local changedSpellIDs, changedSpellNames, needsFullRefresh = CollectChangedAuraSpells(unit, unitAuraUpdateInfo)
+      local changedSpellIDs, changedSpellNames, needsFullRefresh = UpdateGroupUnitAuraCache(unit, unitAuraUpdateInfo)
       if not needsFullRefresh then
         return self:GetAffectedAurasForAuraChanges(changedSpellIDs, changedSpellNames, unit)
       end
@@ -2227,12 +2629,13 @@ function provider:Evaluate(trigger, auraConfig)
     local missingCount = 0
     local matchedUnits = {}
     local missingUnits = {}
+    local matchedUnitStates = {}
 
     for _, candidateUnit in ipairs(IterateUnits(unit)) do
       checkedUnits[#checkedUnits + 1] = candidateUnit
       if UnitPassesAuraFilters(candidateUnit, trigger, aliveOnly) then
         eligibleUnits[#eligibleUnits + 1] = candidateUnit
-        local candidateAura = FindAura(candidateUnit, matchData, helpful, trigger)
+        local candidateAura = FindGroupAura(candidateUnit, matchData, helpful, trigger)
         if filterMode == "missing" then
           if not candidateAura then
             missingCount = missingCount + 1
@@ -2243,6 +2646,7 @@ function provider:Evaluate(trigger, auraConfig)
           end
         elseif candidateAura then
           matchedUnits[#matchedUnits + 1] = candidateUnit
+          matchedUnitStates[candidateUnit] = BuildStateFromAuraData(candidateAura, candidateUnit, helpful, GetPreferredAuraName(trigger, auraConfig), trigger)
           if not aura then
             aura = candidateAura
             matchedUnit = candidateUnit
@@ -2285,9 +2689,10 @@ function provider:Evaluate(trigger, auraConfig)
     end
 
     if aura and #matchedUnits > 0 then
-      local found = BuildStateFromAuraData(aura, matchedUnit, helpful, GetPreferredAuraName(trigger, auraConfig), trigger)
+      local found = matchedUnitStates[matchedUnit] or BuildStateFromAuraData(aura, matchedUnit, helpful, GetPreferredAuraName(trigger, auraConfig), trigger)
       if found then
         found.matchedUnits = matchedUnits
+        found.unitStates = matchedUnitStates
       end
       return found
     end
