@@ -18,44 +18,33 @@ local activeIcons = {}
 local iconsByFrame = setmetatable({}, { __mode = "k" })
 
 local function SafeNumber(value)
-  if value == nil then
-    return nil
-  end
-  if issecretvalue and issecretvalue(value) then
-    return nil
-  end
-  if type(value) == "number" then
-    return value
-  end
-  return nil
+  return ns.SafeValues:Number(value)
 end
 
 local function CanRenderNumericCooldown(state)
   if type(state) ~= "table" then
     return false
   end
-  local start = (state.expirationTime or 0) - (state.duration or 0)
-  local duration = state.duration or 0
-  if issecretvalue and (issecretvalue(start) or issecretvalue(duration)) then
-    return false
-  end
-  return state.progressType == "timed" and duration > 0 and (state.expirationTime or 0) > GetTime()
+  local expirationTime = ns.SafeValues:Number(state.expirationTime) or 0
+  local duration = ns.SafeValues:Number(state.duration) or 0
+  return state.progressType == "timed" and duration > 0 and expirationTime > GetTime()
 end
 
 local function GetStackText(state)
   if not state then
-    return ""
+    return "", false
   end
-  if state.hasStackDisplayValue == true and state.stackDisplayValue ~= nil then
-    return tostring(state.stackDisplayValue)
+  if state.hasStackDisplayValue == true then
+    return state.stackDisplayValue, true
   end
   if state.stackText and state.stackText ~= "" then
-    return tostring(state.stackText)
+    return state.stackText, true
   end
-  if (tonumber(state.stacks or 0) or 0) > 0 then
-    return tostring(state.stacks)
+  local stacks = ns.SafeValues:Number(state.stacks) or 0
+  if stacks > 0 then
+    return stacks, true
   end
-  return ""
+  return "", false
 end
 
 local function GetRaidFrameSettings(aura)
@@ -333,6 +322,9 @@ local function ApplyIconState(icon, aura, state)
   ConfigureCountdown(icon.cooldown, aura, iconSize, settings.showDuration)
 
   if state.durationObject and icon.cooldown.SetCooldownFromDurationObject then
+    if ns.TimerPresenter then
+      ns.TimerPresenter:SetCompletionTimer(icon.cooldown, state.durationObject, aura.id)
+    end
     icon.cooldown:SetCooldownFromDurationObject(state.durationObject, true)
     icon.cooldown:Show()
   elseif CanRenderNumericCooldown(state) then
@@ -348,8 +340,8 @@ local function ApplyIconState(icon, aura, state)
     end
   end
 
-  local stackText = settings.showStacks and GetStackText(state) or ""
-  if stackText ~= "" then
+  local stackText, hasStackText = GetStackText(state)
+  if settings.showStacks and hasStackText then
     Fonts.ApplyStyle(icon.stackText, aura and aura.display and aura.display.stacksFontStyle or "FRIZQT_OUTLINE", math.max(9, math.floor(iconSize * 0.42)))
     icon.stackText:SetTextColor(1, 1, 1, 1)
     icon.stackText:SetText(stackText)

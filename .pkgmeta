@@ -6,7 +6,9 @@ changelog-format: markdown
 
 ignore:
   - AGENTS.md
+  - ARCHITECTURE.md
   - deploy.ps1
   - README.md
+  - verify.ps1
   - .gitignore
   - update_and_push.ps1

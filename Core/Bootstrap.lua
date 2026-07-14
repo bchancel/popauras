@@ -14,6 +14,9 @@ Bootstrap:SetScript("OnEvent", function(_, event, addonName)
   end
 
   ns.SavedVariables:Initialize()
+  if ns.NativeAuras and ns.NativeAuras.Initialize then
+    ns.NativeAuras:Initialize()
+  end
   ns.Events:Initialize()
   if ns.CooldownManager and ns.CooldownManager.Initialize then
     ns.CooldownManager:Initialize()

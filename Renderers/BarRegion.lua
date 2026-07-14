@@ -192,6 +192,9 @@ function BarRegion:Update(aura, state)
   local color = readyLookActive and (aura.display.readyColor or aura.display.color) or state.color or aura.display.color
   local timerColor = readyLookActive and (aura.display.readyTextColor or aura.display.timerColor) or aura.display.timerColor or DEFAULT_TEXT_COLOR
   local useNativeCooldownText = ShouldUseNativeCooldownText(aura, state, remainingFromObject)
+  if state.durationObject and ns.TimerPresenter then
+    ns.TimerPresenter:SetCompletionTimer(self.timerCooldown, state.durationObject, aura.id)
+  end
   local orientation = aura.display.orientation or "HORIZONTAL"
   self.bar:SetStatusBarTexture(GetTexturePath(aura.display.barTexture))
   self.bar:SetOrientation(orientation)

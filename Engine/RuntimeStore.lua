@@ -127,6 +127,49 @@ function RuntimeStore:GetRegionByAuraId(auraId)
   return self.regions[auraId]
 end
 
+function RuntimeStore:RefreshNativeAuraContainers(unit)
+  if type(unit) ~= "string" or unit == "" then
+    return
+  end
+
+  for _, region in pairs(self.regions) do
+    if region and region.RefreshNativeUnit then
+      region:RefreshNativeUnit(unit)
+    end
+  end
+end
+
+function RuntimeStore:RefreshNativeAuraSources(unit)
+  if type(unit) ~= "string" or unit == "" then return end
+  for _, region in pairs(self.regions) do
+    if region and region.RefreshCDMSource then region:RefreshCDMSource(unit) end
+  end
+end
+
+function RuntimeStore:RefreshGroupLayouts(parentId)
+  local groupId = parentId
+  while groupId do
+    local region = self.regions[groupId]
+    if region and region.RefreshChildLayout then region:RefreshChildLayout() end
+    local aura = ns.Registry:GetAura(groupId)
+    groupId = aura and aura.parentId or nil
+  end
+end
+
+function RuntimeStore:ScheduleGroupLayoutRefresh(parentId)
+  if type(parentId) ~= "string" or parentId == "" then return end
+  self.pendingGroupLayouts = self.pendingGroupLayouts or {}
+  self.pendingGroupLayouts[parentId] = true
+  if self.groupLayoutRefreshPending then return end
+  self.groupLayoutRefreshPending = true
+  C_Timer.After(0, function()
+    self.groupLayoutRefreshPending = false
+    local pending = self.pendingGroupLayouts or {}
+    self.pendingGroupLayouts = {}
+    for groupId in pairs(pending) do self:RefreshGroupLayouts(groupId) end
+  end)
+end
+
 function RuntimeStore:SetRegion(auraId, region)
   self.regions[auraId] = region
 end
@@ -290,7 +333,12 @@ function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
 
   local previousState = self.states[auraId]
   local loadProfile = ProfileStart("runtime:load_eval")
-  local shouldLoad = ns.LoadEvaluator:Matches(aura)
+  local shouldLoad
+  if ns.LoadEvaluator.MatchesWithAncestors then
+    shouldLoad = ns.LoadEvaluator:MatchesWithAncestors(aura)
+  else
+    shouldLoad = ns.LoadEvaluator:Matches(aura)
+  end
   ProfileFinish("runtime:load_eval", loadProfile)
   local state
   if shouldLoad then
@@ -299,9 +347,15 @@ function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
     ProfileFinish("runtime:trigger_eval", triggerProfile)
     local conditionProfile = ProfileStart("runtime:condition_apply")
     state = ns.ConditionEngine:Apply(aura, state)
+    state.loadMatched = true
     ProfileFinish("runtime:condition_apply", conditionProfile)
   else
-    state = ns.Schema.NormalizeRuntimeState({ show = false, active = false })
+    state = ns.Schema.NormalizeRuntimeState({
+      show = false,
+      active = false,
+      loadMatched = false,
+      source = "load",
+    })
   end
 
   local editorOpen = ns.ui and ns.ui.MainWindow and ns.ui.MainWindow.IsOpen and ns.ui.MainWindow:IsOpen()

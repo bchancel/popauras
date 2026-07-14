@@ -27,7 +27,11 @@ function Layouts.ApplyGroupLayout(aura, frame, childRegions)
   local naturalPrimarySize = 0
 
   for _, region in ipairs(childRegions) do
-    if region and region.frame and region.frame:IsShown() then
+    local layoutVisible = region and region.layoutVisible
+    if layoutVisible == nil and region and region.frame then
+      layoutVisible = region.frame:IsShown()
+    end
+    if region and region.frame and layoutVisible then
       local regionWidth = region.frame:GetWidth() or targetWidth
       local regionHeight = region.frame:GetHeight() or targetHeight
       local nudgeX, nudgeY = GetChildNudge(region)

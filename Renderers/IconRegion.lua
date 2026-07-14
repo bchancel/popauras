@@ -99,12 +99,9 @@ local function CanRenderNumericCooldown(state)
   if type(state) ~= "table" then
     return false
   end
-  local start = (state.expirationTime or 0) - (state.duration or 0)
-  local duration = state.duration or 0
-  if issecretvalue and (issecretvalue(start) or issecretvalue(duration)) then
-    return false
-  end
-  return state.progressType == "timed" and duration > 0 and (state.expirationTime or 0) > GetTime()
+  local expirationTime = ns.SafeValues:Number(state.expirationTime) or 0
+  local duration = ns.SafeValues:Number(state.duration) or 0
+  return state.progressType == "timed" and duration > 0 and expirationTime > GetTime()
 end
 
 local function ApplyStackText(fontString, state)
@@ -220,6 +217,9 @@ function IconRegion:Update(aura, state)
   Colors.Apply(self.icon, iconColor)
   self.icon:SetDesaturated(state.desaturate == true)
   ApplyCooldownAppearance(self.cooldown, aura)
+  if state.durationObject and ns.TimerPresenter then
+    ns.TimerPresenter:SetCompletionTimer(self.cooldown, state.durationObject, aura.id)
+  end
 
   if aura.display.swipe or useNativeCooldownText then
     if state.durationObject and self.cooldown.SetCooldownFromDurationObject then

@@ -20,68 +20,68 @@ local function ProfileFinish(bucket, startedAt)
   end
 end
 
+local PRESENTATION_FIELDS = {
+  "icon", "name", "statusText", "message", "durationObject", "duration",
+  "expirationTime", "progressType", "value", "total", "timer", "count",
+  "stacks", "maxStacks", "stackText", "stackDisplayValue", "hasStackDisplayValue",
+  "unit", "matchedUnits", "unitStates", "auraInstanceID", "helpful", "auraIndex",
+  "spellId", "itemId", "source", "availability", "isReady", "isEnabled",
+  "isUsable", "color", "desaturate", "glow", "actionEventKey", "debugExtra",
+}
+
+local function PresentationScore(state)
+  if not state then return -1 end
+  local score = state.availability == "available" and 100 or 0
+  if state.active == true then score = score + 50 end
+  if state.durationObject then score = score + 25 end
+  if state.icon then score = score + 10 end
+  if state.name and state.name ~= "" then score = score + 5 end
+  return score
+end
+
+local function CopyPresentation(target, source)
+  for _, field in ipairs(PRESENTATION_FIELDS) do target[field] = source[field] end
+end
+
 local function MergeStates(base, nextState, op)
   if not nextState then
     return base
   end
+  nextState = ns.Schema.NormalizeRuntimeState(nextState)
 
   if not base then
-    return ns.Schema.NormalizeRuntimeState(nextState)
+    nextState._presentationScore = PresentationScore(nextState)
+    return nextState
   end
 
   if op == "AND" then
-    base.matched = base.matched and nextState.matched
-    base.show = base.show and nextState.show
-    base.active = base.active and nextState.active
-    if not base.icon and nextState.icon then base.icon = nextState.icon end
-    if (base.name == nil or base.name == "") and nextState.name ~= "" then base.name = nextState.name end
-    if (base.statusText == nil or base.statusText == "") and nextState.statusText ~= "" then
-      base.statusText = nextState.statusText
+    local baseScore = base._presentationScore or PresentationScore(base)
+    local nextScore = PresentationScore(nextState)
+    local combinedMatched = base.matched and nextState.matched
+    local combinedShow = base.show and nextState.show
+    local combinedActive = base.active and nextState.active
+    if nextScore > baseScore then
+      CopyPresentation(base, nextState)
+      base._presentationScore = nextScore
+    else
+      base._presentationScore = baseScore
     end
-    if (base.message == nil or base.message == "") and nextState.message ~= "" then
-      base.message = nextState.message
-    end
-    if nextState.durationObject then
-      base.durationObject = nextState.durationObject
-    end
-    if nextState.auraInstanceID ~= nil then
-      base.auraInstanceID = nextState.auraInstanceID
-      base.helpful = nextState.helpful
-      base.auraIndex = nextState.auraIndex
-      if nextState.unit ~= nil then
-        base.unit = nextState.unit
-      end
-      if nextState.spellId ~= nil then
-        base.spellId = nextState.spellId
-      end
-    end
-    if base.unit == nil and nextState.unit ~= nil then
-      base.unit = nextState.unit
-    end
-    if base.unitStates == nil and nextState.unitStates ~= nil then
-      base.unitStates = nextState.unitStates
-    end
-    if base.helpful == nil and nextState.helpful ~= nil then
-      base.helpful = nextState.helpful
-    end
-    if base.auraIndex == nil and nextState.auraIndex ~= nil then
-      base.auraIndex = nextState.auraIndex
-    end
-    if base.spellId == nil and nextState.spellId ~= nil then
-      base.spellId = nextState.spellId
-    end
-    if nextState.durationObject or (nextState.duration and nextState.duration > 0) then
-      base.duration = nextState.duration
-      base.expirationTime = nextState.expirationTime
-      base.progressType = nextState.progressType
-      base.value = nextState.value
-      base.total = nextState.total
-    end
+    base.matched = combinedMatched
+    base.show = combinedShow
+    base.active = combinedActive
     return base
   end
 
   if not base.matched and nextState.matched then
-    return ns.Schema.NormalizeRuntimeState(nextState)
+    nextState._presentationScore = PresentationScore(nextState)
+    return nextState
+  end
+
+  if not base.matched and PresentationScore(nextState) > (base._presentationScore or PresentationScore(base)) then
+    local show, matched, active = base.show, base.matched, base.active
+    CopyPresentation(base, nextState)
+    base.show, base.matched, base.active = show, matched, active
+    base._presentationScore = PresentationScore(nextState)
   end
 
   return base
@@ -129,6 +129,7 @@ function TriggerEngine:EvaluateAura(aura)
   if not resolved.icon and aura.display and aura.display.iconTexture then
     resolved.icon = aura.display.iconTexture
   end
+  resolved._presentationScore = nil
   ProfileFinish(auraBucket, auraProfile)
   return resolved
 end
@@ -170,7 +171,7 @@ function TriggerEngine:BuildPreviewState(aura)
     active = true,
     icon = 134400,
     name = aura.kind == "text" and "Kahyl" or aura.name,
-    stacks = aura.kind == "icon" and 3 or 0,
+    stacks = (aura.kind == "icon" or aura.kind == "bar") and 3 or 0,
     duration = aura.kind == "text" and 2 or 12,
     expirationTime = now + (aura.kind == "text" and 2 or 12),
     progressType = "timed",
@@ -192,7 +193,9 @@ end
 ns.Render = ns.Render or {}
 
 function ns.Render:CreateRegion(aura)
-  if aura.kind == "icon" then
+  if ns.renderers.NativeAuraRegion and ns.renderers.NativeAuraRegion:CanHandle(aura) then
+    return ns.renderers.NativeAuraRegion:New(aura)
+  elseif aura.kind == "icon" then
     return ns.renderers.IconRegion:New(aura)
   elseif aura.kind == "bar" then
     return ns.renderers.BarRegion:New(aura)
@@ -212,6 +215,11 @@ function ns.Render:RenderAura(aura, state)
   local renderBucket = string.format("render:%s", tostring(aura and aura.kind or "unknown"))
   local renderProfile = ProfileStart(renderBucket)
   local region = ns.runtime:GetRegionByAuraId(aura.id)
+  local wantsNativeAura = ns.renderers.NativeAuraRegion and ns.renderers.NativeAuraRegion:CanHandle(aura) or false
+  if region and (region.isNativeAuraRegion == true) ~= wantsNativeAura then
+    if region.Release then region:Release() elseif region.frame then region.frame:Hide() end
+    region = nil
+  end
   if not region then
     region = self:CreateRegion(aura)
     ns.runtime:SetRegion(aura.id, region)

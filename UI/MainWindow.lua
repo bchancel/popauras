@@ -6,6 +6,14 @@ local Fonts = ns.util.Fonts
 local MainWindow = {}
 ns.ui.MainWindow = MainWindow
 
+local function GetAddonVersion()
+  local getter = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
+  if type(getter) ~= "function" then return nil end
+  local ok, version = pcall(getter, ns.name, "Version")
+  if not ok or type(version) ~= "string" or version == "" then return nil end
+  return version
+end
+
 local panelMap = {
   trigger = "TriggerPanel",
   actions = "ActionsPanel",
@@ -158,6 +166,11 @@ function MainWindow:Create()
     ns.db.ui.window.y = y
   end)
   frame:Hide()
+  frame:SetScript("OnHide", function()
+    if ns.runtime and ns.runtime.RefreshAll then
+      ns.runtime:RefreshAll()
+    end
+  end)
 
   frame.header = CreateFrame("Frame", nil, frame, "BackdropTemplate")
   frame.header:SetPoint("TOPLEFT", 1, -1)
@@ -174,7 +187,8 @@ function MainWindow:Create()
   frame.headerText = frame.header:CreateFontString(nil, "OVERLAY")
   Fonts.Apply(frame.headerText, 20, "OUTLINE")
   frame.headerText:SetPoint("LEFT", 14, 0)
-  frame.headerText:SetText("PopAuras")
+  local version = GetAddonVersion()
+  frame.headerText:SetText(version and ("PopAuras " .. version) or "PopAuras")
   frame.headerText:SetTextColor(0.92, 0.95, 1)
 
   frame.closeButton = CreateFrame("Button", nil, frame.header, "UIPanelCloseButton")
@@ -238,8 +252,10 @@ function MainWindow:Create()
     end
     aura.display = aura.display or {}
     aura.display.previewAnimate = selfCheck:GetChecked() == true
-    if ns.runtime and ns.runtime.RefreshAura then
-      ns.runtime:RefreshAura(aura.id)
+    if ns.runtime and ns.runtime.RefreshAuras then
+      -- RefreshAuras also updates ancestor groups, so a child transitioning
+      -- into or out of preview is laid out and made visible immediately.
+      ns.runtime:RefreshAuras({ aura.id })
     end
     if ns.ui and ns.ui.AuraTree and ns.ui.AuraTree.Refresh then
       ns.ui.AuraTree:Refresh()

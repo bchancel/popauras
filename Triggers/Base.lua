@@ -18,6 +18,7 @@ function Base:InvalidateProviderCaches(providerKey)
       provider._cacheToken = nil
       provider._cachedAuraIds = nil
       provider._cachedAuraIdsByUnit = nil
+      if provider.InvalidateCaches then provider:InvalidateCaches() end
     end
     return
   end
@@ -26,6 +27,7 @@ function Base:InvalidateProviderCaches(providerKey)
     provider._cacheToken = nil
     provider._cachedAuraIds = nil
     provider._cachedAuraIdsByUnit = nil
+    if provider.InvalidateCaches then provider:InvalidateCaches() end
   end
 end
 

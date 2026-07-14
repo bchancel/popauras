@@ -3,22 +3,56 @@ local _, ns = ...
 local BaseRegion = ns.renderers.BaseRegion
 local Colors = ns.util.Colors
 local Fonts = ns.util.Fonts
-local Spells = ns.util.Spells
+local Frames = ns.util.Frames
 local UnitAuraList = ns.util.UnitAuraList
 
-local AuraBarListRegion = {}
-ns.renderers.AuraBarListRegion = AuraBarListRegion
+local Region = {}
+ns.renderers.AuraBarListRegion = Region
+local timerFormatters = {}
 
-local DEFAULT_TEXT_COLOR = { r = 1, g = 1, b = 1, a = 1 }
-local STATUS_BAR_DIRECTION = Enum and Enum.StatusBarTimerDirection or nil
-local STATUS_BAR_INTERPOLATION = Enum and Enum.StatusBarInterpolation or nil
-local REAL_TIME_MODIFIER = Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime or nil
+local function GetAuraListTimerFormatter(decimals)
+  decimals = math.max(0, math.min(2, tonumber(decimals or 1) or 1))
+  if timerFormatters[decimals] then return timerFormatters[decimals] end
+  if not C_StringUtil or not C_StringUtil.CreateNumericRuleFormatter then return nil end
+  local nearest = Enum and Enum.NumericRuleFormatRounding and Enum.NumericRuleFormatRounding.Nearest or 0
+  local down = Enum and Enum.NumericRuleFormatRounding and Enum.NumericRuleFormatRounding.Down or 2
+  local step = 10 ^ (-decimals)
+  local formatter = C_StringUtil.CreateNumericRuleFormatter()
+  formatter:SetBreakpoints({
+    {
+      threshold = 0,
+      step = step,
+      rounding = nearest,
+      format = "%." .. decimals .. "f",
+    },
+    {
+      threshold = 60,
+      format = "%." .. decimals .. "fm",
+      components = { { div = 60, step = step, rounding = nearest } },
+    },
+    {
+      threshold = 3600,
+      format = "%dh %dm",
+      components = {
+        { div = 3600, step = 1, rounding = down },
+        { div = 60, mod = 60, step = 1, rounding = down },
+      },
+    },
+    {
+      threshold = 86400,
+      format = "%dd %dh",
+      components = {
+        { div = 86400, step = 1, rounding = down },
+        { div = 3600, mod = 24, step = 1, rounding = down },
+      },
+    },
+  })
+  timerFormatters[decimals] = formatter
+  return formatter
+end
 
 local function GetTrigger(aura)
-  if not aura or type(aura.triggers) ~= "table" then
-    return nil
-  end
-  return aura.triggers[1]
+  return aura and type(aura.triggers) == "table" and aura.triggers[1] or {}
 end
 
 local function GetTexturePath(textureKey)
@@ -28,823 +62,333 @@ local function GetTexturePath(textureKey)
     GLAZE = "Interface\\RaidFrame\\Raid-Bar-Hp-Fill",
     BLIZZARD = "Interface\\TargetingFrame\\UI-StatusBar",
   }
-  if textureKey == "Interface\\TARGETINGFRAME\\UI-StatusBar" or textureKey == "Interface\\TargetingFrame\\UI-StatusBar" then
-    return textures.BLIZZARD
-  end
   return textures[textureKey] or textureKey or textures.DEFAULT
 end
 
-local function PositionText(fontString, parent, iconParent, anchor, x, y)
+local function PositionText(fontString, owner, icon, anchor, x, y)
   fontString:ClearAllPoints()
-  local resolvedAnchor = anchor or "CENTER"
-  local resolvedParent = parent
-  if resolvedAnchor == "ICON" and iconParent then
-    resolvedAnchor = "CENTER"
-    resolvedParent = iconParent
-  end
-  fontString:SetPoint(resolvedAnchor, resolvedParent, resolvedAnchor, x or 0, y or 0)
-end
-
-local function ApplyTextRotation(fontString, degrees)
-  if not fontString or not fontString.SetRotation then
-    return
-  end
-  fontString:SetRotation(math.rad(tonumber(degrees or 0) or 0))
-end
-
-local function ApplyFontStringColor(fontString, color)
-  if not fontString then
-    return
-  end
-  color = color or DEFAULT_TEXT_COLOR
-  if fontString.SetTextColor then
-    fontString:SetTextColor(color.r or 1, color.g or 1, color.b or 1, color.a == nil and 1 or color.a)
-  elseif fontString.SetVertexColor then
-    fontString:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, color.a == nil and 1 or color.a)
+  if anchor == "ICON" and icon then
+    fontString:SetPoint("CENTER", icon, "CENTER", x or 0, y or 0)
+  else
+    local point = anchor or "CENTER"
+    fontString:SetPoint(point, owner, point, x or 0, y or 0)
   end
 end
 
-local function ConfigureNativeCountdown(cooldown, row, iconHolder, aura)
-  if not cooldown or not row or not aura then
-    return
-  end
-
-  if cooldown.SetMinimumCountdownDuration then
-    cooldown:SetMinimumCountdownDuration(0)
-  end
-  if cooldown.SetHideCountdownNumbers then
-    cooldown:SetHideCountdownNumbers(false)
-  end
-
-  local countdownFS = cooldown.GetCountdownFontString and cooldown:GetCountdownFontString() or nil
-  if not countdownFS then
-    return
-  end
-
-  Fonts.ApplyStyle(countdownFS, aura.display.timerFontStyle, aura.display.timerFontSize)
-  ApplyFontStringColor(countdownFS, aura.display.timerColor or DEFAULT_TEXT_COLOR)
-  PositionText(countdownFS, row, iconHolder, aura.display.timerAnchor, aura.display.timerOffsetX, aura.display.timerOffsetY)
-  ApplyTextRotation(countdownFS, aura.display.timerRotation)
-  if countdownFS.SetMaxLines then
-    countdownFS:SetMaxLines(1)
-  end
+local function ApplyRotation(fontString, degrees)
+  if fontString.SetRotation then fontString:SetRotation(math.rad(tonumber(degrees or 0) or 0)) end
 end
 
 local oppositePoints = {
-  LEFT = "RIGHT",
-  RIGHT = "LEFT",
-  TOP = "BOTTOM",
-  BOTTOM = "TOP",
-  TOPLEFT = "BOTTOMRIGHT",
-  TOPRIGHT = "BOTTOMLEFT",
-  BOTTOMLEFT = "TOPRIGHT",
-  BOTTOMRIGHT = "TOPLEFT",
-  CENTER = "CENTER",
+  LEFT = "RIGHT", RIGHT = "LEFT", TOP = "BOTTOM", BOTTOM = "TOP",
+  TOPLEFT = "BOTTOMRIGHT", TOPRIGHT = "BOTTOMLEFT",
+  BOTTOMLEFT = "TOPRIGHT", BOTTOMRIGHT = "TOPLEFT", CENTER = "CENTER",
 }
 
-local function ApplyIconPlacement(iconHolder, row, display)
-  iconHolder:ClearAllPoints()
+local function StyleButton(button, aura)
+  local display = aura.display or {}
+  local width = tonumber(display.width or aura.position and aura.position.width or 220) or 220
+  local height = tonumber(display.height or aura.position and aura.position.height or 24) or 24
+  local orientation = display.orientation or "HORIZONTAL"
+  button:SetSize(width, height)
+  Frames.SetExplicitBounds(button.bar, button, width, height)
+  Frames.SetExplicitBounds(button.cooldown, button, width, height)
+  Frames.SetExplicitBounds(button.presentation, button, width, height)
+
+  button.bar:SetStatusBarTexture(GetTexturePath(display.barTexture))
+  button.bar:SetOrientation(orientation)
+  button.bar:SetStatusBarColor(
+    display.color and display.color.r or 0.1,
+    display.color and display.color.g or 0.6,
+    display.color and display.color.b or 1,
+    display.color and display.color.a or 1)
+  button.background:SetShown(display.showBackground ~= false)
+  button.background:SetVertexColor(
+    display.backgroundColor and display.backgroundColor.r or 0,
+    display.backgroundColor and display.backgroundColor.g or 0,
+    display.backgroundColor and display.backgroundColor.b or 0,
+    display.backgroundColor and display.backgroundColor.a or 0.45)
+
+  local iconSize = display.iconMatchBarSize and (orientation == "VERTICAL" and width or height)
+    or tonumber(display.iconSize or height) or height
+  button.icon:SetSize(iconSize, iconSize)
+  button.icon:ClearAllPoints()
   local anchor = display.iconAnchor or "LEFT"
-  if anchor == "LEFT_OUTSIDE" then
-    anchor = "LEFT"
-  elseif anchor == "RIGHT_OUTSIDE" then
-    anchor = "RIGHT"
-  end
-  local offsetX = tonumber(display.iconOffsetX or 0) or 0
-  local offsetY = tonumber(display.iconOffsetY or 0) or 0
-  local iconPoint = oppositePoints[anchor] or "CENTER"
-  iconHolder:SetPoint(iconPoint, row, anchor, offsetX, offsetY)
+  if anchor == "LEFT_OUTSIDE" then anchor = "LEFT" end
+  if anchor == "RIGHT_OUTSIDE" then anchor = "RIGHT" end
+  button.icon:SetPoint(oppositePoints[anchor] or "CENTER", button, anchor,
+    tonumber(display.iconOffsetX or 0) or 0, tonumber(display.iconOffsetY or 0) or 0)
+  button.icon:SetShown(display.icon ~= false)
+
+  button.nameText:SetShown(display.showName == true)
+  button.timerText:SetShown(display.showTimer == true)
+  button.countText:SetShown(display.showStacks == true)
+  Fonts.ApplyStyle(button.nameText, display.nameFontStyle, display.nameFontSize)
+  Fonts.ApplyStyle(button.timerText, display.timerFontStyle, display.timerFontSize)
+  Fonts.ApplyStyle(button.countText, display.stacksFontStyle, display.stacksFontSize)
+  Colors.Apply(button.nameText, display.nameColor or { r = 1, g = 1, b = 1, a = 1 })
+  Colors.Apply(button.timerText, display.timerColor or { r = 1, g = 1, b = 1, a = 1 })
+  Colors.Apply(button.countText, display.stacksColor or { r = 1, g = 1, b = 1, a = 1 })
+  PositionText(button.nameText, button.presentation, button.icon, display.nameAnchor, display.nameOffsetX, display.nameOffsetY)
+  PositionText(button.timerText, button.presentation, button.icon, display.timerAnchor, display.timerOffsetX, display.timerOffsetY)
+  PositionText(button.countText, button.presentation, button.icon, display.stacksAnchor, display.stacksOffsetX, display.stacksOffsetY)
+  Frames.ConfigureBarTextBounds(button.nameText, button.timerText, button.presentation, display, width, orientation)
+  ApplyRotation(button.nameText, display.nameRotation)
+  ApplyRotation(button.timerText, display.timerRotation)
+  ApplyRotation(button.countText, display.stacksRotation)
+
+  button.cooldown:SetShown(display.swipe == true)
+  if button.cooldown.SetDrawSwipe then button.cooldown:SetDrawSwipe(display.swipe == true) end
+  if button.cooldown.SetDrawEdge then button.cooldown:SetDrawEdge(display.iconCooldownEdge == true) end
+  if button.cooldown.SetDrawBling then button.cooldown:SetDrawBling(display.iconCooldownBling == true) end
+
+  local direction = Enum and Enum.StatusBarTimerDirection and (
+    display.reverse == true and Enum.StatusBarTimerDirection.ElapsedTime
+      or Enum.StatusBarTimerDirection.RemainingTime) or nil
+  local interpolation = Enum and Enum.StatusBarInterpolation and Enum.StatusBarInterpolation.Immediate or nil
+  button:SetDurationBar(button.bar, { direction = direction, interpolation = interpolation })
+  button:SetIcon(button.icon)
+  button:SetSpellName(button.nameText)
+  button:SetApplicationCount(button.countText)
+  button:SetDurationCooldown(button.cooldown)
+  button:SetDurationText(button.timerText, {
+    formatter = GetAuraListTimerFormatter(display.timerDecimals),
+    expiredText = "",
+    zeroDurationText = "",
+  })
 end
 
-local function GetAuraTooltipFilter(entry)
-  if not entry then
-    return nil
+function Region:InitializeNativeButton(button)
+  button.bar = CreateFrame("StatusBar", nil, button)
+  button.bar:SetAllPoints()
+  button.background = button.bar:CreateTexture(nil, "BACKGROUND")
+  button.background:SetAllPoints()
+  button.background:SetTexture("Interface\\Buttons\\WHITE8x8")
+
+  button.icon = button:CreateTexture(nil, "ARTWORK")
+  button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+  button.cooldown:SetAllPoints()
+  button.cooldown:EnableMouse(false)
+  if button.cooldown.SetHideCountdownNumbers then
+    button.cooldown:SetHideCountdownNumbers(true)
   end
-  return entry.helpful == false and "HARMFUL" or "HELPFUL"
+
+  button.presentation = CreateFrame("Frame", nil, button)
+  button.presentation:SetFrameLevel(button:GetFrameLevel() + 10)
+  button.nameText = button.presentation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  button.timerText = button.presentation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  button.countText = button.presentation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  button:SetCancelAuraButtons("RightButtonUp")
+  self.nativeButtons[#self.nativeButtons + 1] = button
+  StyleButton(button, self.currentAura)
 end
 
-local function ShowAuraBarTooltip(owner)
-  if not owner or not GameTooltip then
-    return
-  end
-
-  local entry = owner._popAurasAuraEntry
-  if type(entry) ~= "table" or not entry.unit or (not entry.auraInstanceID and not entry.index) then
-    return
-  end
-
-  if GameTooltip_SetDefaultAnchor then
-    GameTooltip_SetDefaultAnchor(GameTooltip, owner)
-  else
-    GameTooltip:SetOwner(owner, "ANCHOR_CURSOR")
-  end
-
-  local ok = false
-  if entry.auraInstanceID and GameTooltip.SetUnitAuraByAuraInstanceID then
-    ok = pcall(GameTooltip.SetUnitAuraByAuraInstanceID, GameTooltip, entry.unit, entry.auraInstanceID)
-  end
-  if not ok and entry.index and GameTooltip.SetUnitAura then
-    ok = pcall(GameTooltip.SetUnitAura, GameTooltip, entry.unit, entry.index, GetAuraTooltipFilter(entry))
-  end
-  if ok then
-    GameTooltip:Show()
-  else
-    GameTooltip:Hide()
-  end
+local function NativeSignature(options)
+  return string.format("%s|%s", tostring(options.unit), tostring(options.filterString))
 end
 
-local function HideAuraBarTooltip(owner)
-  if not owner or not GameTooltip then
-    return
-  end
-
-  local tooltipOwner = GameTooltip:GetOwner()
-  if tooltipOwner == owner or tooltipOwner == owner:GetParent() then
-    GameTooltip:Hide()
-  end
+local function GetExpirationSort(display)
+  display = display or {}
+  local methods = AuraContainerSortMethod or {}
+  local directions = AuraContainerSortDirection or {}
+  local sortMethod = methods.ExpirationOnly or methods.Expiration or 0
+  -- Aura groups lay out their first element at the anchor. Keep the next aura
+  -- to expire at the visual bottom for both downward and upward lists.
+  local sortDirection = display.growth == "UP"
+    and (directions.Normal or 0)
+    or (directions.Reverse or 1)
+  return sortMethod, sortDirection
 end
 
-local function AttachAuraBarTooltipHandlers(frame)
-  if not frame or frame._popAurasTooltipHandlers == true then
-    return
+function Region:CreateNativeContainer(aura, options)
+  local container, createError
+  if ns.NativeAuras then
+    container, createError = ns.NativeAuras:CreateContainer(self.frame)
   end
-
-  frame:SetScript("OnEnter", ShowAuraBarTooltip)
-  frame:SetScript("OnLeave", HideAuraBarTooltip)
-  frame:SetScript("OnHide", HideAuraBarTooltip)
-  frame._popAurasTooltipHandlers = true
-end
-
-local function UpdateNativeCooldownText(row, aura, durationObject, useNativeCooldownText)
-  if not row or not row.timerCooldown then
-    return
+  if not container then
+    return nil, createError or "Native aura containers are unavailable"
   end
+  if container.SetParentKey then container:SetParentKey("AuraListContainer") end
+  if container.SetEnabled then container:SetEnabled(false) end
+  self.nativeEnabled = false
+  container:SetPoint("TOPLEFT", self.frame, "TOPLEFT")
+  self.nativeButtons = {}
+  self.currentAura = aura
 
-  if useNativeCooldownText and durationObject and row.timerCooldown.SetCooldownFromDurationObject then
-    if row._popAurasNativeCountdown ~= true or row._popAurasNativeDurationObject ~= durationObject then
-      row.timerCooldown:SetCooldownFromDurationObject(durationObject, true)
-      ConfigureNativeCountdown(row.timerCooldown, row, row.iconHolder, aura)
-      row._popAurasNativeDurationObject = durationObject
-    end
-    row.timerCooldown:Show()
-    row._popAurasNativeCountdown = true
-    return
-  end
+  local display = aura.display or {}
+  local sortMethod, sortDirection = GetExpirationSort(display)
+  local groupOptions = {
+    maxFrameCount = tonumber(display.maxAuras or 40) or 40,
+    initializeFrame = function(button) self:InitializeNativeButton(button) end,
+    candidateFilters = options.candidateFilters,
+    sortMethod = sortMethod,
+    sortDirection = sortDirection,
+    layout = {
+      elementSpacingX = tonumber(display.spacing or 0) or 0,
+      elementSpacingY = tonumber(display.spacing or 0) or 0,
+      elementWidth = tonumber(display.width or 220) or 220,
+      elementHeight = tonumber(display.height or 24) or 24,
+    },
+  }
 
-  if row.timerCooldown.SetHideCountdownNumbers then
-    row.timerCooldown:SetHideCountdownNumbers(true)
-  end
-  row.timerCooldown:Hide()
-  row._popAurasNativeCountdown = false
-  row._popAurasNativeDurationObject = nil
-end
-
-local function ApplyStackText(fontString, entry)
-  if entry and entry.hasStackDisplayValue == true then
-    fontString:SetText(entry.stackDisplayValue)
-    return
-  end
-  fontString:SetText(entry and (entry.stackText or (entry.stacks and entry.stacks > 0 and tostring(entry.stacks) or "")) or "")
-end
-
-local function CallDurationObjectMethodRaw(durationObject, methodName)
-  if not durationObject then
-    return nil
-  end
-
-  local method = durationObject[methodName]
-  if type(method) ~= "function" then
-    return nil
-  end
-
-  local ok, result
-  if REAL_TIME_MODIFIER ~= nil then
-    ok, result = pcall(method, durationObject, REAL_TIME_MODIFIER)
-  else
-    ok, result = pcall(method, durationObject)
-  end
-
+  local ok, reason = pcall(container.AddAuraGroup, container, "popauras", options.filterString, groupOptions)
   if not ok then
-    return nil
+    if container.SetEnabled then container:SetEnabled(false) end
+    return nil, reason
   end
-
-  return result
+  container:SetUnit(options.unit)
+  self.container = container
+  self.containerSignature = NativeSignature(options)
+  self.sortSignature = string.format("%s|%s", tostring(sortMethod), tostring(sortDirection))
+  return container
 end
 
-local function GetLiveAuraDurationObject(entry)
-  return entry and entry.durationObject or nil
+local function GetFlowDirection(name, fallback)
+  local directions = AnchorUtil and AnchorUtil.FlowDirection or nil
+  return directions and directions[name] or fallback
 end
 
-local function GetDurationObjectRemainingRaw(durationObject, now)
-  if not durationObject then
-    return nil
-  end
-
-  local remaining = CallDurationObjectMethodRaw(durationObject, "GetRemainingDuration")
-  if type(remaining) == "number" and not (issecretvalue and issecretvalue(remaining)) then
-    return math.max(0, remaining)
-  end
-
-  local endTime = CallDurationObjectMethodRaw(durationObject, "GetEndTime")
-  if type(endTime) == "number" and not (issecretvalue and issecretvalue(endTime)) then
-    return math.max(0, endTime - (now or GetTime()))
-  end
-
-  return nil
+function Region:ApplyContainerLayout(aura)
+  local container = self.container
+  if not container then return end
+  local display = aura.display or {}
+  local growth = display.growth or "DOWN"
+  local width = tonumber(display.width or 220) or 220
+  local spacing = tonumber(display.spacing or 0) or 0
+  local right = GetFlowDirection("Right", 1)
+  local left = GetFlowDirection("Left", -1)
+  local down = GetFlowDirection("Down", -1)
+  local up = GetFlowDirection("Up", 1)
+  local horizontal = growth == "LEFT" and left or right
+  local vertical = growth == "UP" and up or down
+  local anchor = growth == "LEFT" and "TOPRIGHT" or growth == "UP" and "BOTTOMLEFT" or "TOPLEFT"
+  container:ClearAllPoints()
+  container:SetPoint(anchor, self.frame, anchor)
+  container:SetAuraLayoutAnchorPoint(anchor)
+  container:SetAuraLayoutGrowthDirection(horizontal, vertical)
+  container:SetAuraLayoutRowWidth((growth == "UP" or growth == "DOWN") and width or math.huge)
+  container:SetAuraGroupLayout("popauras", {
+    elementSpacingX = spacing,
+    elementSpacingY = spacing,
+    elementWidth = width,
+    elementHeight = tonumber(display.height or 24) or 24,
+  })
 end
 
-local function ResolveAuraBarLabel(entry)
-  if entry and entry.displayName ~= nil then
-    return entry.displayName
-  end
-  return entry.name or ""
-end
-
-local function GetAuraHasExpiration(entry)
-  if type(entry) == "table" and type(entry.hasExpiration) == "boolean"
-    and not (issecretvalue and issecretvalue(entry.hasExpiration)) then
-    return entry.hasExpiration, entry.hasExpiration
-  end
-
-  if entry and entry.isPermanent == true then
-    return false, false
-  end
-
-  if entry and entry.durationObject ~= nil then
-    return true, true
-  end
-
-  if entry and (tonumber(entry.expirationTime or 0) or 0) > 0 then
-    return true, true
-  end
-
-  if entry and (tonumber(entry.duration or 0) or 0) > 0 then
-    return true, true
-  end
-
-  return nil, nil
-end
-
-local function ApplyAuraBarTimerVisibility(fontString, entry)
-  if not fontString then
-    return nil
-  end
-
-  local rawHasExpiration, safeHasExpiration = GetAuraHasExpiration(entry)
-  if fontString.SetAlphaFromBoolean and rawHasExpiration ~= nil then
-    fontString:SetAlphaFromBoolean(rawHasExpiration)
-  elseif safeHasExpiration ~= nil then
-    fontString:SetAlpha(safeHasExpiration and 1 or 0)
-  else
-    fontString:SetAlpha(1)
-  end
-
-  return safeHasExpiration
-end
-
-local function IsAuraVisuallyPermanent(entry)
-  if not entry then
-    return false
-  end
-
-  local _, safeHasExpiration = GetAuraHasExpiration(entry)
-  if safeHasExpiration == false then
-    return true
-  end
-
-  return entry.isPermanent == true
-end
-
-local function ApplyAuraBarStackText(fontString, entry)
-  if not fontString then
-    return
-  end
-
-  if C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount and entry and entry.unit and entry.auraInstanceID then
-    local ok, count = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, entry.unit, entry.auraInstanceID)
-    if ok and count ~= nil then
-      fontString:SetText(count)
-      return
-    end
-  end
-
-  if entry and entry.hasStackDisplayValue == true and not (issecretvalue and issecretvalue(entry.stackDisplayValue)) then
-    fontString:SetText(entry.stackDisplayValue or "")
-    return
-  end
-
-  fontString:SetText(entry and (entry.stackText or (entry.stacks and entry.stacks > 0 and tostring(entry.stacks) or "")) or "")
-end
-
-local GetEntryTimerText
-
-local function ApplyRawAuraTimerText(fontString, aura, remaining)
-  local decimals = math.max(0, math.min(2, tonumber(aura and aura.display and aura.display.timerDecimals or 0) or 0))
-  if decimals > 0 then
-    fontString:SetFormattedText("%." .. tostring(decimals) .. "fs", remaining)
-  else
-    fontString:SetFormattedText("%ds", remaining)
+function Region:EnsurePreviewRows()
+  if self.previewRows then return end
+  self.previewRows = {}
+  for index = 1, 3 do
+    local row = CreateFrame("StatusBar", nil, self.frame)
+    row:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    row.icon = row:CreateTexture(nil, "ARTWORK")
+    row.nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    row.timerText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    row.countText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    self.previewRows[index] = row
   end
 end
 
-local function ApplyAuraBarTimerText(fontString, aura, entry, now)
-  if not fontString then
-    return
+function Region:ShowPreview(aura)
+  self:EnsurePreviewRows()
+  local names = { "Power Word: Fortitude", "Renew", "Weakened Soul" }
+  local icons = { 135987, 135953, 136214 }
+  local display = aura.display or {}
+  local growth = display.growth or "DOWN"
+  local spacing = tonumber(display.spacing or 0) or 0
+  local width, height = tonumber(display.width or 220) or 220, tonumber(display.height or 24) or 24
+  local previous
+  for index, row in ipairs(self.previewRows) do
+    row:ClearAllPoints()
+    row:SetSize(width, height)
+    if not previous then row:SetAllPoints(self.frame)
+    elseif growth == "UP" then row:SetPoint("BOTTOMLEFT", previous, "TOPLEFT", 0, spacing)
+    elseif growth == "LEFT" then row:SetPoint("TOPRIGHT", previous, "TOPLEFT", -spacing, 0)
+    elseif growth == "RIGHT" then row:SetPoint("TOPLEFT", previous, "TOPRIGHT", spacing, 0)
+    else row:SetPoint("TOPLEFT", previous, "BOTTOMLEFT", 0, -spacing) end
+    row:SetStatusBarColor(display.color.r, display.color.g, display.color.b, display.color.a or 1)
+    row:SetMinMaxValues(0, 30)
+    row:SetValue(31 - index * 7)
+    row.icon:SetTexture(icons[index])
+    row.icon:SetSize(height, height)
+    row.icon:ClearAllPoints()
+    row.icon:SetPoint("RIGHT", row, "LEFT")
+    row.nameText:SetPoint("LEFT", row, "LEFT", 5, 0)
+    row.nameText:SetText(names[index])
+    row.timerText:SetPoint("RIGHT", row, "RIGHT", -5, 0)
+    row.timerText:SetText(tostring(31 - index * 7))
+    row.countText:SetPoint("CENTER", row.icon, "CENTER")
+    row.countText:SetText(index == 2 and "2" or "")
+    row:Show()
+    previous = row
   end
-  if not entry then
-    fontString:SetAlpha(1)
-    fontString:SetText("")
-    return
-  end
-
-  local safeHasExpiration = ApplyAuraBarTimerVisibility(fontString, entry)
-  if entry.isPermanent == true or safeHasExpiration == false then
-    fontString:SetText("")
-    return
-  end
-
-  local rawRemaining = CallDurationObjectMethodRaw(entry and entry.durationObject or nil, "GetRemainingDuration")
-  if type(rawRemaining) == "number" then
-    if issecretvalue and issecretvalue(rawRemaining) then
-      ApplyRawAuraTimerText(fontString, aura, rawRemaining)
-    else
-      fontString:SetText(ns.TextResolver:GetTimerText(entry, aura, math.max(0, rawRemaining)))
-    end
-    return
-  end
-
-  local remaining = GetDurationObjectRemainingRaw(entry and entry.durationObject or nil, now)
-  if remaining ~= nil then
-      fontString:SetText(ns.TextResolver:GetTimerText(entry, aura, remaining))
-      return
-  end
-
-  fontString:SetText(GetEntryTimerText(aura, entry, now))
 end
 
-local function GetPermanentAlpha(display)
-  local value = tonumber(display and display.permanentAlpha)
-  if value == nil then
-    return 1
-  end
-  return math.min(1, math.max(0, value))
+function Region:HidePreview()
+  for _, row in ipairs(self.previewRows or {}) do row:Hide() end
 end
 
-local function HasLiveTimer(entry, now)
-  if not entry or IsAuraVisuallyPermanent(entry) then
-    return false
-  end
-
-  local remainingFromObject = GetDurationObjectRemainingRaw(entry.durationObject, now)
-  if remainingFromObject ~= nil then
-    return remainingFromObject > 0
-  end
-
-  if entry.durationObject then
-    return true
-  end
-
-  return type(entry.expirationTime) == "number" and entry.expirationTime > now
-end
-
-GetEntryTimerText = function(aura, entry, now)
-  if not entry then
-    return ""
-  end
-  now = now or GetTime()
-
-  if entry.isPermanent == true then
-    return ""
-  end
-
-  local remainingFromObject = GetDurationObjectRemainingRaw(entry.durationObject, now)
-  if remainingFromObject ~= nil then
-    if remainingFromObject <= 0 and (entry.expirationTime or 0) <= now then
-      return ""
-    end
-    return ns.TextResolver:GetTimerText(entry, aura, remainingFromObject)
-  end
-
-  local numericRemaining = nil
-  if (entry.expirationTime or 0) > 0 then
-    numericRemaining = math.max(0, (entry.expirationTime or 0) - now)
-  elseif (entry.duration or 0) > 0 then
-    numericRemaining = math.max(0, entry.duration or 0)
-  end
-
-  if numericRemaining ~= nil then
-    if numericRemaining <= 0 and (entry.expirationTime or 0) <= now then
-      return ""
-    end
-    return ns.TextResolver:GetTimerText(entry, aura, numericRemaining)
-  end
-
-  if entry.durationObject then
-    return ""
-  end
-
-  if (entry.duration or 0) <= 0 and (entry.expirationTime or 0) <= now then
-    return ""
-  end
-
-  return ns.TextResolver:GetTimerText(entry, aura, math.max(0, tonumber(entry.value or 0) or 0))
-end
-
-local function TintColor(color, gamma)
-  local base = color or { r = 0, g = 0, b = 0, a = 0.45 }
-  local scale = tonumber(gamma or 1) or 1
-  return {
-    r = math.min(1, math.max(0, (base.r or 0) * scale)),
-    g = math.min(1, math.max(0, (base.g or 0) * scale)),
-    b = math.min(1, math.max(0, (base.b or 0) * scale)),
-    a = base.a == nil and 1 or base.a,
-  }
-end
-
-local function BuildPreviewEntries()
-  local now = GetTime()
-  return {
-    {
-      name = "Power Word: Fortitude",
-      icon = 135987,
-      helpful = true,
-      duration = 30,
-      expirationTime = now + 30,
-      hasExpiration = true,
-      progressType = "timed",
-      value = 30,
-      total = 30,
-      source = "preview",
-      unit = "player",
-    },
-    {
-      name = "Renew",
-      icon = 135953,
-      helpful = true,
-      duration = 12,
-      expirationTime = now + 12,
-      hasExpiration = true,
-      progressType = "timed",
-      value = 12,
-      total = 12,
-      source = "preview",
-      unit = "player",
-      stacks = 2,
-      stackText = "2",
-      stackDisplayValue = 2,
-      hasStackDisplayValue = true,
-    },
-    {
-      name = "Weakened Soul",
-      icon = 136214,
-      helpful = false,
-      duration = 8,
-      expirationTime = now + 8,
-      hasExpiration = true,
-      progressType = "timed",
-      value = 8,
-      total = 8,
-      source = "preview",
-      unit = "player",
-    },
-  }
-end
-
-local function ShouldUseNativeCooldownText(aura, entry, durationObject, now)
-  if not aura or not entry or aura.display.showTimer ~= true or durationObject == nil then
-    return false
-  end
-
-  local safeExpirationTime = tonumber(entry and entry.expirationTime or 0) or 0
-  if safeExpirationTime > (now or GetTime()) then
-    return false
-  end
-
-  local remainingFromObject = GetDurationObjectRemainingRaw(durationObject, now)
-  return remainingFromObject == nil or remainingFromObject <= 0
-end
-
-function AuraBarListRegion:New(aura)
+function Region:New(aura)
   local instance = setmetatable({}, { __index = self })
   instance.frame = BaseRegion:CreateFrame(aura)
   instance.frame:SetClipsChildren(false)
-  instance.rows = {}
-  instance.entries = {}
+  instance.nativeButtons = {}
+  instance.errorText = instance.frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  instance.errorText:SetAllPoints()
+  instance.errorText:SetJustifyH("CENTER")
   return instance
 end
 
-function AuraBarListRegion:EnsureRow(index)
-  local row = self.rows[index]
-  if row then
-    return row
-  end
-
-  row = CreateFrame("Frame", nil, self.frame, "BackdropTemplate")
-  row:SetClipsChildren(false)
-
-  row.bar = CreateFrame("StatusBar", nil, row)
-  row.bar:SetAllPoints()
-
-  row.bg = row.bar:CreateTexture(nil, "BACKGROUND")
-  row.bg:SetAllPoints()
-  row.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
-
-  row.iconHolder = CreateFrame("Frame", nil, row)
-  row.icon = row.iconHolder:CreateTexture(nil, "ARTWORK")
-  row.icon:SetAllPoints()
-
-  row.overlay = CreateFrame("Frame", nil, row)
-  row.overlay:SetAllPoints()
-  row.overlay:SetFrameLevel(row:GetFrameLevel() + 15)
-
-  row.timerCooldown = CreateFrame("Cooldown", nil, row.overlay, "CooldownFrameTemplate")
-  row.timerCooldown:SetAllPoints()
-  row.timerCooldown:EnableMouse(false)
-  if row.timerCooldown.SetDrawSwipe then
-    row.timerCooldown:SetDrawSwipe(false)
-  end
-  if row.timerCooldown.SetDrawEdge then
-    row.timerCooldown:SetDrawEdge(false)
-  end
-  if row.timerCooldown.SetDrawBling then
-    row.timerCooldown:SetDrawBling(false)
-  end
-  if row.timerCooldown.SetHideCountdownNumbers then
-    row.timerCooldown:SetHideCountdownNumbers(true)
-  end
-
-  row.labelText = row.overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  row.timerText = row.overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  row.stackText = row.overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-
-  row:EnableMouse(false)
-  row.iconHolder:EnableMouse(false)
-  AttachAuraBarTooltipHandlers(row)
-  AttachAuraBarTooltipHandlers(row.iconHolder)
-
-  self.rows[index] = row
-  return row
-end
-
-function AuraBarListRegion:LayoutRows(aura, count)
-  local spacing = tonumber(aura.display.spacing)
-  if spacing == nil then
-    spacing = 0
-  end
-  local growth = tostring(aura.display.growth or "DOWN")
-  local width = self.frame:GetWidth() or aura.display.width or 220
-  local height = self.frame:GetHeight() or aura.display.height or 24
-  local previous = nil
-
-  for index = 1, count do
-    local row = self:EnsureRow(index)
-    row:ClearAllPoints()
-    row:SetSize(width, height)
-
-    if previous == nil then
-      row:SetAllPoints(self.frame)
-    elseif growth == "LEFT" then
-      row:SetPoint("TOPRIGHT", previous, "TOPLEFT", -spacing, 0)
-    elseif growth == "UP" then
-      row:SetPoint("BOTTOMLEFT", previous, "TOPLEFT", 0, spacing)
-    elseif growth == "RIGHT" then
-      row:SetPoint("TOPLEFT", previous, "TOPRIGHT", spacing, 0)
-    else
-      row:SetPoint("TOPLEFT", previous, "BOTTOMLEFT", 0, -spacing)
-    end
-
-    previous = row
-  end
-
-  for index = count + 1, #self.rows do
-    self.rows[index]:Hide()
-  end
-end
-
-function AuraBarListRegion:ApplyRow(aura, row, entry)
-  local display = aura.display or {}
-  local orientation = display.orientation or "HORIZONTAL"
-  local backgroundColor = TintColor(display.backgroundColor, display.backgroundGamma or 1)
-  local color = display.color or { r = 0.1, g = 0.6, b = 1, a = 1 }
-  local now = GetTime()
-  local isVisuallyPermanent = entry and IsAuraVisuallyPermanent(entry)
-  local barAlpha = (entry and isVisuallyPermanent == true)
-    and GetPermanentAlpha(display)
-    or 1
-  local editorOpen = BaseRegion:IsEditModeActive() == true
-
-  row:Show()
-  row:SetAlpha(1)
-  row.bar:SetAlpha(barAlpha)
-  row.iconHolder:SetAlpha(1)
-  row.overlay:SetAlpha(1)
-  row.bar:SetStatusBarTexture(GetTexturePath(display.barTexture))
-  row.bar:SetOrientation(orientation)
-  if row.bar.SetRotatesTexture then
-    row.bar:SetRotatesTexture(orientation ~= "VERTICAL")
-  end
-  if row.bar.SetReverseFill then
-    row.bar:SetReverseFill(display.reverse == true)
-  end
-  row.bar:SetStatusBarColor(color.r or 0.1, color.g or 0.6, color.b or 1, color.a == nil and 1 or color.a)
-  row.bg:SetShown(display.showBackground ~= false)
-  row.bg:SetVertexColor(backgroundColor.r, backgroundColor.g, backgroundColor.b, backgroundColor.a)
-
-  local tooltipsEnabled = BaseRegion:CanMove(aura) ~= true
-  row._popAurasAuraEntry = tooltipsEnabled and entry or nil
-  local rowCancelEnabled = false
-  if not editorOpen then
-    rowCancelEnabled = BaseRegion:ConfigureAuraCancellation(row, entry)
-  else
-    BaseRegion:ConfigureAuraCancellation(row, nil)
-  end
-
-  if display.icon ~= false then
-    local iconSize = display.iconMatchBarSize and ((orientation == "VERTICAL") and row:GetWidth() or row:GetHeight()) or (display.iconSize or row:GetHeight())
-    row.iconHolder:SetSize(iconSize, iconSize)
-    ApplyIconPlacement(row.iconHolder, row, display)
-    row.icon:SetTexture(Spells:ResolveDisplayIcon(aura, entry))
-    row.iconHolder._popAurasAuraEntry = tooltipsEnabled and entry or nil
-    local iconCancelEnabled = false
-    if not editorOpen then
-      iconCancelEnabled = BaseRegion:ConfigureAuraCancellation(row.iconHolder, entry)
-    else
-      BaseRegion:ConfigureAuraCancellation(row.iconHolder, nil)
-    end
-    row.iconHolder:EnableMouse(tooltipsEnabled or iconCancelEnabled)
-    row.iconHolder:Show()
-  else
-    row.iconHolder._popAurasAuraEntry = nil
-    BaseRegion:ConfigureAuraCancellation(row.iconHolder, nil)
-    row.iconHolder:EnableMouse(false)
-    row.iconHolder:Hide()
-  end
-  row:EnableMouse(tooltipsEnabled or rowCancelEnabled)
-
-  row.labelText:SetShown(display.showName == true)
-  row.stackText:SetShown(display.showStacks == true)
-
-  Fonts.ApplyStyle(row.labelText, display.nameFontStyle, display.nameFontSize)
-  Fonts.ApplyStyle(row.timerText, display.timerFontStyle, display.timerFontSize)
-  Fonts.ApplyStyle(row.stackText, display.stacksFontStyle, display.stacksFontSize)
-  Colors.Apply(row.labelText, display.nameColor)
-  Colors.Apply(row.timerText, display.timerColor)
-  Colors.Apply(row.stackText, display.stacksColor)
-
-  PositionText(row.labelText, row, row.iconHolder, display.nameAnchor, display.nameOffsetX, display.nameOffsetY)
-  PositionText(row.timerText, row, row.iconHolder, display.timerAnchor, display.timerOffsetX, display.timerOffsetY)
-  PositionText(row.stackText, row, row.iconHolder, display.stacksAnchor, display.stacksOffsetX, display.stacksOffsetY)
-
-  ApplyTextRotation(row.labelText, display.nameRotation)
-  ApplyTextRotation(row.timerText, display.timerRotation)
-  ApplyTextRotation(row.stackText, display.stacksRotation)
-
-  if aura.kind == "aura_bar_list" then
-    row.labelText:SetText(ResolveAuraBarLabel(entry))
-  else
-    row.labelText:SetText(ns.TextResolver:Resolve(aura.text.label, entry, aura))
-  end
-  local durationObject = aura.kind == "aura_bar_list" and GetLiveAuraDurationObject(entry) or entry.durationObject
-  local useNativeCooldownText = aura.kind == "aura_bar_list"
-    and isVisuallyPermanent ~= true
-    and row.timerCooldown
-    and row.timerCooldown.SetCooldownFromDurationObject
-    and ShouldUseNativeCooldownText(aura, entry, durationObject, now)
-  row.timerText:SetShown(display.showTimer == true and not useNativeCooldownText)
-  if aura.kind == "aura_bar_list" then
-    if useNativeCooldownText then
-      row.timerText:SetText("")
-    else
-      ApplyAuraBarTimerText(row.timerText, aura, entry, now)
-    end
-    ApplyAuraBarStackText(row.stackText, entry)
-  else
-    row.timerText:SetText(GetEntryTimerText(aura, entry, now))
-    ApplyStackText(row.stackText, entry)
-  end
-
-  local remaining = math.max(0, (entry.expirationTime or 0) - now)
-  local hasNumericTimer = isVisuallyPermanent ~= true
-    and entry.progressType == "timed"
-    and (((entry.expirationTime or 0) > now) or ((entry.duration or 0) > 0))
-  local total = hasNumericTimer and ((entry.duration or 0) > 0 and entry.duration or remaining) or 1
-  if durationObject and isVisuallyPermanent ~= true and row.bar.SetTimerDuration then
-    local direction = STATUS_BAR_DIRECTION and (
-      display.reverse == true
-        and STATUS_BAR_DIRECTION.ElapsedTime
-        or STATUS_BAR_DIRECTION.RemainingTime
-    ) or nil
-    local interpolation = STATUS_BAR_INTERPOLATION and STATUS_BAR_INTERPOLATION.Immediate or nil
-    row.bar:SetMinMaxValues(0, 1)
-    if interpolation ~= nil or direction ~= nil then
-      row.bar:SetTimerDuration(durationObject, interpolation, direction)
-    else
-      row.bar:SetTimerDuration(durationObject)
-    end
-  else
-    row.bar:SetMinMaxValues(0, math.max(0.001, total))
-    if hasNumericTimer then
-      row.bar:SetValue(display.reverse == true and math.max(0, total - remaining) or remaining)
-    else
-      row.bar:SetValue(1)
-    end
-  end
-
-  UpdateNativeCooldownText(row, aura, durationObject, useNativeCooldownText)
-end
-
-function AuraBarListRegion:Update(aura, state)
+function Region:Update(aura, state)
   self.currentAura = aura
-  self.currentState = state
-
   BaseRegion:ApplyAnchor(aura, self.frame)
   BaseRegion:ApplyFrameLayer(aura, self.frame)
-  BaseRegion:ApplyCommonAppearance(aura, self.frame, state)
+  self.frame:EnableMouse(BaseRegion:CanMove(aura))
+  self.frame:SetAlpha((aura.display and aura.display.alpha) or 1)
+  self.layoutVisible = true
 
-  local entries = state and state.source == "preview"
-    and BuildPreviewEntries()
-    or (state and type(state.auraListEntries) == "table" and state.auraListEntries)
-    or (UnitAuraList and UnitAuraList.Collect and UnitAuraList:Collect(GetTrigger(aura)) or {})
-
-  self.entries = entries or {}
-  self:LayoutRows(aura, #self.entries)
-
-  for index, entry in ipairs(self.entries) do
-    local row = self:EnsureRow(index)
-    self:ApplyRow(aura, row, entry)
-  end
-
-  if #self.entries == 0 then
-    self.frame:Hide()
-    ns.runtime:UnregisterTimedRegion(aura.id)
+  if state and state.source == "preview" then
+    if self.container and self.nativeEnabled ~= false and self.container.SetEnabled then self.container:SetEnabled(false) end
+    self.nativeEnabled = false
+    self.errorText:Hide()
+    self:ShowPreview(aura)
     return
   end
+  self:HidePreview()
 
-  local hasTimedEntry = false
-  for _, entry in ipairs(self.entries) do
-    if HasLiveTimer(entry, GetTime()) then
-      hasTimedEntry = true
-      break
+  local options = UnitAuraList:GetNativeOptions(GetTrigger(aura))
+  local signature = NativeSignature(options)
+  if not self.container or self.containerSignature ~= signature then
+    if self.container and self.nativeEnabled ~= false and self.container.SetEnabled then self.container:SetEnabled(false) end
+    self.nativeEnabled = false
+    local _, reason = self:CreateNativeContainer(aura, options)
+    if not self.container then
+      self.errorText:SetText("Native aura display unavailable: " .. tostring(reason or "unknown error"))
+      self.errorText:Show()
+      return
     end
   end
 
-  if hasTimedEntry then
-    ns.runtime:RegisterTimedRegion(aura.id, self)
-  else
-    ns.runtime:UnregisterTimedRegion(aura.id)
+  self.errorText:Hide()
+  self.container:SetUnit(options.unit)
+  self.container:SetAuraGroupCandidateFilters("popauras", options.candidateFilters)
+  self.container:SetAuraGroupMaxFrameCount("popauras", tonumber(aura.display.maxAuras or 40) or 40)
+  local sortMethod, sortDirection = GetExpirationSort(aura.display)
+  local sortSignature = string.format("%s|%s", tostring(sortMethod), tostring(sortDirection))
+  if self.sortSignature ~= sortSignature and self.container.SetAuraGroupSortMethod then
+    self.container:SetAuraGroupSortMethod("popauras", sortMethod, sortDirection)
+    self.sortSignature = sortSignature
   end
+  self:ApplyContainerLayout(aura)
+  for _, button in ipairs(self.nativeButtons) do StyleButton(button, aura) end
+  if self.nativeEnabled ~= true and self.container.SetEnabled then self.container:SetEnabled(true) end
+  self.nativeEnabled = true
 end
 
-function AuraBarListRegion:OnTimerUpdate(now)
-  local aura = self.currentAura
-  if not aura or not self.entries or #self.entries == 0 then
-    return false
-  end
-
-  local hasLiveEntry = false
-  for index, entry in ipairs(self.entries) do
-    local row = self.rows[index]
-    if row and row:IsShown() then
-      local isVisuallyPermanent = IsAuraVisuallyPermanent(entry)
-      if isVisuallyPermanent then
-        row.bar:SetAlpha(GetPermanentAlpha(aura.display or {}))
-        UpdateNativeCooldownText(row, aura, nil, false)
-      elseif entry.progressType == "timed" or entry.durationObject ~= nil then
-        local remaining = math.max(0, (entry.expirationTime or 0) - now)
-        local total = (entry.duration or 0) > 0 and entry.duration or math.max(1, remaining)
-        row.bar:SetAlpha(1)
-        local durationObject = aura.kind == "aura_bar_list" and GetLiveAuraDurationObject(entry) or entry.durationObject
-        if durationObject == nil then
-          row.bar:SetMinMaxValues(0, math.max(0.001, total))
-          row.bar:SetValue(aura.display.reverse == true and math.max(0, total - remaining) or remaining)
-        end
-        if aura.kind == "aura_bar_list" then
-          local useNativeCooldownText = aura.kind == "aura_bar_list"
-            and isVisuallyPermanent ~= true
-            and row.timerCooldown
-            and row.timerCooldown.SetCooldownFromDurationObject
-            and ShouldUseNativeCooldownText(aura, entry, durationObject, now)
-          row.timerText:SetShown(aura.display.showTimer == true and not useNativeCooldownText)
-          if useNativeCooldownText then
-            row.timerText:SetText("")
-          else
-            ApplyAuraBarTimerText(row.timerText, aura, entry, now)
-          end
-          UpdateNativeCooldownText(row, aura, durationObject, useNativeCooldownText)
-        else
-          row.timerText:SetText(GetEntryTimerText(aura, entry, now))
-        end
-        if HasLiveTimer(entry, now) then
-          hasLiveEntry = true
-        end
-      end
-    end
-  end
-
-  if not hasLiveEntry then
-    ns.runtime:RefreshAura(aura.id)
-    return false
-  end
-
-  return true
+function Region:Release()
+  self.layoutVisible = false
+  if self.container and self.nativeEnabled ~= false and self.container.SetEnabled then self.container:SetEnabled(false) end
+  self.nativeEnabled = false
+  self:HidePreview()
+  self.errorText:Hide()
 end

@@ -18,16 +18,10 @@ local ACTION_BUTTON_PREFIXES = {
 }
 
 local function SafeSpellID(value)
-  if value == nil then
-    return 0
-  end
-  if issecretvalue and issecretvalue(value) then
-    return 0
-  end
-  if type(value) == "number" then
-    return value
-  end
-  return tonumber(value or 0) or 0
+  local number = ns.SafeValues:Number(value)
+  if number ~= nil then return number end
+  local text = ns.SafeValues:String(value)
+  return text and tonumber(text) or 0
 end
 
 local function ResolveConfiguredSpellID(display)
@@ -241,8 +235,16 @@ function Manager:GetDesiredSpellIDs()
 
   for _, auraId in ipairs(ns.Registry:GetFlatOrder() or {}) do
     local aura = ns.Registry:GetAura(auraId)
+    local isLoaded = false
+    if aura then
+      if ns.LoadEvaluator.MatchesWithAncestors then
+        isLoaded = ns.LoadEvaluator:MatchesWithAncestors(aura) == true
+      else
+        isLoaded = ns.LoadEvaluator:Matches(aura) == true
+      end
+    end
     if aura and aura.enabled ~= false and aura.display and aura.display.hideBlizzardSpellAlert == true
-        and ns.LoadEvaluator:Matches(aura) == true then
+        and isLoaded then
       local spellID = ResolveConfiguredSpellID(aura.display)
       if spellID ~= 0 then
         desired[spellID] = true

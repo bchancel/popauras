@@ -5,36 +5,44 @@ ns.util.Spells = Spells
 
 Spells.learnedNameToId = Spells.learnedNameToId or {}
 
+-- Some spellbook abilities apply an aura under a different spell ID. Midnight
+-- only provides exact spell-ID filters for secret-safe native aura containers,
+-- so these relationships must be explicit rather than learned by scanning all
+-- unit auras. These are canonical applied-aura IDs: presentation continues to
+-- use the configured spell ID, while matching uses only the actual aura IDs.
+local AURA_SPELL_ID_ALIASES = {
+  [8921] = { 164812 },   -- Moonfire (cast -> periodic debuff)
+  [155625] = { 164812 }, -- Moonfire (Cat Form cast -> periodic debuff)
+  [1252871] = { 164812 }, -- Red Moon (ability -> Moonfire periodic debuff)
+  [93402] = { 164815 },  -- Sunfire (cast -> periodic debuff)
+  [1822] = { 155722 },   -- Rake (cast -> periodic debuff)
+  [77758] = { 192090 },  -- Thrash (cast -> stacking periodic debuff)
+  [202345] = { 279709 }, -- Starlord (talent -> stacking buff)
+  [203720] = { 203819 }, -- Demon Spikes (ability -> active buff)
+}
+
+local AURA_ALIAS_RELATED_IDS = {}
+for abilitySpellID, auraSpellIDs in pairs(AURA_SPELL_ID_ALIASES) do
+  AURA_ALIAS_RELATED_IDS[abilitySpellID] = true
+  for _, auraSpellID in ipairs(auraSpellIDs) do AURA_ALIAS_RELATED_IDS[auraSpellID] = true end
+end
+
 local function Trim(value)
+  if ns.SafeValues:IsSecret(value) then return "" end
   value = tostring(value or "")
   value = value:gsub("^%s+", ""):gsub("%s+$", "")
   return value
 end
 
 local function SafeNumericValue(value)
-  if value == nil then
-    return 0
-  end
-  if issecretvalue and issecretvalue(value) then
-    return 0
-  end
-  if type(value) == "number" then
-    return value
-  end
-  return tonumber(value or 0) or 0
+  local number = ns.SafeValues:Number(value)
+  if number ~= nil then return number end
+  local text = ns.SafeValues:String(value)
+  return text and tonumber(text) or 0
 end
 
 local function SafeStringValue(value)
-  if value == nil then
-    return nil
-  end
-  if issecretvalue and issecretvalue(value) then
-    return nil
-  end
-  if type(value) == "string" then
-    return value
-  end
-  return nil
+  return ns.SafeValues:String(value)
 end
 
 function Spells:NormalizeText(value)
@@ -57,6 +65,48 @@ function Spells:GetRememberedSpellID(spellName)
     return 0
   end
   return tonumber(self.learnedNameToId[string.lower(spellName)] or 0) or 0
+end
+
+function Spells:ResolveConfiguredSpellID(value)
+  local numeric = SafeNumericValue(value)
+  if numeric > 0 then return numeric end
+  local name = SafeStringValue(value)
+  if not name or name == "" then return 0 end
+  if C_Spell and C_Spell.GetSpellInfo then
+    local ok, info = pcall(C_Spell.GetSpellInfo, name)
+    if ok and not ns.SafeValues:IsSecret(info) and type(info) == "table" then
+      local spellID = SafeNumericValue(info.spellID)
+      local spellName = SafeStringValue(info.name)
+      if spellID > 0 then
+        self:RememberResolvedSpell(spellID, spellName or name)
+        return spellID
+      end
+    end
+  end
+  return self:GetRememberedSpellID(name)
+end
+
+function Spells:GetAuraSpellIDs(value)
+  local spellID = SafeNumericValue(value)
+  if spellID <= 0 then
+    return {}
+  end
+
+  local aliases = AURA_SPELL_ID_ALIASES[spellID]
+  if not aliases then
+    return { spellID }
+  end
+
+  local result = {}
+  for _, auraSpellID in ipairs(aliases) do
+    result[#result + 1] = auraSpellID
+  end
+  return result
+end
+
+function Spells:IsAuraAliasRelated(value)
+  local spellID = SafeNumericValue(value)
+  return spellID > 0 and AURA_ALIAS_RELATED_IDS[spellID] == true
 end
 
 local textureCache = {}
@@ -139,24 +189,6 @@ function Spells:ResolveSpellReference(input)
     if resolvedId > 0 and resolvedName and resolvedName ~= "" then
       self:RememberResolvedSpell(resolvedId, resolvedName)
       return resolvedId, resolvedName, nil
-    end
-  end
-
-  if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
-    local auraData = C_UnitAuras.GetAuraDataBySpellName("player", input, "HELPFUL")
-    local auraSpellID = auraData and SafeNumericValue(auraData.spellId) or 0
-    local auraSpellName = auraData and SafeStringValue(auraData.name) or nil
-    if auraSpellID > 0 and type(auraSpellName) == "string" and auraSpellName ~= "" then
-      self:RememberResolvedSpell(auraSpellID, auraSpellName)
-      return auraSpellID, auraSpellName, nil
-    end
-
-    auraData = C_UnitAuras.GetAuraDataBySpellName("player", input, "HARMFUL")
-    auraSpellID = auraData and SafeNumericValue(auraData.spellId) or 0
-    auraSpellName = auraData and SafeStringValue(auraData.name) or nil
-    if auraSpellID > 0 and type(auraSpellName) == "string" and auraSpellName ~= "" then
-      self:RememberResolvedSpell(auraSpellID, auraSpellName)
-      return auraSpellID, auraSpellName, nil
     end
   end
 

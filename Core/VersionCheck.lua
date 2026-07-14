@@ -47,10 +47,10 @@ local function GetUnitDisplayName(unit)
     return nil
   end
   local name = UnitName(unit)
-  if type(name) ~= "string" or name == "" then
+  if ns.SafeValues:IsSecret(name) then
     return nil
   end
-  if issecretvalue and issecretvalue(name) then
+  if type(name) ~= "string" or name == "" then
     return nil
   end
   return name

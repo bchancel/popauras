@@ -10,15 +10,15 @@ for index = 1, #b64chars do
 end
 
 local function IsSafeStringValue(value)
-  return type(value) == "string" and not (issecretvalue and issecretvalue(value))
+  return not ns.SafeValues:IsSecret(value) and type(value) == "string"
 end
 
 function Strings.StartsWith(text, prefix)
-  return type(text) == "string" and type(prefix) == "string" and text:sub(1, #prefix) == prefix
+  return IsSafeStringValue(text) and IsSafeStringValue(prefix) and text:sub(1, #prefix) == prefix
 end
 
 function Strings.Trim(text)
-  if type(text) ~= "string" then
+  if not IsSafeStringValue(text) then
     return text
   end
   return (text:gsub("^%s+", ""):gsub("%s+$", ""))
@@ -93,7 +93,7 @@ function Strings.GetSafeUnitDisplayName(unit, includeRealm)
 end
 
 function Strings.Base64Encode(data)
-  if type(data) ~= "string" or data == "" then
+  if not IsSafeStringValue(data) or data == "" then
     return ""
   end
 
@@ -123,7 +123,7 @@ function Strings.Base64Encode(data)
 end
 
 function Strings.Base64Decode(data)
-  if type(data) ~= "string" or data == "" then
+  if not IsSafeStringValue(data) or data == "" then
     return ""
   end
 

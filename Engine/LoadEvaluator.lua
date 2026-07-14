@@ -433,6 +433,10 @@ local function MatchesVisibility(load)
 end
 
 function LoadEvaluator:Matches(aura)
+  if not aura or aura.enabled == false then
+    return false
+  end
+
   local load = aura.load or {}
   local classToken = GetPlayerClassToken()
 
@@ -557,5 +561,35 @@ function LoadEvaluator:Matches(aura)
     end
   end
 
-  return aura.enabled ~= false
+  return true
+end
+
+function LoadEvaluator:MatchesWithAncestors(aura)
+  local cursor = aura
+  local visited = {}
+
+  while cursor do
+    local auraId = cursor.id
+    if auraId and visited[auraId] then
+      return false
+    end
+    if auraId then
+      visited[auraId] = true
+    end
+
+    if not self:Matches(cursor) then
+      return false
+    end
+
+    local parentId = cursor.parentId
+    if not parentId then
+      return true
+    end
+    cursor = ns.Registry and ns.Registry:GetAura(parentId) or nil
+    if not cursor then
+      return false
+    end
+  end
+
+  return false
 end

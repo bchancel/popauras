@@ -1,14 +1,17 @@
-## Interface: 120001, 120005
+## Interface: 120100
 ## Title: PopAuras
-## Notes: Midnight-safe WeakAuras-like addon focused on reliable bars and icons
+## Notes: Midnight 12.1 addon focused on reliable bars and icons
 ## Author: Popabeast-Sargeras
-## Version: 0.4.7
+## Version: 12.1.0
 ## X-Curse-Project-ID: 1510249
 ## SavedVariables: PopAurasDB
+## OptionalDeps: Blizzard_AuraContainer, Blizzard_CooldownViewer
 
 PopAuras.lua
 
 Core\Constants.lua
+Core\SafeValues.lua
+Core\Duration.lua
 Util\Tables.lua
 Util\Strings.lua
 Util\Colors.lua
@@ -29,6 +32,7 @@ Data\Import.lua
 
 Core\SavedVariables.lua
 Core\Registry.lua
+Core\NativeAuras.lua
 Core\CooldownManager.lua
 Core\InterruptTracker.lua
 Core\Debug.lua
@@ -45,6 +49,7 @@ Engine\ActionEngine.lua
 Engine\UnitFrameGlow.lua
 Engine\RaidFrameOverlay.lua
 Engine\TextResolver.lua
+Engine\TimerPresenter.lua
 
 Triggers\Base.lua
 Triggers\AuraProvider.lua
@@ -59,6 +64,7 @@ Triggers\DeathAlertProvider.lua
 
 Renderers\BaseRegion.lua
 Renderers\Layouts.lua
+Renderers\NativeAuraRegion.lua
 Renderers\IconRegion.lua
 Renderers\BarRegion.lua
 Renderers\AuraBarListRegion.lua

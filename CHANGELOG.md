@@ -1,8 +1,23 @@
+# v12.1.0
+- Fixed Thrash tracking and stacks by mapping cast spell 77758 to applied debuff 192090
+- Fixed native bar/icon previews so duration, stacks, visibility, and ancestor group layout update and animate correctly
+- Fixed Starlord tracking by mapping talent spell 202345 to stacking buff 279709
+- Fixed unloaded native auras leaving their showAlways/Ready fallback visible after specialization changes
+- Canonicalized Red Moon and Moonfire configurations to the applied Moonfire debuff 164812
+- Fixed spec-restricted auras remaining loaded after changing specialization by refreshing on Blizzard's authoritative active-spec events
+- Fixed Rake tracking by mapping cast spell 1822 to applied debuff 155722
+- Canonicalized known cast-to-aura mappings so Blizzard's exact native filters receive applied aura IDs rather than mixed cast and aura IDs
+- Fixed native target debuff bars retaining the previous target's aura and timer after target changes
+- Rebuild native target aura state on target identity and death/flags transitions without reintroducing broad UNIT_AURA scans
+- Added explicit Midnight spell-to-aura mappings for Moonfire, Sunfire, and Demon Spikes
+- Reduced combat aura and item-cooldown refresh fan-out while retaining native Blizzard aura rendering
+
 # v0.4.6
 - Reworked CDM-backed spell cooldown handling to prefer authoritative CDM / Blizzard active-state signals, improving reset, refund, and secret-safe timing reliability
 - Fixed CDM frame rebind / cache invalidation issues that could leave cooldown bars stale or trigger recursive overflow errors on login
 - Added an explicit spell cooldown option to show a CDM aura/proc window only when no real cooldown is active
 - Improved the cooldown debug window so it can be moved independently, minimized during combat, and uses a smaller default and minimized footprint
+- Interrupt tracker click announces now prepare the chat line instead of calling protected chat-send APIs directly, avoiding `ADDON_ACTION_BLOCKED` errors
 
 # v0.4.5
 - Death Alert now listens for `UNIT_DIED` instead of `UNIT_HEALTH`, reducing noisy health-event refreshes while still using `UNIT_FLAGS` for follow-up state cleanup
@@ -86,3 +101,73 @@
 
 # v0.3.0
 - Initial experimental release
+# v12.1.0
+
+- Restores migrated Demon Spikes aura bars by expanding the spellbook ability
+  ID (`203720`) to the active buff ID (`203819`) for both logical queries and
+  Blizzard native aura-container filters.
+- Adds a centralized explicit aura-alias path for abilities whose applied aura
+  uses a different spell ID, without broad unit-aura scanning.
+- Aligns the public PopAuras version with the supported Retail client version.
+- Restricts combat `UNIT_AURA` refreshes to the affected unit instead of
+  reevaluating every configured aura when aura values are secret.
+- Avoids resetting unchanged native aura filters, which previously forced
+  Blizzard to clear and rebuild candidate sets on every aura event.
+- Keeps multi-ID ready-state labels tied to the configured primary spell ID.
+- Lets native aura containers handle their own `UNIT_AURA` updates unless an
+  aura has actions, conditions, sounds, debugging, or raid-frame consumers.
+- Caches the item-cooldown aura index so frequent bag cooldown events do not
+  repeatedly scan the complete saved-aura registry.
+- Restores CDM hiding through linked spell relationships only when the mapping
+  resolves to one unambiguous cooldown entry.
+- Maps the PTR Moonfire and Sunfire cast IDs to their combat-log-confirmed
+  periodic debuff IDs for native target-aura filtering.
+
+# 1.0.6-rewrite
+
+- Prevents a WoW client assertion crash caused by requesting every child of
+  `UIParent` while resolving party or raid unit frames.
+- Resolves Blizzard party and compact raid frames through their owned frame
+  pools and traversal callbacks, with bounded adapters for supported third-party
+  unit-frame addons.
+
+# 1.0.5-rewrite
+
+- Prevents CDM hide hooks from following Blizzard-recycled frames onto nearby
+  cooldown icons.
+- Restricts CDM hiding to direct spell and override mappings rather than every
+  semantically linked cooldown entry.
+
+# 1.0.4-rewrite
+
+- Prevents unloaded groups from treating always-shown native aura host frames
+  as visible children and drawing stale group backgrounds.
+- Adds PopAuras parent keys to runtime regions and native aura containers for
+  clear `/fstack` identification.
+
+# 1.0.3-rewrite
+
+- Sorts aura bar lists strictly by expiration, with permanent and long-running
+  auras visually above the next buffs or debuffs to expire.
+
+# 1.0.2-rewrite
+
+- Parents native aura text to the high-level presentation overlay so duration,
+  name, and stack text remain visible above the duration bar fill.
+
+# 1.0.1-rewrite
+
+- Adds a visible build marker to the `/pa` header for PTR verification.
+- Hides Blizzard's duplicate native cooldown countdown on aura bars and gives
+  horizontal aura names an explicit text box beside the PopAuras timer.
+
+# 1.0.0-rewrite
+
+- Targets Retail interface 12.1.0 (`120100`).
+- Replaces broad aura scanning and combat-log inference with Blizzard native
+  AuraContainer/AuraButton presentation and non-secret spell-ID queries.
+- Replaces cooldown frame interception and GCD-duration heuristics with
+  structured cooldown state, charge state, and DurationObject rendering.
+- Adds explicit unavailable state for restricted logical aura data.
+- Splits Cooldown Manager handling into catalog metadata and visual ownership.
+- Adds standalone deploy and verification scripts.

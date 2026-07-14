@@ -14,22 +14,16 @@ function provider:GetAffectedAuras(event)
     return true
   end
 
-  return ns.Registry:CollectAuraIds(function(aura)
-    return ns.TriggerBase:AnyTriggerMatches(aura, "item_cooldown")
-  end)
+  if not self._cachedAuraIds then
+    self._cachedAuraIds = ns.Registry:CollectAuraIds(function(aura)
+      return ns.TriggerBase:AnyTriggerMatches(aura, "item_cooldown")
+    end)
+  end
+  return self._cachedAuraIds
 end
 
 local function SafeNumber(value)
-  if value == nil then
-    return nil
-  end
-  if issecretvalue and issecretvalue(value) then
-    return nil
-  end
-  if type(value) == "number" then
-    return value
-  end
-  return nil
+  return ns.SafeValues:Number(value)
 end
 
 local function IsLikelyGCD(duration)

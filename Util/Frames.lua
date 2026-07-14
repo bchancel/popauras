@@ -5,6 +5,51 @@ ns.util.Frames = Frames
 
 local Fonts = ns.util.Fonts
 
+function Frames.SetExplicitBounds(region, owner, width, height)
+  if not region or not owner then return end
+  width = tonumber(width)
+  height = tonumber(height)
+  if not width or width <= 0 or not height or height <= 0 then return end
+  region:ClearAllPoints()
+  region:SetPoint("CENTER", owner, "CENTER", 0, 0)
+  region:SetSize(width, height)
+end
+
+local function ConfigureSingleLine(fontString)
+  if not fontString then return end
+  if fontString.SetWordWrap then fontString:SetWordWrap(false) end
+  if fontString.SetNonSpaceWrap then fontString:SetNonSpaceWrap(false) end
+  if fontString.SetMaxLines then fontString:SetMaxLines(1) end
+end
+
+function Frames.ConfigureBarTextBounds(nameText, timerText, owner, display, width, orientation)
+  display = display or {}
+  ConfigureSingleLine(nameText)
+  ConfigureSingleLine(timerText)
+
+  if nameText then nameText:SetWidth(0) end
+  if timerText then timerText:SetWidth(0) end
+  if orientation ~= "HORIZONTAL"
+    or display.showName ~= true
+    or display.showTimer ~= true
+    or (display.nameAnchor or "CENTER") ~= "LEFT"
+    or (display.timerAnchor or "CENTER") ~= "RIGHT" then
+    return
+  end
+
+  local timerWidth = math.max(34, (tonumber(display.timerFontSize or 12) or 12) * 4)
+  local nameInset = math.max(0, tonumber(display.nameOffsetX or 0) or 0)
+  local timerInset = math.abs(tonumber(display.timerOffsetX or 0) or 0)
+  nameText:ClearAllPoints()
+  nameText:SetPoint("LEFT", owner, "LEFT", nameInset, tonumber(display.nameOffsetY or 0) or 0)
+  nameText:SetPoint("RIGHT", owner, "RIGHT", -(timerInset + timerWidth + 4), tonumber(display.nameOffsetY or 0) or 0)
+  nameText:SetJustifyH("LEFT")
+  timerText:ClearAllPoints()
+  timerText:SetPoint("RIGHT", owner, "RIGHT", tonumber(display.timerOffsetX or 0) or 0, tonumber(display.timerOffsetY or 0) or 0)
+  timerText:SetWidth(timerWidth)
+  timerText:SetJustifyH("RIGHT")
+end
+
 function Frames.MakeMovable(frame, onStop)
   frame:SetMovable(true)
   frame:EnableMouse(true)

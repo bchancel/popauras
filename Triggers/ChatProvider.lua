@@ -57,7 +57,7 @@ local CHANNEL_ALIASES = {
 }
 
 local function NormalizeLower(value)
-  if type(value) ~= "string" or (issecretvalue and issecretvalue(value)) then
+  if ns.SafeValues:IsSecret(value) or type(value) ~= "string" then
     return nil
   end
   value = value:gsub("^%s+", ""):gsub("%s+$", "")
@@ -96,7 +96,7 @@ local function GetDisplaySender(sender)
       return short
     end
   end
-  if type(sender) == "string" and not (issecretvalue and issecretvalue(sender)) and sender ~= "" then
+  if not ns.SafeValues:IsSecret(sender) and type(sender) == "string" and sender ~= "" then
     return sender
   end
   return "Chat"
@@ -256,7 +256,8 @@ function provider:HandleEvent(event, ...)
         if TriggerMatchesChat(trigger, channel, message, sender) then
           local senderName = GetDisplaySender(sender)
           local senderKey = NormalizeLower(sender) or senderName:lower()
-          local safeMessage = type(message) == "string" and not (issecretvalue and issecretvalue(message)) and message or ""
+          local safeMessage = ns.SafeValues:String(message) or ""
+          local safeSender = ns.SafeValues:String(sender)
           local duration = math.max(0.5, math.min(60, tonumber(trigger.chatDuration or 4) or 4))
           local alertKey = GetAlertKey(auraId, triggerIndex)
           local alertSet = self.alerts[alertKey]
@@ -271,7 +272,7 @@ function provider:HandleEvent(event, ...)
           self.alertSequence = (tonumber(self.alertSequence or 0) or 0) + 1
           alertSet.entries[senderKey] = {
             sender = senderName,
-            senderRaw = sender,
+            senderRaw = safeSender,
             unit = ResolveSenderUnitId(sender),
             message = safeMessage,
             channel = channel,

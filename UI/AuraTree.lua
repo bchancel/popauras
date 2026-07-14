@@ -62,6 +62,9 @@ local function IsAuraLoadedForList(aura)
   if not aura or not ns.LoadEvaluator or not ns.LoadEvaluator.Matches then
     return true
   end
+  if ns.LoadEvaluator.MatchesWithAncestors then
+    return ns.LoadEvaluator:MatchesWithAncestors(aura) == true
+  end
   return ns.LoadEvaluator:Matches(aura) == true
 end
 

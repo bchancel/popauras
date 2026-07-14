@@ -125,6 +125,12 @@ local function FrameMatchesUnit(frame, targetUnitId)
   if not frameUnit and frame.displayedUnit then
     frameUnit = frame.displayedUnit
   end
+  if not frameUnit and frame.unitToken then
+    frameUnit = frame.unitToken
+  end
+  if not frameUnit and frame.GetUnit then
+    frameUnit = frame:GetUnit()
+  end
   if not frameUnit and frame.GetAttribute then
     frameUnit = frame:GetAttribute("unit")
   end
@@ -132,6 +138,11 @@ local function FrameMatchesUnit(frame, targetUnitId)
     return false
   end
   return UnitIsUnit(frameUnit, targetUnitId)
+end
+
+local function SafeFrameMatchesUnit(frame, targetUnitId)
+  local ok, matches = pcall(FrameMatchesUnit, frame, targetUnitId)
+  return ok and matches == true
 end
 
 local function IsFrameUsable(frame)
@@ -179,7 +190,7 @@ local function GetCachedFrames(targetUnitId)
 
   local valid = {}
   for _, frame in ipairs(cached.frames or {}) do
-    if IsFrameUsable(frame) and FrameMatchesUnit(frame, targetUnitId) then
+    if IsFrameUsable(frame) and SafeFrameMatchesUnit(frame, targetUnitId) then
       valid[#valid + 1] = frame
     end
   end
@@ -207,19 +218,10 @@ local function SetCachedFrames(targetUnitId, frames)
   }
 end
 
-local function CollectChildFrames(parent, targetUnitId, results)
-  if not parent or not parent.GetChildren then
-    return
-  end
-  for _, child in pairs({ parent:GetChildren() }) do
-    if child:IsVisible() and FrameMatchesUnit(child, targetUnitId) then
-      results[#results + 1] = child
-    end
-  end
-end
-
 local function CollectChildFramesRecursive(parent, targetUnitId, results, depth)
-  if not parent or not parent.GetChildren then
+  -- UIParent has thousands of descendants. Calling GetChildren() on it can
+  -- overflow WoW's Lua C stack before Lua receives the returned values.
+  if not parent or parent == UIParent or not parent.GetChildren then
     return
   end
   depth = depth or 0
@@ -227,7 +229,7 @@ local function CollectChildFramesRecursive(parent, targetUnitId, results, depth)
     return
   end
   for _, child in pairs({ parent:GetChildren() }) do
-    if child:IsVisible() and FrameMatchesUnit(child, targetUnitId) then
+    if IsFrameUsable(child) and SafeFrameMatchesUnit(child, targetUnitId) then
       results[#results + 1] = child
     elseif child.GetChildren then
       CollectChildFramesRecursive(child, targetUnitId, results, depth + 1)
@@ -235,9 +237,46 @@ local function CollectChildFramesRecursive(parent, targetUnitId, results, depth)
   end
 end
 
+local function AddMatchingFrame(frame, targetUnitId, results)
+  if IsFrameUsable(frame) and SafeFrameMatchesUnit(frame, targetUnitId) then
+    results[#results + 1] = frame
+  end
+end
+
+local function CollectBlizzardUnitFrames(targetUnitId, results)
+  -- The default party UI owns its member frames through a frame pool.
+  local partyFrame = _G.PartyFrame
+  local partyPool = partyFrame and partyFrame.PartyMemberFramePool
+  if partyPool and partyPool.EnumerateActive then
+    pcall(function()
+      for memberFrame in partyPool:EnumerateActive() do
+        AddMatchingFrame(memberFrame, targetUnitId, results)
+      end
+    end)
+  end
+
+  -- Raid-style party frames expose their fixed member collections directly.
+  local compactPartyFrame = _G.CompactPartyFrame
+  if compactPartyFrame then
+    for _, memberFrame in ipairs(compactPartyFrame.memberUnitFrames or {}) do
+      AddMatchingFrame(memberFrame, targetUnitId, results)
+    end
+    for _, petFrame in ipairs(compactPartyFrame.petUnitFrames or {}) do
+      AddMatchingFrame(petFrame, targetUnitId, results)
+    end
+  end
+
+  -- The compact raid container already owns traversal of its pooled/grouped
+  -- frames. Its callback path avoids GetChildren() and follows frame reuse.
+  local raidContainer = _G.CompactRaidFrameContainer
+  if raidContainer and raidContainer.ApplyToFrames then
+    pcall(raidContainer.ApplyToFrames, raidContainer, "all", function(unitFrame)
+      AddMatchingFrame(unitFrame, targetUnitId, results)
+    end)
+  end
+end
+
 local CONTAINER_GLOBALS = {
-  "CompactRaidFrameContainer",
-  "CompactPartyFrame",
   "Grid2LayoutFrame",
   "Grid2Layout",
   "ElvUF_Raid",
@@ -253,38 +292,6 @@ local INDEXED_FRAME_PATTERNS = {
   { pattern = "Grid2LayoutFrame%dUnitButton%d", outer = 8, inner = 40 },
 }
 
-local function CollectVisibleUnitFramesRecursive(parent, targetUnitId, results, seen, depth)
-  if not parent or not parent.GetChildren then
-    return
-  end
-  depth = depth or 0
-  if depth > 8 then
-    return
-  end
-
-  local ok, children = pcall(parent.GetChildren, parent)
-  if not ok then
-    return
-  end
-
-  for _, child in pairs({ children }) do
-    if not seen[child] then
-      seen[child] = true
-      local isVisible = false
-      if type(child) == "table" and child.IsVisible then
-        local ok, visible = pcall(child.IsVisible, child)
-        isVisible = ok and visible == true
-      end
-      if isVisible and FrameMatchesUnit(child, targetUnitId) then
-        results[#results + 1] = child
-      end
-      if type(child) == "table" and child.GetChildren then
-        CollectVisibleUnitFramesRecursive(child, targetUnitId, results, seen, depth + 1)
-      end
-    end
-  end
-end
-
 local function FindUnitFramesForUnit(targetUnitId)
   if not targetUnitId then
     return nil
@@ -296,7 +303,8 @@ local function FindUnitFramesForUnit(targetUnitId)
   end
 
   local frames = {}
-  local seen = {}
+
+  CollectBlizzardUnitFrames(targetUnitId, frames)
 
   for _, globalName in ipairs(CONTAINER_GLOBALS) do
     local container = _G[globalName]
@@ -311,7 +319,7 @@ local function FindUnitFramesForUnit(targetUnitId)
         for b = 1, spec.inner do
           local frameName = string.format(spec.pattern, g, b)
           local frame = _G[frameName]
-          if frame and frame.IsVisible and frame:IsVisible() and FrameMatchesUnit(frame, targetUnitId) then
+          if IsFrameUsable(frame) and SafeFrameMatchesUnit(frame, targetUnitId) then
             frames[#frames + 1] = frame
           end
         end
@@ -320,15 +328,11 @@ local function FindUnitFramesForUnit(targetUnitId)
       for i = 1, spec.count do
         local frameName = string.format(spec.pattern, i)
         local frame = _G[frameName]
-        if frame and frame.IsVisible and frame:IsVisible() and FrameMatchesUnit(frame, targetUnitId) then
+        if IsFrameUsable(frame) and SafeFrameMatchesUnit(frame, targetUnitId) then
           frames[#frames + 1] = frame
         end
       end
     end
-  end
-
-  if UIParent and UIParent.GetChildren then
-    CollectVisibleUnitFramesRecursive(UIParent, targetUnitId, frames, seen, 0)
   end
 
   local unique = {}

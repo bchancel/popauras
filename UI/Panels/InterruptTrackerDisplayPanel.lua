@@ -547,7 +547,7 @@ function Panel:Create(parent)
   frame.durationHint:SetWidth(780)
   frame.durationHint:SetJustifyH("LEFT")
 
-  frame.clickAnnounceCheck = Frames.CreateCheckbox(frame.announceSection, "Click on bar/icon to post interrupt status")
+  frame.clickAnnounceCheck = Frames.CreateCheckbox(frame.announceSection, "Click on bar/icon to prepare interrupt status")
   frame.clickAnnounceCheck:SetPoint("TOPLEFT", 12, -38)
   frame.channelWrap = CreateLabeledDropdown(frame.announceSection, "Announce Channel", 12, -74, 160)
   frame.antiSpamCheck = Frames.CreateCheckbox(frame.announceSection, "Prevent duplicate announces")

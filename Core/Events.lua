@@ -9,6 +9,8 @@ local GLOBAL_REFRESH_EVENTS = {
   PLAYER_EQUIPMENT_CHANGED = true,
   PLAYER_TALENT_UPDATE = true,
   PLAYER_SPECIALIZATION_CHANGED = true,
+  ACTIVE_PLAYER_SPECIALIZATION_CHANGED = true,
+  ACTIVE_TALENT_GROUP_CHANGED = true,
   TRAIT_CONFIG_UPDATED = true,
   TRAIT_CONFIG_LIST_UPDATED = true,
   ACTIVE_COMBAT_CONFIG_CHANGED = true,
@@ -62,22 +64,23 @@ end
 
 local function RegisterTrackedEvent(frame, event)
   if type(event) ~= "string" or event == "" then
-    return
+    return false
   end
 
   -- `UNIT_AURA` and `UNIT_FLAGS` need to support party / raid member updates.
   -- Register them generically and let providers filter units in their handlers.
   if event == "UNIT_AURA" or event == "UNIT_FLAGS" then
-    frame:RegisterEvent(event)
-    return
+    return pcall(frame.RegisterEvent, frame, event)
   end
 
   if event:find("^UNIT_SPELLCAST") then
-    frame:RegisterUnitEvent(event, "player", "target")
-    return
+    return pcall(frame.RegisterUnitEvent, frame, event, "player", "target")
   end
 
-  frame:RegisterEvent(event)
+  -- Retail patch branches do not always expose the same events. An event that
+  -- does not exist on this client can never fire, so skip it without aborting
+  -- initialization while retaining it for clients that do support it.
+  return pcall(frame.RegisterEvent, frame, event)
 end
 
 function Events:InitializeEventFrame()
@@ -87,13 +90,18 @@ function Events:InitializeEventFrame()
 
   local frame = CreateFrame("Frame")
   self.frame = frame
+  self.unsupportedEvents = {}
 
   for event in pairs(self.providersByEvent or EMPTY) do
-    RegisterTrackedEvent(frame, event)
+    if not RegisterTrackedEvent(frame, event) then
+      self.unsupportedEvents[event] = true
+    end
   end
 
   for event in pairs(GLOBAL_REFRESH_EVENTS) do
-    RegisterTrackedEvent(frame, event)
+    if not RegisterTrackedEvent(frame, event) then
+      self.unsupportedEvents[event] = true
+    end
   end
 
   frame:SetScript("OnEvent", function(_, event, ...)

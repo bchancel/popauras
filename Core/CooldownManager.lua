@@ -1,1913 +1,412 @@
 local _, ns = ...
 
-local CooldownManager = {}
-ns.CooldownManager = CooldownManager
+local Safe = ns.SafeValues
+local Manager = {
+  spellToCooldownIDs = nil,
+  directSpellToCooldownIDs = nil,
+  cooldownInfo = nil,
+  frameCache = {},
+  hiddenFrames = {},
+  applyingVisibilityOverrides = false,
+}
+ns.CooldownManager = Manager
 
-local function CreateWeakKeyTable()
-  return setmetatable({}, { __mode = "k" })
-end
-
-local function CreateWeakValueTable()
-  return setmetatable({}, { __mode = "v" })
-end
-
-local function CountEntries(tbl)
-  local count = 0
-  for _ in pairs(tbl or {}) do
-    count = count + 1
-  end
-  return count
-end
-
-local function ProfileStart(bucket)
-  if ns.Profiler and ns.Profiler.IsEnabled and ns.Profiler:IsEnabled() then
-    return ns.Profiler:Begin(bucket)
-  end
-  return nil
-end
-
-local function ProfileFinish(bucket, startedAt)
-  if startedAt and ns.Profiler and ns.Profiler.Finish then
-    ns.Profiler:Finish(bucket, startedAt)
-  end
-end
-
-CooldownManager.viewerNames = {
+Manager.viewerNames = {
   "BuffIconCooldownViewer",
   "BuffBarCooldownViewer",
   "EssentialCooldownViewer",
   "UtilityCooldownViewer",
+  "GroupBuffCooldownViewer",
+  "SpecAgnosticEssentialCooldownViewer",
+  "SpecAgnosticTrackedCooldownViewer",
 }
 
-CooldownManager.spellToCooldownIDCache = nil
-CooldownManager.spellToCooldownIDsCache = nil
-CooldownManager.spellToCooldownIDCacheSpec = nil
-CooldownManager.frameCache = {}
-CooldownManager.hiddenFrames = {}
-CooldownManager.auraStateCache = {}
-CooldownManager.auraFrameRefs = CreateWeakValueTable()
-CooldownManager.hookedAuraFrames = CreateWeakKeyTable()
-CooldownManager.cooldownFrameStateCache = CreateWeakKeyTable()
-CooldownManager.frameCooldownIDs = CreateWeakKeyTable()
-CooldownManager.pendingAuraRefreshes = {}
-CooldownManager.pendingVisibilityOverrideSync = false
-CooldownManager.applyingVisibilityOverrides = false
+local EMPTY = {}
 
-local HookCooldownWidget
-local REAL_TIME_MODIFIER = Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime or nil
-
-local function SafeNumber(value)
-  if value == nil then
-    return nil
+local function AddUnique(list, seen, value)
+  value = Safe:Number(value)
+  if value and value >= 0 and not seen[value] then
+    seen[value] = true
+    list[#list + 1] = value
   end
-  if issecretvalue and issecretvalue(value) then
-    return nil
-  end
-  if type(value) == "number" then
-    return value
-  end
-  return nil
 end
 
-local function SafeBoolean(value)
-  if value == nil then
-    return nil
-  end
-  if issecretvalue and issecretvalue(value) then
-    return nil
-  end
-  if type(value) == "boolean" then
-    return value
-  end
-  return nil
-end
-
-local function ResolveFirstBoolean(...)
-  for index = 1, select("#", ...) do
-    local value = SafeBoolean(select(index, ...))
-    if value ~= nil then
-      return value
+local function GetCategories()
+  local result, seen = {}, {}
+  local enum = Enum and Enum.CooldownViewerCategory or nil
+  if type(enum) == "table" then
+    for _, value in pairs(enum) do
+      AddUnique(result, seen, value)
     end
   end
-  return nil
+  -- Fallback values preserve mapping on clients where the enum table is not
+  -- enumerable. Invalid categories are isolated by pcall below.
+  for value = 0, 15 do
+    AddUnique(result, seen, value)
+  end
+  return result
 end
 
-local function CallDurationObjectMethod(durationObject, methodName)
-  if not durationObject then
-    return nil
-  end
-
-  local method = durationObject[methodName]
-  if type(method) ~= "function" then
-    return nil
-  end
-
-  local ok, value
-  if REAL_TIME_MODIFIER ~= nil then
-    ok, value = pcall(method, durationObject, REAL_TIME_MODIFIER)
-  else
-    ok, value = pcall(method, durationObject)
-  end
-
-  if not ok then
-    return nil
-  end
-
-  return SafeNumber(value)
-end
-
-local function GetDurationObjectRemaining(durationObject)
-  if not durationObject then
-    return nil
-  end
-
-  local remaining = CallDurationObjectMethod(durationObject, "GetRemainingDuration")
-  if remaining ~= nil then
-    return math.max(0, remaining)
-  end
-
-  local endTime = CallDurationObjectMethod(durationObject, "GetEndTime")
-  if endTime ~= nil then
-    return math.max(0, endTime - GetTime())
-  end
-
-  return nil
-end
-
-local function SafeGetFrameScript(node, scriptName)
-  if not node or not node.GetScript then
-    return nil
-  end
-
-  local ok, script = pcall(node.GetScript, node, scriptName)
-  if ok then
-    return script
-  end
-
-  return nil
-end
-
-local function UniqueCategoryList()
-  local categories = {}
-  local seen = {}
-
-  local candidates = {
-    Enum and Enum.CooldownViewerCategory and Enum.CooldownViewerCategory.TrackedBuff,
-    Enum and Enum.CooldownViewerCategory and Enum.CooldownViewerCategory.TrackedBar,
-    Enum and Enum.CooldownViewerCategory and Enum.CooldownViewerCategory.Essential,
-    Enum and Enum.CooldownViewerCategory and Enum.CooldownViewerCategory.Utility,
-    2,
-    3,
-    0,
-    1,
-  }
-
-  for _, value in ipairs(candidates) do
-    if type(value) == "number" and value >= 0 and value <= 3 and not seen[value] then
-      seen[value] = true
-      categories[#categories + 1] = value
-    end
-  end
-
-  return categories
-end
-
-function CooldownManager:Initialize()
-  self:Invalidate()
-  self:RestoreAllHiddenFrames()
-  self.hookedAuraFrames = self.hookedAuraFrames or CreateWeakKeyTable()
-  self.cooldownFrameStateCache = self.cooldownFrameStateCache or CreateWeakKeyTable()
-  self.frameCooldownIDs = self.frameCooldownIDs or CreateWeakKeyTable()
-  self.pendingAuraRefreshes = self.pendingAuraRefreshes or {}
-  self.pendingVisibilityOverrideSync = self.pendingVisibilityOverrideSync == true
-  self.applyingVisibilityOverrides = self.applyingVisibilityOverrides == true
-  if not self.hiddenParent then
-    local parent = CreateFrame("Frame", nil, UIParent)
-    parent:SetAllPoints(UIParent)
-    parent:SetFrameStrata("BACKGROUND")
-    parent:Hide()
-    self.hiddenParent = parent
-  end
-  if not self.visibilityOverrideEventFrame then
-    local eventFrame = CreateFrame("Frame")
-    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    eventFrame:SetScript("OnEvent", function()
-      if self.pendingVisibilityOverrideSync == true then
-        self:ScheduleVisibilityOverrideSync()
-      end
-    end)
-    self.visibilityOverrideEventFrame = eventFrame
-  end
-end
-
-function CooldownManager:Invalidate()
-  self.spellToCooldownIDCache = nil
-  self.spellToCooldownIDsCache = nil
-  self.spellToCooldownIDCacheSpec = nil
-  self.frameCache = {}
-  self.auraStateCache = {}
-  self.auraFrameRefs = CreateWeakValueTable()
-  self.cooldownFrameStateCache = CreateWeakKeyTable()
-  self.frameCooldownIDs = CreateWeakKeyTable()
-  self.pendingVisibilityOverrideSync = false
-  self.applyingVisibilityOverrides = false
-  if self.pendingAuraRefreshes then
-    wipe(self.pendingAuraRefreshes)
-  end
-  if self.pendingRefreshFrame then
-    self.pendingRefreshFrame:Hide()
-  end
-  if self.visibilityOverrideDriver then
-    self.visibilityOverrideDriver:Hide()
-  end
-end
-
-local function AddSpellCooldownMapping(mapping, multiMapping, spellID, cooldownID)
-  spellID = tonumber(spellID or 0) or 0
-  cooldownID = tonumber(cooldownID or 0) or 0
-  if spellID <= 0 or cooldownID <= 0 then
+local function AddMapping(mapping, spellID, cooldownID)
+  spellID = Safe:Number(spellID)
+  cooldownID = Safe:Number(cooldownID)
+  if not spellID or spellID <= 0 or not cooldownID or cooldownID <= 0 then
     return
   end
-
-  if not mapping[spellID] then
-    mapping[spellID] = cooldownID
-  end
-
-  local list = multiMapping[spellID]
+  local list = mapping[spellID]
   if not list then
     list = {}
-    multiMapping[spellID] = list
+    mapping[spellID] = list
   end
-
-  for _, existingID in ipairs(list) do
-    if existingID == cooldownID then
-      return
-    end
+  for _, existing in ipairs(list) do
+    if existing == cooldownID then return end
   end
-
   list[#list + 1] = cooldownID
 end
 
-function CooldownManager:BuildSpellToCooldownIDMapping()
-  local mapping = {}
-  local multiMapping = {}
-
-  if not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCategorySet or not C_CooldownViewer.GetCooldownViewerCooldownInfo then
-    return mapping, multiMapping
+function Manager:BuildCatalog()
+  local mapping, directMapping, infoByID = {}, {}, {}
+  if not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCategorySet
+    or not C_CooldownViewer.GetCooldownViewerCooldownInfo then
+    self.spellToCooldownIDs = mapping
+    self.directSpellToCooldownIDs = directMapping
+    self.cooldownInfo = infoByID
+    return
   end
 
-  for _, category in ipairs(UniqueCategoryList()) do
-    local cooldownIDs = C_CooldownViewer.GetCooldownViewerCategorySet(category, true)
-    if cooldownIDs then
+  for _, category in ipairs(GetCategories()) do
+    local okSet, cooldownIDs = pcall(C_CooldownViewer.GetCooldownViewerCategorySet, category, true)
+    if okSet and not Safe:IsSecret(cooldownIDs) and type(cooldownIDs) == "table" then
       for _, cooldownID in ipairs(cooldownIDs) do
-        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cooldownID)
-        if info then
-          local primarySpellID = tonumber(info.spellID or info.overrideSpellID or 0) or 0
-          AddSpellCooldownMapping(mapping, multiMapping, primarySpellID, cooldownID)
-
-          local linkedSpellIDs = info.linkedSpellIDs
-          if type(linkedSpellIDs) == "table" then
-            for _, linkedSpellID in ipairs(linkedSpellIDs) do
-              AddSpellCooldownMapping(mapping, multiMapping, linkedSpellID, cooldownID)
+        cooldownID = Safe:Number(cooldownID)
+        if cooldownID and cooldownID > 0 and not infoByID[cooldownID] then
+          local okInfo, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cooldownID)
+          if okInfo and not Safe:IsSecret(info) and type(info) == "table" then
+            infoByID[cooldownID] = info
+            AddMapping(mapping, info.spellID, cooldownID)
+            AddMapping(mapping, info.overrideSpellID, cooldownID)
+            AddMapping(directMapping, info.spellID, cooldownID)
+            AddMapping(directMapping, info.overrideSpellID, cooldownID)
+            for _, linkedSpellID in ipairs(type(info.linkedSpellIDs) == "table" and info.linkedSpellIDs or EMPTY) do
+              AddMapping(mapping, linkedSpellID, cooldownID)
             end
           end
         end
       end
     end
   end
-
-  return mapping, multiMapping
+  self.spellToCooldownIDs = mapping
+  self.directSpellToCooldownIDs = directMapping
+  self.cooldownInfo = infoByID
 end
 
-function CooldownManager:GetSpellToCooldownIDMapping()
-  local currentSpec = GetSpecialization() or 0
-  if not self.spellToCooldownIDCache or self.spellToCooldownIDCacheSpec ~= currentSpec then
-    self.spellToCooldownIDCache, self.spellToCooldownIDsCache = self:BuildSpellToCooldownIDMapping()
-    self.spellToCooldownIDCacheSpec = currentSpec
+function Manager:EnsureCatalog()
+  if not self.spellToCooldownIDs or not self.directSpellToCooldownIDs or not self.cooldownInfo then
+    self:BuildCatalog()
   end
-  return self.spellToCooldownIDCache
 end
 
-function CooldownManager:GetCooldownIDsForSpellID(spellID)
-  spellID = tonumber(spellID or 0) or 0
-  if spellID <= 0 then
-    return {}
-  end
-
-  self:GetSpellToCooldownIDMapping()
-
-  local list = self.spellToCooldownIDsCache and self.spellToCooldownIDsCache[spellID]
-  if type(list) == "table" and #list > 0 then
-    local result = {}
-    for _, cooldownID in ipairs(list) do
-      result[#result + 1] = cooldownID
-    end
-    return result
-  end
-
-  local single = self.spellToCooldownIDCache and self.spellToCooldownIDCache[spellID]
-  return single and { single } or {}
+function Manager:Invalidate()
+  self.spellToCooldownIDs = nil
+  self.directSpellToCooldownIDs = nil
+  self.cooldownInfo = nil
+  self.frameCache = {}
 end
 
-function CooldownManager:FindCooldownIDForSpellID(spellID)
-  spellID = tonumber(spellID or 0) or 0
-  if spellID <= 0 then
-    return nil
-  end
-  local mapping = self:GetSpellToCooldownIDMapping()
-  return mapping[spellID]
+function Manager:GetCooldownIDsForSpellID(spellID)
+  spellID = Safe:Number(spellID)
+  if not spellID or spellID <= 0 then return {} end
+  self:EnsureCatalog()
+  local source = self.spellToCooldownIDs[spellID] or EMPTY
+  local copy = {}
+  for _, cooldownID in ipairs(source) do copy[#copy + 1] = cooldownID end
+  return copy
 end
 
-function CooldownManager:GetCooldownInfo(cooldownID)
-  if not cooldownID or cooldownID <= 0 or not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCooldownInfo then
-    return nil
-  end
-  return C_CooldownViewer.GetCooldownViewerCooldownInfo(cooldownID)
+function Manager:GetDirectCooldownIDsForSpellID(spellID)
+  spellID = Safe:Number(spellID)
+  if not spellID or spellID <= 0 then return {} end
+  self:EnsureCatalog()
+  local source = self.directSpellToCooldownIDs[spellID] or EMPTY
+  local copy = {}
+  for _, cooldownID in ipairs(source) do copy[#copy + 1] = cooldownID end
+  return copy
 end
 
-function CooldownManager:GetFrameCooldownID(frame)
-  if not frame then
-    return nil
-  end
+function Manager:FindCooldownIDForSpellID(spellID)
+  return self:GetCooldownIDsForSpellID(spellID)[1]
+end
 
-  local cooldownID = tonumber(frame.cooldownID or 0) or 0
-  if cooldownID > 0 then
-    return cooldownID
-  end
+function Manager:GetCooldownInfo(cooldownID)
+  cooldownID = Safe:Number(cooldownID)
+  if not cooldownID or cooldownID <= 0 then return nil end
+  self:EnsureCatalog()
+  return self.cooldownInfo[cooldownID]
+end
 
-  cooldownID = tonumber(frame.cooldownInfo and frame.cooldownInfo.cooldownID or 0) or 0
-  if cooldownID > 0 then
-    return cooldownID
+function Manager:GetFrameCooldownID(frame)
+  if not frame then return nil end
+  local value = Safe:Number(frame.cooldownID)
+  if value and value > 0 then return value end
+  if type(frame.cooldownInfo) == "table" and not Safe:IsSecret(frame.cooldownInfo) then
+    value = Safe:Number(frame.cooldownInfo.cooldownID)
+    if value and value > 0 then return value end
   end
-
-  if frame.Icon then
-    cooldownID = tonumber(frame.Icon.cooldownID or 0) or 0
-    if cooldownID > 0 then
-      return cooldownID
-    end
-    cooldownID = tonumber(frame.Icon.cooldownInfo and frame.Icon.cooldownInfo.cooldownID or 0) or 0
-    if cooldownID > 0 then
-      return cooldownID
-    end
-  end
-
+  if frame.Icon then return self:GetFrameCooldownID(frame.Icon) end
   return nil
 end
 
-local function CollectFramesByCooldownID(owner, cooldownID, results, visited)
-  if not owner or visited[owner] then
-    return
+local function CollectFrames(manager, node, cooldownID, result, visited)
+  if not node or visited[node] then return end
+  visited[node] = true
+  if manager:GetFrameCooldownID(node) == cooldownID then
+    result[#result + 1] = node
   end
-  visited[owner] = true
-
-  if CooldownManager:GetFrameCooldownID(owner) == cooldownID then
-    results[#results + 1] = owner
-  end
-
-  if owner.GetChildren then
-    for _, child in ipairs({ owner:GetChildren() }) do
-      CollectFramesByCooldownID(child, cooldownID, results, visited)
+  if node.GetChildren then
+    for _, child in ipairs({ node:GetChildren() }) do
+      CollectFrames(manager, child, cooldownID, result, visited)
     end
   end
 end
 
-function CooldownManager:FindFramesByCooldownID(cooldownID, forceRefresh)
-  cooldownID = tonumber(cooldownID or 0) or 0
-  if cooldownID <= 0 then
-    return {}
+function Manager:FindFramesByCooldownID(cooldownID, forceRefresh)
+  cooldownID = Safe:Number(cooldownID)
+  if not cooldownID or cooldownID <= 0 then return {} end
+  if forceRefresh ~= true and self.frameCache[cooldownID] then
+    return self.frameCache[cooldownID]
   end
-
-  if forceRefresh ~= true then
-    local cached = self.frameCache[cooldownID]
-    if cached and #cached > 0 then
-      local valid = {}
-      for _, frame in ipairs(cached) do
-        if self:GetFrameCooldownID(frame) == cooldownID then
-          valid[#valid + 1] = frame
-        end
-      end
-      if #valid > 0 then
-        self.frameCache[cooldownID] = valid
-        return valid
-      end
-    end
+  local result, visited = {}, {}
+  for _, name in ipairs(self.viewerNames) do
+    CollectFrames(self, _G[name], cooldownID, result, visited)
   end
-
-  local results = {}
-  local visited = {}
-  for _, viewerName in ipairs(self.viewerNames) do
-    local viewer = _G[viewerName]
-    if viewer then
-      CollectFramesByCooldownID(viewer, cooldownID, results, visited)
-    end
-  end
-
-  for _, frame in ipairs(results) do
-    HookCooldownWidget(frame)
-    self:HookFrameForAuraUpdates(frame)
-    self:UpdateCachedCooldownStateFromFrame(frame)
-  end
-
-  self.frameCache[cooldownID] = results
-  return results
+  self.frameCache[cooldownID] = result
+  return result
 end
 
-local function RemoveFrameFromCachedList(frames, targetFrame)
-  if type(frames) ~= "table" or not targetFrame then
-    return frames
-  end
-
-  local updated = nil
-  for index, frame in ipairs(frames) do
-    if frame == targetFrame then
-      updated = {}
-      for keepIndex = 1, (index - 1) do
-        updated[#updated + 1] = frames[keepIndex]
-      end
-      for keepIndex = (index + 1), #frames do
-        updated[#updated + 1] = frames[keepIndex]
-      end
-      break
-    end
-  end
-
-  return updated or frames
+function Manager:FindFrameByCooldownID(cooldownID)
+  return self:FindFramesByCooldownID(cooldownID)[1]
 end
 
-function CooldownManager:FindFrameByCooldownID(cooldownID)
-  local frames = self:FindFramesByCooldownID(cooldownID)
-  return frames[1]
-end
-
-local function ResolveTimingFromTable(data)
-  if type(data) ~= "table" then
-    return nil, nil
-  end
-
-  local duration = SafeNumber(data.duration) or SafeNumber(data.cooldownDuration)
-  local startTime = SafeNumber(data.startTime) or SafeNumber(data.cooldownStartTime)
-  local expirationTime = SafeNumber(data.expirationTime)
-
-  if duration and duration > 0 then
-    if expirationTime and expirationTime > 0 then
-      return duration, expirationTime
-    end
-    if startTime and startTime > 0 then
-      return duration, startTime + duration
-    end
-  end
-
-  return nil, nil
-end
-
-local function ResolveTimingFromCooldownWidget(widget)
-  if not widget or not widget.GetCooldownTimes then
-    return nil, nil
-  end
-
-  local startMS, durationMS = widget:GetCooldownTimes()
-  startMS = SafeNumber(startMS)
-  durationMS = SafeNumber(durationMS)
-
-  if startMS and durationMS and durationMS > 0 then
-    local startTime = startMS / 1000
-    local duration = durationMS / 1000
-    if duration > 0 then
-      return duration, startTime + duration
-    end
-  end
-
-  return nil, nil
-end
-
-local function GetFrameCooldownWidget(frame)
-  if not frame then
-    return nil
-  end
-
-  local direct = frame.Cooldown
-    or frame.cooldown
-    or (frame.Icon and (frame.Icon.Cooldown or frame.Icon.cooldown))
-  if direct and direct.GetCooldownTimes then
-    return direct
-  end
-
-  local visited = {}
-  local function findNested(owner)
-    if not owner or visited[owner] then
-      return nil
-    end
-    visited[owner] = true
-
-    local nested = owner.Cooldown or owner.cooldown or (owner.Icon and (owner.Icon.Cooldown or owner.Icon.cooldown))
-    if nested and nested.GetCooldownTimes then
-      return nested
-    end
-
-    if owner.GetChildren then
-      for _, child in ipairs({ owner:GetChildren() }) do
-        local found = findNested(child)
-        if found then
-          return found
-        end
-      end
-    end
-
-    return nil
-  end
-
-  return findNested(frame)
-end
-
-local function GetFrameTimerBar(frame)
-  if not frame then
-    return nil
-  end
-
-  local direct = frame.Bar
-    or frame.bar
-    or (frame.Icon and (frame.Icon.Bar or frame.Icon.bar))
-  if direct and direct.SetTimerDuration then
-    return direct
-  end
-
-  return nil
-end
-
-local function GetFrameStoredDurationObject(frame, widget)
-  local frameCooldownInfo = frame and frame.cooldownInfo or nil
-  local iconCooldownInfo = frame and frame.Icon and frame.Icon.cooldownInfo or nil
-  local currentCooldownID = CooldownManager:GetFrameCooldownID(frame)
-  local frameInfoDurationObject = nil
-  local iconInfoDurationObject = nil
-  if type(frameCooldownInfo) == "table" then
-    local infoCooldownID = tonumber(frameCooldownInfo.cooldownID or 0) or 0
-    if infoCooldownID <= 0 or infoCooldownID == currentCooldownID then
-      frameInfoDurationObject = frameCooldownInfo.durationObject
-    end
-  end
-  if type(iconCooldownInfo) == "table" then
-    local infoCooldownID = tonumber(iconCooldownInfo.cooldownID or 0) or 0
-    if infoCooldownID <= 0 or infoCooldownID == currentCooldownID then
-      iconInfoDurationObject = iconCooldownInfo.durationObject
-    end
-  end
-
-  local candidates = {
-    frame and frame._popaurasDurationObject,
-    frame and frame._arcTextColorDurObj,
-    widget and widget._popaurasDurationObject,
-    frame and frame.Bar and frame.Bar._popaurasDurationObject,
-    frame and frame.bar and frame.bar._popaurasDurationObject,
-    frame and frame.Icon and frame.Icon._popaurasDurationObject,
-    frame and frame.Icon and frame.Icon._arcTextColorDurObj,
-    frame and frame.Icon and frame.Icon.Bar and frame.Icon.Bar._popaurasDurationObject,
-    frame and frame.Icon and frame.Icon.bar and frame.Icon.bar._popaurasDurationObject,
-    frameInfoDurationObject,
-    iconInfoDurationObject,
-  }
-
-  for _, candidate in ipairs(candidates) do
-    if candidate ~= nil then
-      return candidate
-    end
-  end
-
-  return nil
-end
-
-local function ClearFrameStoredDurationObjects(frame)
-  if not frame then
-    return
-  end
-
-  frame._popaurasDurationObject = nil
-  frame._arcTextColorDurObj = nil
-
-  if frame.Bar then
-    frame.Bar._popaurasDurationObject = nil
-  end
-  if frame.bar then
-    frame.bar._popaurasDurationObject = nil
-  end
-
-  local widget = GetFrameCooldownWidget(frame)
-  if widget then
-    widget._popaurasDurationObject = nil
-  end
-
-  if frame.Icon then
-    frame.Icon._popaurasDurationObject = nil
-    frame.Icon._arcTextColorDurObj = nil
-    if frame.Icon.Bar then
-      frame.Icon.Bar._popaurasDurationObject = nil
-    end
-    if frame.Icon.bar then
-      frame.Icon.bar._popaurasDurationObject = nil
-    end
-  end
-end
-
-local function GetDurationObjectFromCooldownInfo(info)
-  if type(info) ~= "table" or not C_Spell then
-    return nil
-  end
-
-  local isOnActualCooldown = SafeBoolean(info.isOnActualCooldown)
-  local isOnGCD = SafeBoolean(info.isOnGCD)
-  if isOnActualCooldown == false or isOnGCD == true then
-    return nil
-  end
-
-  local spellID = tonumber(info.overrideSpellID or info.spellID or 0) or 0
-  if spellID <= 0 then
-    return nil
-  end
-
-  local chargeInfo = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(spellID) or nil
-  local maxCharges = SafeNumber(chargeInfo and chargeInfo.maxCharges)
-  if maxCharges and maxCharges > 1 and C_Spell.GetSpellChargeDuration then
-    local ok, durationObject = pcall(C_Spell.GetSpellChargeDuration, spellID)
-    if ok and durationObject ~= nil then
-      return durationObject
-    end
-  end
-
-  if C_Spell.GetSpellCooldownDuration then
-    local ok, durationObject = pcall(C_Spell.GetSpellCooldownDuration, spellID)
-    if ok and durationObject ~= nil then
-      return durationObject
-    end
-  end
-
-  return nil
-end
-
-HookCooldownWidget = function(frame)
-  local widget = GetFrameCooldownWidget(frame)
-  if widget and not widget._popaurasDurationHooked then
-    widget._popaurasDurationHooked = true
-    widget._popaurasOwnerFrame = frame
-
-    if widget.SetCooldownFromDurationObject then
-      hooksecurefunc(widget, "SetCooldownFromDurationObject", function(self, durationObject)
-        local owner = self._popaurasOwnerFrame or frame
-        if not owner or durationObject == nil then
-          return
-        end
-
-        local isOnGCD = SafeBoolean(owner.isOnGCD)
-        local isOnActualCooldown = SafeBoolean(owner.isOnActualCooldown)
-        if isOnActualCooldown == false then
-          return
-        end
-        if isOnGCD == true and isOnActualCooldown ~= true then
-          return
-        end
-
-        owner._popaurasDurationObject = durationObject
-        self._popaurasDurationObject = durationObject
-        CooldownManager:HandleFrameCooldownUpdate(owner)
-      end)
-    end
-
-    if widget.Clear then
-      hooksecurefunc(widget, "Clear", function(self)
-        local owner = self._popaurasOwnerFrame or frame
-        if owner then
-          owner._popaurasDurationObject = nil
-        end
-        self._popaurasDurationObject = nil
-        CooldownManager:HandleFrameCooldownUpdate(owner)
-      end)
-    end
-
-    if widget.SetCooldown then
-      hooksecurefunc(widget, "SetCooldown", function(self, startTime, duration)
-        if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration)) then
-          return
-        end
-
-        local owner = self._popaurasOwnerFrame or frame
-        if owner then
-          owner._popaurasDurationObject = nil
-        end
-        self._popaurasDurationObject = nil
-
-        if type(startTime) == "number" and type(duration) == "number" and startTime == 0 and duration == 0 then
-          CooldownManager:HandleFrameCooldownUpdate(owner)
-          return
-        end
-        CooldownManager:HandleFrameCooldownUpdate(owner)
-      end)
-    end
-
-    if widget.SetCooldownDuration then
-      hooksecurefunc(widget, "SetCooldownDuration", function(self)
-        local owner = self._popaurasOwnerFrame or frame
-        if owner then
-          owner._popaurasDurationObject = nil
-        end
-        self._popaurasDurationObject = nil
-        CooldownManager:HandleFrameCooldownUpdate(owner)
-      end)
-    end
-
-    if widget.SetCooldownFromExpirationTime then
-      hooksecurefunc(widget, "SetCooldownFromExpirationTime", function(self)
-        local owner = self._popaurasOwnerFrame or frame
-        if owner then
-          owner._popaurasDurationObject = nil
-        end
-        self._popaurasDurationObject = nil
-        CooldownManager:HandleFrameCooldownUpdate(owner)
-      end)
-    end
-
-    if widget.SetCooldownUNIX then
-      hooksecurefunc(widget, "SetCooldownUNIX", function(self)
-        local owner = self._popaurasOwnerFrame or frame
-        if owner then
-          owner._popaurasDurationObject = nil
-        end
-        self._popaurasDurationObject = nil
-        CooldownManager:HandleFrameCooldownUpdate(owner)
-      end)
-    end
-
-    if widget.HookScript then
-      widget:HookScript("OnHide", function(self)
-        local owner = self._popaurasOwnerFrame or frame
-        if owner then
-          owner._popaurasDurationObject = nil
-        end
-        self._popaurasDurationObject = nil
-        CooldownManager:HandleFrameCooldownUpdate(owner)
-      end)
-    end
-  end
-
-  local timerBar = GetFrameTimerBar(frame)
-  if timerBar and not timerBar._popaurasTimerDurationHooked then
-    timerBar._popaurasTimerDurationHooked = true
-    timerBar._popaurasOwnerFrame = frame
-
-    if timerBar.SetTimerDuration then
-      hooksecurefunc(timerBar, "SetTimerDuration", function(self, durationObject)
-        local owner = self._popaurasOwnerFrame or frame
-        if not owner then
-          return
-        end
-        owner._popaurasDurationObject = durationObject
-        self._popaurasDurationObject = durationObject
-        CooldownManager:HandleFrameCooldownUpdate(owner)
-      end)
-    end
-
-    if timerBar.HookScript then
-      timerBar:HookScript("OnHide", function(self)
-        local owner = self._popaurasOwnerFrame or frame
-        if owner then
-          owner._popaurasDurationObject = nil
-        end
-        self._popaurasDurationObject = nil
-        CooldownManager:HandleFrameCooldownUpdate(owner)
-      end)
-    end
-  end
-end
-
-local function ResolveTimingFromLiveFrame(frame)
-  local widget = GetFrameCooldownWidget(frame)
-  if not widget then
-    return nil, nil, false
-  end
-
-  local duration, expirationTime = ResolveTimingFromCooldownWidget(widget)
-  if duration and duration > 0 and expirationTime and expirationTime > GetTime() then
-    return duration, expirationTime, true
-  end
-
-  return nil, nil, false
-end
-
-local function ResolveTimingFromFrameInfo(frame)
-  if not frame then
-    return nil, nil
-  end
-
-  local currentCooldownID = CooldownManager:GetFrameCooldownID(frame)
-  local cooldownInfo = frame.cooldownInfo
-  if type(cooldownInfo) == "table" then
-    local infoCooldownID = tonumber(cooldownInfo.cooldownID or 0) or 0
-    if infoCooldownID > 0 and infoCooldownID ~= currentCooldownID then
-      cooldownInfo = nil
-    end
-  end
-
-  local iconCooldownInfo = frame.Icon and frame.Icon.cooldownInfo or nil
-  if type(iconCooldownInfo) == "table" then
-    local infoCooldownID = tonumber(iconCooldownInfo.cooldownID or 0) or 0
-    if infoCooldownID > 0 and infoCooldownID ~= currentCooldownID then
-      iconCooldownInfo = nil
-    end
-  end
-
-  local duration, expirationTime = ResolveTimingFromTable(cooldownInfo)
-  if (not duration or duration <= 0) and iconCooldownInfo then
-    duration, expirationTime = ResolveTimingFromTable(iconCooldownInfo)
-  end
-
-  return duration, expirationTime
-end
-
-local GetFrameCountText
-
-local function GetFrameMaxCharges(frame, cooldownInfo, iconCooldownInfo)
-  return SafeNumber(frame and frame.maxCharges)
-    or SafeNumber(cooldownInfo and cooldownInfo.maxCharges)
-    or SafeNumber(frame and frame.Icon and frame.Icon.maxCharges)
-    or SafeNumber(iconCooldownInfo and iconCooldownInfo.maxCharges)
-end
-
-local function DeriveCooldownStateKind(active, isOnActualCooldown, count, maxCharges)
-  count = SafeNumber(count)
-  maxCharges = SafeNumber(maxCharges)
-
-  local hasChargeState = (maxCharges ~= nil and maxCharges > 1)
-    or (count ~= nil and count > 0)
-
-  if hasChargeState then
-    if active then
-      if count ~= nil and count > 0 then
-        return "recharging"
-      end
-      if isOnActualCooldown == true then
-        return "depleted"
-      end
-      return "cooldown"
-    end
-    return "ready"
-  end
-
-  return active and "cooldown" or "ready"
-end
-
-local function BuildFrameCooldownState(frame)
-  if not frame then
-    return nil
-  end
-
-  local cooldownInfo = frame.cooldownInfo
-  if type(cooldownInfo) == "table" then
-    local infoCooldownID = tonumber(cooldownInfo.cooldownID or 0) or 0
-    local frameCooldownID = CooldownManager:GetFrameCooldownID(frame)
-    if infoCooldownID > 0 and infoCooldownID ~= frameCooldownID then
-      cooldownInfo = nil
-    end
-  end
-  local iconCooldownInfo = frame.Icon and frame.Icon.cooldownInfo or nil
-  if type(iconCooldownInfo) == "table" then
-    local infoCooldownID = tonumber(iconCooldownInfo.cooldownID or 0) or 0
-    local frameCooldownID = CooldownManager:GetFrameCooldownID(frame)
-    if infoCooldownID > 0 and infoCooldownID ~= frameCooldownID then
-      iconCooldownInfo = nil
-    end
-  end
-
-  local widget = GetFrameCooldownWidget(frame)
-  local duration, expirationTime, hasLiveWidget = ResolveTimingFromLiveFrame(frame)
-  if not hasLiveWidget then
-    duration, expirationTime = ResolveTimingFromFrameInfo(frame)
-  end
-
-  local isShown = frame.IsShown and frame:IsShown() or false
-  local explicitRawActive = ResolveFirstBoolean(
-    frame.isActive,
-    cooldownInfo and cooldownInfo.isActive,
-    iconCooldownInfo and iconCooldownInfo.isActive
-  )
-  local explicitActualCooldown = ResolveFirstBoolean(
-    frame.isOnActualCooldown,
-    cooldownInfo and cooldownInfo.isOnActualCooldown,
-    iconCooldownInfo and iconCooldownInfo.isOnActualCooldown
-  )
-  local isOnGCD = ResolveFirstBoolean(
-    frame.isOnGCD,
-    cooldownInfo and cooldownInfo.isOnGCD,
-    iconCooldownInfo and iconCooldownInfo.isOnGCD
-  )
-  local durationObject = GetFrameStoredDurationObject(frame, widget)
-  if durationObject == nil and (explicitActualCooldown == true or (explicitActualCooldown == nil and explicitRawActive == true and isOnGCD ~= true)) then
-    durationObject = GetDurationObjectFromCooldownInfo(cooldownInfo)
-      or GetDurationObjectFromCooldownInfo(iconCooldownInfo)
-  end
-  local durationObjectRemaining = GetDurationObjectRemaining(durationObject)
-  local hasRenderableDurationObject = durationObjectRemaining ~= nil and durationObjectRemaining > 0
-  local hasDurationObjectSignal = durationObject ~= nil and isOnGCD ~= true
-  local numericActive = duration and expirationTime and expirationTime > GetTime() or false
-  local explicitInactive = explicitActualCooldown == false
-    or (explicitActualCooldown == nil and explicitRawActive == false and isOnGCD ~= true)
-  local active
-  if explicitInactive then
-    active = false
-    duration = nil
-    expirationTime = nil
-    durationObject = nil
-    durationObjectRemaining = nil
-    hasRenderableDurationObject = false
-    hasDurationObjectSignal = false
-  elseif explicitActualCooldown == true then
-    active = true
-  elseif numericActive then
-    active = true
-  elseif hasRenderableDurationObject then
-    active = true
-  else
-    active = false
-  end
-  local countText = GetFrameCountText(frame)
-  local count = tonumber(countText or "")
-  local maxCharges = GetFrameMaxCharges(frame, cooldownInfo, iconCooldownInfo)
-
-  return {
-    frame = frame,
-    duration = numericActive and duration or 0,
-    expirationTime = numericActive and expirationTime or 0,
-    durationObject = active and durationObject or nil,
-    signalDurationObject = hasDurationObjectSignal and durationObject or nil,
-    durationObjectRemaining = durationObjectRemaining,
-    hasDurationObjectSignal = hasDurationObjectSignal,
-    active = active,
-    rawActive = explicitRawActive == true,
-    explicitRawActive = explicitRawActive,
-    explicitActualCooldown = explicitActualCooldown,
-    isOnActualCooldown = explicitActualCooldown == true,
-    isOnGCD = isOnGCD == true,
-    countText = countText,
-    count = count,
-    maxCharges = maxCharges,
-    stateKind = DeriveCooldownStateKind(active, explicitActualCooldown == true, count, maxCharges),
-    isShown = isShown,
-  }
-end
-
-local function BuildCooldownFrameSnapshot(frameState)
-  if not frameState then
-    return nil
-  end
-
-  return {
-    active = frameState.active == true,
-    rawActive = frameState.rawActive == true,
-    explicitRawActive = frameState.explicitRawActive,
-    explicitActualCooldown = frameState.explicitActualCooldown,
-    isOnActualCooldown = frameState.isOnActualCooldown == true,
-    isOnGCD = frameState.isOnGCD == true,
-    duration = SafeNumber(frameState.duration) or 0,
-    expirationTime = SafeNumber(frameState.expirationTime) or 0,
-    hasDurationObject = frameState.durationObject ~= nil,
-    hasDurationObjectSignal = frameState.hasDurationObjectSignal == true,
-    durationObjectRemaining = SafeNumber(frameState.durationObjectRemaining) or 0,
-    countText = frameState.countText or "",
-    maxCharges = SafeNumber(frameState.maxCharges) or 0,
-    stateKind = tostring(frameState.stateKind or ""),
-    isShown = frameState.isShown == true,
-  }
-end
-
-local function CooldownFrameSnapshotEquals(left, right)
-  if left == right then
-    return true
-  end
-  if not left or not right then
+local function IsAuraDisplayFrame(frame)
+  if not frame then return false end
+  local viewer = frame.viewerFrame
+  if viewer == nil or viewer ~= _G.BuffBarCooldownViewer or type(frame.GetBarFrame) ~= "function" then
     return false
   end
-
-  return left.active == right.active
-    and left.rawActive == right.rawActive
-    and left.explicitRawActive == right.explicitRawActive
-    and left.explicitActualCooldown == right.explicitActualCooldown
-    and left.isOnActualCooldown == right.isOnActualCooldown
-    and left.isOnGCD == right.isOnGCD
-    and math.abs((left.duration or 0) - (right.duration or 0)) < 0.01
-    and math.abs((left.expirationTime or 0) - (right.expirationTime or 0)) < 0.01
-    and left.hasDurationObject == right.hasDurationObject
-    and left.hasDurationObjectSignal == right.hasDurationObjectSignal
-    and math.abs((left.durationObjectRemaining or 0) - (right.durationObjectRemaining or 0)) < 0.01
-    and left.countText == right.countText
-    and (left.maxCharges or 0) == (right.maxCharges or 0)
-    and left.stateKind == right.stateKind
-    and left.isShown == right.isShown
+  local ok, bar = pcall(frame.GetBarFrame, frame)
+  return ok and bar ~= nil and type(bar.SetValue) == "function"
 end
 
-GetFrameCountText = function(frame)
-  local candidates = {
-    frame and frame.Count,
-    frame and frame.CountText,
-    frame and frame.count,
-    frame and frame.countText,
-    frame and frame.currentText,
-    frame and frame.ApplicationText,
-    frame and frame.applicationsText,
-    frame and frame.Applications,
-    frame and frame.ChargeCount,
-    frame and frame.chargesText,
-    frame and frame.StackCount,
-    frame and frame.stackText,
-    frame and frame.Icon and frame.Icon.Count,
-    frame and frame.Icon and frame.Icon.CountText,
-    frame and frame.Icon and frame.Icon.count,
-    frame and frame.Icon and frame.Icon.countText,
-    frame and frame.Icon and frame.Icon.currentText,
-    frame and frame.Icon and frame.Icon.ApplicationText,
-    frame and frame.Icon and frame.Icon.applicationsText,
-    frame and frame.Icon and frame.Icon.Applications,
-    frame and frame.Icon and frame.Icon.ChargeCount,
-    frame and frame.Icon and frame.Icon.chargesText,
-    frame and frame.Icon and frame.Icon.StackCount,
-    frame and frame.Icon and frame.Icon.stackText,
-  }
-
-  for _, widget in ipairs(candidates) do
-    if widget and widget.GetText then
-      local text = widget:GetText()
-      if text ~= nil and text ~= "" then
-        return tostring(text)
+local function AddCooldownIDsForSpells(manager, result, seen, spellIDs, directOnly)
+  for _, spellID in ipairs(type(spellIDs) == "table" and spellIDs or EMPTY) do
+    local cooldownIDs = directOnly and manager:GetDirectCooldownIDsForSpellID(spellID)
+      or manager:GetCooldownIDsForSpellID(spellID)
+    for _, cooldownID in ipairs(cooldownIDs) do
+      if not seen[cooldownID] then
+        seen[cooldownID] = true
+        result[#result + 1] = cooldownID
       end
     end
   end
-
-  return nil
 end
 
-local function GetFrameAuraInstanceID(frame)
-  if not frame then
-    return nil
-  end
+-- CDM's tracked-buff-bar frames are allowed to evaluate aura relationships
+-- that remain secret to normal addon Lua. Return only Blizzard bar frames;
+-- essential/utility cooldown frames can share linked spell IDs but are not
+-- authoritative aura sources.
+function Manager:FindAuraDisplaySource(spellIDs, requestedUnit, forceRefresh)
+  local cooldownIDs, seen = {}, {}
+  -- Direct relationships win. Applied/override aura IDs supplied by the spell
+  -- resolver normally lead directly to the tracked buff/bar entry.
+  AddCooldownIDsForSpells(self, cooldownIDs, seen, spellIDs, true)
+  AddCooldownIDsForSpells(self, cooldownIDs, seen, spellIDs, false)
 
-  local auraInstanceID = frame.auraInstanceID
-  if auraInstanceID ~= nil then
-    return auraInstanceID
-  end
-
-  if frame.cooldownInfo and frame.cooldownInfo.auraInstanceID ~= nil then
-    return frame.cooldownInfo.auraInstanceID
-  end
-
-  if frame.Icon then
-    if frame.Icon.auraInstanceID ~= nil then
-      return frame.Icon.auraInstanceID
+  local inactiveSource, inactiveCooldownID
+  for _, cooldownID in ipairs(cooldownIDs) do
+    for _, frame in ipairs(self:FindFramesByCooldownID(cooldownID, forceRefresh)) do
+      if IsAuraDisplayFrame(frame) and type(frame.IsActive) == "function"
+        and type(frame.GetAuraDataUnit) == "function"
+        and type(frame.GetAuraSpellID) == "function" then
+        local okActive, active = pcall(frame.IsActive, frame)
+        active = okActive and Safe:Boolean(active) or nil
+        if active == true then
+          local okUnit, sourceUnit = pcall(frame.GetAuraDataUnit, frame)
+          sourceUnit = okUnit and Safe:String(sourceUnit) or nil
+          if requestedUnit == nil or sourceUnit == requestedUnit then
+            return frame, cooldownID
+          end
+        elseif not inactiveSource then
+          inactiveSource, inactiveCooldownID = frame, cooldownID
+        end
+      end
     end
-    if frame.Icon.cooldownInfo and frame.Icon.cooldownInfo.auraInstanceID ~= nil then
-      return frame.Icon.cooldownInfo.auraInstanceID
-    end
   end
-
-  return nil
+  return inactiveSource, inactiveCooldownID
 end
 
-function CooldownManager:UpdateCachedAuraStateFromFrame(frame)
-  local cooldownID = self:GetFrameCooldownID(frame)
-  if not cooldownID or cooldownID <= 0 then
-    return false
+local function SetForcedHidden(frame, hidden)
+  if not frame or not frame.SetAlpha then return end
+  if frame._popAurasHiddenHook ~= true then
+    frame._popAurasHiddenHook = true
+    hooksecurefunc(frame, "SetAlpha", function(owner, alpha)
+      if owner._popAurasForceHidden == true and Safe:Number(alpha) ~= 0 and owner._popAurasApplyingAlpha ~= true then
+        owner._popAurasApplyingAlpha = true
+        pcall(owner.SetAlpha, owner, 0)
+        owner._popAurasApplyingAlpha = false
+      end
+    end)
   end
-
-  local previousState = self.auraStateCache[cooldownID]
-  local auraInstanceID = GetFrameAuraInstanceID(frame)
-  local countText = GetFrameCountText(frame)
-  if auraInstanceID ~= nil then
-    local changed = previousState == nil
-      or previousState.auraInstanceID ~= auraInstanceID
-      or previousState.countText ~= countText
-
-    self.auraStateCache[cooldownID] = {
-      auraInstanceID = auraInstanceID,
-      countText = countText,
-    }
-    self.auraFrameRefs[cooldownID] = frame
-    return changed
+  if hidden then
+    if frame._popAurasOriginalAlpha == nil and frame.GetAlpha then
+      frame._popAurasOriginalAlpha = frame:GetAlpha()
+    end
+    frame._popAurasForceHidden = true
+    frame._popAurasApplyingAlpha = true
+    pcall(frame.SetAlpha, frame, 0)
+    frame._popAurasApplyingAlpha = false
   else
-    local changed = previousState ~= nil
-    self.auraStateCache[cooldownID] = nil
-    self.auraFrameRefs[cooldownID] = nil
-    ClearFrameStoredDurationObjects(frame)
-    return changed
+    frame._popAurasForceHidden = false
+    local alpha = Safe:Number(frame._popAurasOriginalAlpha) or 1
+    frame._popAurasOriginalAlpha = nil
+    pcall(frame.SetAlpha, frame, alpha)
   end
 end
 
-function CooldownManager:EnsureVisibilityOverrideDriver()
-  if self.visibilityOverrideDriver then
+function Manager:RestoreAllHiddenFrames()
+  for cooldownID, frames in pairs(self.hiddenFrames) do
+    for _, frame in ipairs(frames) do SetForcedHidden(frame, false) end
+    self.hiddenFrames[cooldownID] = nil
+  end
+end
+
+local function AddTriggerCooldownIDs(manager, target, trigger)
+  local directIDs = {}
+  local linkedIDs = {}
+
+  local function collectSpell(spellID)
+    for _, cooldownID in ipairs(manager:GetDirectCooldownIDsForSpellID(spellID)) do
+      directIDs[cooldownID] = true
+    end
+    for _, cooldownID in ipairs(manager:GetCooldownIDsForSpellID(spellID)) do
+      linkedIDs[cooldownID] = true
+    end
+  end
+  collectSpell(trigger.spellId)
+  for _, spellID in ipairs(type(trigger.spellIDs) == "table" and trigger.spellIDs or EMPTY) do collectSpell(spellID) end
+
+  if next(directIDs) ~= nil then
+    for cooldownID in pairs(directIDs) do target[cooldownID] = true end
     return
   end
 
-  local frame = CreateFrame("Frame")
-  frame:Hide()
-  frame:SetScript("OnUpdate", function(driver)
-    driver:Hide()
-    if self.pendingVisibilityOverrideSync ~= true then
-      return
+  -- Linked spell IDs are semantic relationships and can point at neighboring
+  -- CDM entries. Use them only when every configured ID resolves to one unique
+  -- cooldown, preserving proc/aura mappings without hiding recycled neighbors.
+  local linkedCooldownID
+  for cooldownID in pairs(linkedIDs) do
+    if linkedCooldownID ~= nil then return end
+    linkedCooldownID = cooldownID
+  end
+  if linkedCooldownID then target[linkedCooldownID] = true end
+end
+
+function Manager:GetDesiredHiddenIDs()
+  local desired = {}
+  if not ns.Registry or not ns.runtime then return desired end
+  for _, auraID in ipairs(ns.Registry:GetFlatOrder()) do
+    local aura = ns.Registry:GetAura(auraID)
+    local state = ns.runtime:GetState(auraID)
+    local effectivelyLoaded = state and state.loadMatched ~= false
+    local nativeAuraOwnsPresentation = effectivelyLoaded and aura and ns.renderers and ns.renderers.NativeAuraRegion
+      and ns.renderers.NativeAuraRegion:CanHandle(aura) or false
+    if aura and aura.enabled ~= false and aura.display and aura.display.hideCDMIcon == true
+      and effectivelyLoaded
+      and ((state and state.show == true) or nativeAuraOwnsPresentation) then
+      for _, trigger in ns.TriggerBase:IterateTriggers(aura) do
+        if trigger.type == "spell_cooldown" or trigger.type == "aura" then
+          AddTriggerCooldownIDs(self, desired, trigger)
+        end
+      end
     end
-    if self.applyingVisibilityOverrides == true then
-      driver:Show()
-      return
-    end
-    if InCombatLockdown and InCombatLockdown() then
-      return
-    end
+  end
+  return desired
+end
+
+function Manager:ApplyVisibilityOverrides()
+  if self.applyingVisibilityOverrides then return end
+  self.applyingVisibilityOverrides = true
+  local desired = self:GetDesiredHiddenIDs()
+  -- CDM recycles frame objects between cooldown entries. Always release the
+  -- previous frame assignments before resolving the current owners; otherwise
+  -- a frame that used to display a hidden cooldown can remain forced invisible
+  -- after Blizzard assigns it to a neighboring spell.
+  self:RestoreAllHiddenFrames()
+
+  for cooldownID in pairs(desired) do
+    local frames = self:FindFramesByCooldownID(cooldownID, true)
+    for _, frame in ipairs(frames) do SetForcedHidden(frame, true) end
+    self.hiddenFrames[cooldownID] = frames
+  end
+  self.applyingVisibilityOverrides = false
+end
+
+function Manager:ScheduleVisibilityOverrideSync()
+  if self.visibilitySyncPending then return end
+  self.visibilitySyncPending = true
+  C_Timer.After(0, function()
+    self.visibilitySyncPending = false
     self:ApplyVisibilityOverrides()
   end)
-  self.visibilityOverrideDriver = frame
 end
 
-function CooldownManager:ScheduleVisibilityOverrideSync()
-  self.pendingVisibilityOverrideSync = true
-  if InCombatLockdown and InCombatLockdown() then
-    return
-  end
-
-  self:EnsureVisibilityOverrideDriver()
-  if self.visibilityOverrideDriver and self.applyingVisibilityOverrides ~= true then
-    self.visibilityOverrideDriver:Show()
-  end
-end
-
-function CooldownManager:RequestVisibilityOverrideSyncForCooldownID(cooldownID)
-  cooldownID = tonumber(cooldownID or 0) or 0
-  if cooldownID <= 0 or not self.hiddenFrames or not self.hiddenFrames[cooldownID] then
-    return
-  end
-
-  self:ScheduleVisibilityOverrideSync()
-end
-
-function CooldownManager:HandleFrameCooldownIDChange(frame, previousCooldownID, cooldownID)
-  previousCooldownID = tonumber(previousCooldownID or 0) or 0
-  cooldownID = tonumber(cooldownID or 0) or 0
-  if previousCooldownID == cooldownID then
-    return false
-  end
-
-  if previousCooldownID > 0 then
-    local cachedFrames = self.frameCache[previousCooldownID]
-    if cachedFrames then
-      cachedFrames = RemoveFrameFromCachedList(cachedFrames, frame)
-      self.frameCache[previousCooldownID] = (type(cachedFrames) == "table" and #cachedFrames > 0) and cachedFrames or nil
+function Manager:ScheduleAuraSourceSync()
+  if self.auraSourceSyncPending then return end
+  self.auraSourceSyncPending = true
+  C_Timer.After(0, function()
+    self.auraSourceSyncPending = false
+    if ns.runtime and ns.runtime.RefreshNativeAuraContainers then
+      ns.runtime:RefreshNativeAuraContainers("player")
+      ns.runtime:RefreshNativeAuraContainers("target")
     end
-
-    if self.auraFrameRefs[previousCooldownID] == frame then
-      self.auraFrameRefs[previousCooldownID] = nil
-    end
-    self.auraStateCache[previousCooldownID] = nil
-    self:RequestVisibilityOverrideSyncForCooldownID(previousCooldownID)
-  end
-
-  if cooldownID > 0 then
-    self.frameCache[cooldownID] = nil
-    if self.auraFrameRefs[cooldownID] == frame then
-      self.auraFrameRefs[cooldownID] = nil
-    end
-    self.auraStateCache[cooldownID] = nil
-    self:RequestVisibilityOverrideSyncForCooldownID(cooldownID)
-  end
-
-  ClearFrameStoredDurationObjects(frame)
-  self.cooldownFrameStateCache[frame] = nil
-  return true
-end
-
-function CooldownManager:UpdateCachedCooldownStateFromFrame(frame)
-  if not frame then
-    return false, nil, nil, false
-  end
-
-  self.cooldownFrameStateCache = self.cooldownFrameStateCache or CreateWeakKeyTable()
-  self.frameCooldownIDs = self.frameCooldownIDs or CreateWeakKeyTable()
-
-  local previousCooldownID = tonumber(self.frameCooldownIDs[frame] or 0) or 0
-  local cooldownID = self:GetFrameCooldownID(frame)
-  local rebound = self:HandleFrameCooldownIDChange(frame, previousCooldownID, cooldownID)
-  if cooldownID and cooldownID > 0 then
-    self.frameCooldownIDs[frame] = cooldownID
-  else
-    self.frameCooldownIDs[frame] = nil
-  end
-  if not cooldownID or cooldownID <= 0 then
-    local hadSnapshot = self.cooldownFrameStateCache[frame] ~= nil
-    self.cooldownFrameStateCache[frame] = nil
-    return rebound or hadSnapshot, nil, previousCooldownID > 0 and previousCooldownID or nil, rebound
-  end
-
-  local snapshot = BuildCooldownFrameSnapshot(BuildFrameCooldownState(frame))
-  local previous = self.cooldownFrameStateCache[frame]
-  self.cooldownFrameStateCache[frame] = snapshot
-
-  local changed = rebound or not CooldownFrameSnapshotEquals(previous, snapshot)
-  return changed, cooldownID, previousCooldownID > 0 and previousCooldownID or nil, rebound
-end
-
-function CooldownManager:HandleFrameCooldownUpdate(frame)
-  local changed, cooldownID, previousCooldownID, rebound = self:UpdateCachedCooldownStateFromFrame(frame)
-  if (not changed and rebound ~= true) or not ns.runtime then
-    return
-  end
-
-  local queuedCooldownIDs = {}
-  if previousCooldownID and previousCooldownID > 0 then
-    queuedCooldownIDs[previousCooldownID] = true
-  end
-  if cooldownID and cooldownID > 0 then
-    queuedCooldownIDs[cooldownID] = true
-  end
-
-  for affectedCooldownID in pairs(queuedCooldownIDs) do
-    local affectedAuraIds = self:GetAffectedAurasForCooldownID(affectedCooldownID)
-    if type(affectedAuraIds) == "table" and #affectedAuraIds > 0 then
-      self:QueueAffectedAuraRefreshes(affectedAuraIds)
-    end
-  end
-end
-
-function CooldownManager:EnsurePendingRefreshDriver()
-  if self.pendingRefreshFrame then
-    return
-  end
-
-  local frame = CreateFrame("Frame")
-  frame:Hide()
-  frame:SetScript("OnUpdate", function(driver)
-    driver:Hide()
-
-    local auraIds = {}
-    for auraId in pairs(self.pendingAuraRefreshes) do
-      auraIds[#auraIds + 1] = auraId
-      self.pendingAuraRefreshes[auraId] = nil
-    end
-
-    if #auraIds == 0 then
-      return
-    end
-
-    local flushProfile = ProfileStart("cdm:flush_refresh")
-    if ns.runtime and ns.runtime.RefreshAuras then
-      ns.runtime:RefreshAuras(auraIds)
-    end
-    ProfileFinish("cdm:flush_refresh", flushProfile)
   end)
-
-  self.pendingRefreshFrame = frame
 end
 
-function CooldownManager:QueueAffectedAuraRefreshes(auraIds)
-  if type(auraIds) ~= "table" or #auraIds == 0 then
-    return
-  end
-
-  self:EnsurePendingRefreshDriver()
-  for _, auraId in ipairs(auraIds) do
-    if auraId then
-      self.pendingAuraRefreshes[auraId] = true
-    end
-  end
-
-  if self.pendingRefreshFrame then
-    self.pendingRefreshFrame:Show()
-  end
+function Manager:GetCooldownStateForSpellID(spellID)
+  return nil, self:FindCooldownIDForSpellID(spellID)
 end
 
-local function AddUniqueAuraIds(results, seen, auraIds)
-  if type(auraIds) ~= "table" then
-    return
-  end
-
-  for _, auraId in ipairs(auraIds) do
-    if auraId and not seen[auraId] then
-      seen[auraId] = true
-      results[#results + 1] = auraId
-    end
-  end
-end
-
-local function CollectSpellIDsFromCooldownInfo(info)
-  local results = {}
-  local seen = {}
-
-  local function addSpellID(spellID)
-    spellID = tonumber(spellID or 0) or 0
-    if spellID > 0 and not seen[spellID] then
-      seen[spellID] = true
-      results[#results + 1] = spellID
-    end
-  end
-
-  if type(info) ~= "table" then
-    return results
-  end
-
-  addSpellID(info.spellID)
-  addSpellID(info.overrideSpellID)
-
-  for _, linkedSpellID in ipairs(info.linkedSpellIDs or {}) do
-    addSpellID(linkedSpellID)
-  end
-
-  return results
-end
-
-local function CooldownInfoDirectlyMatchesSpell(info, spellID)
-  spellID = tonumber(spellID or 0) or 0
-  if spellID <= 0 or type(info) ~= "table" then
-    return false
-  end
-
-  return (tonumber(info.spellID or 0) or 0) == spellID
-    or (tonumber(info.overrideSpellID or 0) or 0) == spellID
-end
-
-function CooldownManager:GetAffectedAurasForCooldownID(cooldownID)
-  local info = self:GetCooldownInfo(cooldownID)
-  local spellIDs = CollectSpellIDsFromCooldownInfo(info)
-  if #spellIDs == 0 then
-    return nil
-  end
-
-  local results = {}
-  local seen = {}
-  local spellProvider = ns.providers and ns.providers.spell_cooldown or nil
-  local auraProvider = ns.providers and ns.providers.aura or nil
-
-  if spellProvider and spellProvider.GetAffectedAurasForSpellIDs then
-    AddUniqueAuraIds(results, seen, spellProvider:GetAffectedAurasForSpellIDs(spellIDs))
-  end
-  if auraProvider and auraProvider.GetAffectedAurasForSpellIDs then
-    AddUniqueAuraIds(results, seen, auraProvider:GetAffectedAurasForSpellIDs(spellIDs))
-  end
-
-  return #results > 0 and results or nil
-end
-
-function CooldownManager:HookFrameForAuraUpdates(frame)
-  if not frame or self.hookedAuraFrames[frame] then
-    return
-  end
-  self.hookedAuraFrames[frame] = true
-
-  local function HandleAuraFrameUpdate(updatedFrame)
-    local hookProfile = ProfileStart("cdm:hook_update")
-    local changed = CooldownManager:UpdateCachedAuraStateFromFrame(updatedFrame)
-    local cooldownChanged, cooldownID, previousCooldownID, rebound = CooldownManager:UpdateCachedCooldownStateFromFrame(updatedFrame)
-    if not changed and not cooldownChanged and rebound ~= true then
-      ProfileFinish("cdm:hook_update", hookProfile)
-      return
-    end
-
-    if ns.runtime then
-      local queuedCooldownIDs = {}
-      if previousCooldownID and previousCooldownID > 0 then
-        queuedCooldownIDs[previousCooldownID] = true
-      end
-      if cooldownID and cooldownID > 0 then
-        queuedCooldownIDs[cooldownID] = true
-      elseif not previousCooldownID then
-        local currentCooldownID = CooldownManager:GetFrameCooldownID(updatedFrame)
-        if currentCooldownID and currentCooldownID > 0 then
-          queuedCooldownIDs[currentCooldownID] = true
-        end
-      end
-
-      for affectedCooldownID in pairs(queuedCooldownIDs) do
-        local affectedAuraIds = CooldownManager:GetAffectedAurasForCooldownID(affectedCooldownID)
-        if type(affectedAuraIds) == "table" and #affectedAuraIds > 0 then
-          CooldownManager:QueueAffectedAuraRefreshes(affectedAuraIds)
-        end
-      end
-    end
-    ProfileFinish("cdm:hook_update", hookProfile)
-  end
-
-  local function HandleCooldownFrameUpdate(updatedFrame)
-    local hookProfile = ProfileStart("cdm:hook_cooldown")
-    CooldownManager:HandleFrameCooldownUpdate(updatedFrame)
-    ProfileFinish("cdm:hook_cooldown", hookProfile)
-  end
-
-  if frame.SetAuraInstanceInfo then
-    hooksecurefunc(frame, "SetAuraInstanceInfo", HandleAuraFrameUpdate)
-  end
-  if frame.ClearAuraInstanceInfo then
-    hooksecurefunc(frame, "ClearAuraInstanceInfo", HandleAuraFrameUpdate)
-  end
-
-  if frame.Icon then
-    if frame.Icon.SetAuraInstanceInfo then
-      hooksecurefunc(frame.Icon, "SetAuraInstanceInfo", HandleAuraFrameUpdate)
-    end
-    if frame.Icon.ClearAuraInstanceInfo then
-      hooksecurefunc(frame.Icon, "ClearAuraInstanceInfo", HandleAuraFrameUpdate)
-    end
-  end
-
-  if frame.SetCooldownInfo then
-    hooksecurefunc(frame, "SetCooldownInfo", function()
-      HandleCooldownFrameUpdate(frame)
-    end)
-  end
-  if frame.ClearCooldownInfo then
-    hooksecurefunc(frame, "ClearCooldownInfo", function()
-      HandleCooldownFrameUpdate(frame)
-    end)
-  end
-  if frame.SetCooldownID then
-    hooksecurefunc(frame, "SetCooldownID", function()
-      HandleCooldownFrameUpdate(frame)
-    end)
-  end
-  if frame.ClearCooldownID then
-    hooksecurefunc(frame, "ClearCooldownID", function()
-      HandleCooldownFrameUpdate(frame)
-    end)
-  end
-
-  if frame.Icon then
-    if frame.Icon.SetCooldownInfo then
-      hooksecurefunc(frame.Icon, "SetCooldownInfo", function()
-        HandleCooldownFrameUpdate(frame)
-      end)
-    end
-    if frame.Icon.ClearCooldownInfo then
-      hooksecurefunc(frame.Icon, "ClearCooldownInfo", function()
-        HandleCooldownFrameUpdate(frame)
-      end)
-    end
-    if frame.Icon.SetCooldownID then
-      hooksecurefunc(frame.Icon, "SetCooldownID", function()
-        HandleCooldownFrameUpdate(frame)
-      end)
-    end
-    if frame.Icon.ClearCooldownID then
-      hooksecurefunc(frame.Icon, "ClearCooldownID", function()
-        HandleCooldownFrameUpdate(frame)
-      end)
-    end
-  end
-
-  self:UpdateCachedAuraStateFromFrame(frame)
-  self:UpdateCachedCooldownStateFromFrame(frame)
-end
-
-function CooldownManager:GetCooldownStateForCooldownID(cooldownID)
-  cooldownID = tonumber(cooldownID or 0) or 0
-  if cooldownID <= 0 then
-    return nil
-  end
-  local info = self:GetCooldownInfo(cooldownID)
-  local frames = self:FindFramesByCooldownID(cooldownID)
-  local bestFrameState = nil
-
-  for _, frame in ipairs(frames) do
-    local candidate = BuildFrameCooldownState(frame)
-    if candidate then
-      local candidateHasCount = (candidate.countText and candidate.countText ~= "") or ((candidate.count or 0) > 0)
-      local bestHasCount = bestFrameState and ((bestFrameState.countText and bestFrameState.countText ~= "") or ((bestFrameState.count or 0) > 0)) or false
-      if not bestFrameState
-        or (candidate.active and not bestFrameState.active)
-        or (candidate.active == bestFrameState.active and candidate.rawActive and not bestFrameState.rawActive)
-        or (candidate.active == bestFrameState.active and candidate.rawActive == bestFrameState.rawActive and candidateHasCount and not bestHasCount)
-        or (candidate.active == bestFrameState.active and candidate.rawActive == bestFrameState.rawActive and candidateHasCount == bestHasCount and candidate.isShown and not bestFrameState.isShown)
-        or (candidate.active == bestFrameState.active and candidate.rawActive == bestFrameState.rawActive and candidateHasCount == bestHasCount and candidate.isShown == bestFrameState.isShown and (candidate.expirationTime or 0) > (bestFrameState.expirationTime or 0)) then
-        bestFrameState = candidate
-      end
-    end
-  end
-
-  local frame = bestFrameState and bestFrameState.frame or nil
-  local duration = bestFrameState and bestFrameState.duration or nil
-  local expirationTime = bestFrameState and bestFrameState.expirationTime or nil
-  local durationObject = bestFrameState and bestFrameState.durationObject or nil
-  local frameExplicitInactive = bestFrameState and (
-    bestFrameState.explicitActualCooldown == false
-    or (bestFrameState.explicitActualCooldown == nil and bestFrameState.explicitRawActive == false and bestFrameState.isOnGCD ~= true)
-  ) or false
-
-  if (not duration or duration <= 0) and not frameExplicitInactive then
-    duration, expirationTime = ResolveTimingFromTable(info)
-  end
-
-  local maxDuration = nil
-  if info then
-    maxDuration = SafeNumber(info.duration) or SafeNumber(info.cooldownDuration)
-  end
-  if (not maxDuration or maxDuration <= 0) and duration and duration > 0 then
-    maxDuration = duration
-  end
-
-  local active = (bestFrameState and bestFrameState.active == true)
-    or (not frameExplicitInactive and duration and expirationTime and expirationTime > GetTime())
-    or false
-  local countText = bestFrameState and bestFrameState.countText or GetFrameCountText(frame)
-  local count = bestFrameState and bestFrameState.count or tonumber(countText or "")
-  local maxCharges = SafeNumber(bestFrameState and bestFrameState.maxCharges)
-    or SafeNumber(info and info.maxCharges)
-  local rawActive = bestFrameState and bestFrameState.explicitRawActive or nil
-  if rawActive == nil then
-    rawActive = SafeBoolean(info and info.isActive)
-  end
-  local stateKind = DeriveCooldownStateKind(active, bestFrameState and bestFrameState.isOnActualCooldown == true, count, maxCharges)
-
-  return {
-    cooldownID = cooldownID,
-    frame = frame,
-    info = info,
-    duration = active and duration or 0,
-    expirationTime = active and expirationTime or 0,
-    durationObject = active and durationObject or nil,
-    signalDurationObject = bestFrameState and bestFrameState.signalDurationObject or nil,
-    durationObjectRemaining = bestFrameState and bestFrameState.durationObjectRemaining or nil,
-    hasDurationObjectSignal = bestFrameState and bestFrameState.hasDurationObjectSignal == true or false,
-    maxDuration = maxDuration or 0,
-    active = active,
-    rawActive = rawActive == true,
-    isOnActualCooldown = bestFrameState and bestFrameState.isOnActualCooldown or false,
-    isOnGCD = bestFrameState and bestFrameState.isOnGCD or false,
-    count = count,
-    countText = countText,
-    maxCharges = maxCharges,
-    stateKind = stateKind,
-    isReady = stateKind == "ready",
-  }
-end
-
-function CooldownManager:GetCooldownStateForSpell(spellID)
-  local bestState = nil
-
-  for _, cooldownID in ipairs(self:GetCooldownIDsForSpellID(spellID)) do
-    local state = self:GetCooldownStateForCooldownID(cooldownID)
-    if state then
-      local stateDirectMatch = CooldownInfoDirectlyMatchesSpell(state.info, spellID)
-      local bestDirectMatch = bestState and CooldownInfoDirectlyMatchesSpell(bestState.info, spellID) or false
-      local stateHasCount = (state.countText and state.countText ~= "") or ((state.count or 0) > 0)
-      local bestHasCount = bestState and ((bestState.countText and bestState.countText ~= "") or ((bestState.count or 0) > 0)) or false
-      if not bestState
-        or (stateDirectMatch and not bestDirectMatch)
-        or (stateDirectMatch == bestDirectMatch and state.active and not bestState.active)
-        or (stateDirectMatch == bestDirectMatch and state.active == bestState.active and stateHasCount and not bestHasCount)
-        or (stateDirectMatch == bestDirectMatch and state.active == bestState.active and stateHasCount == bestHasCount and (state.expirationTime or 0) > (bestState.expirationTime or 0))
-        or (stateDirectMatch == bestDirectMatch and state.active == bestState.active and stateHasCount == bestHasCount and (state.expirationTime or 0) == (bestState.expirationTime or 0) and (state.maxDuration or 0) > (bestState.maxDuration or 0)) then
-        bestState = state
-      end
-    end
-  end
-
-  return bestState
-end
-
-local function BuildAuraStateForCooldownID(self, cooldownID, unit)
-  local cached = self.auraStateCache[cooldownID]
-  if cached and cached.auraInstanceID ~= nil then
-    local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, cached.auraInstanceID)
-    if auraData then
-      local frame = self.auraFrameRefs[cooldownID]
-      local frameState = BuildFrameCooldownState(frame)
-      return {
-        cooldownID = cooldownID,
-        unit = unit,
-        frame = frame,
-        auraInstanceID = cached.auraInstanceID,
-        auraData = auraData,
-        duration = frameState and frameState.duration or 0,
-        expirationTime = frameState and frameState.expirationTime or 0,
-        durationObject = frameState and frameState.durationObject or nil,
-        active = frameState and frameState.active == true or false,
-        rawActive = frameState and frameState.rawActive == true or false,
-        isOnActualCooldown = frameState and frameState.isOnActualCooldown == true or false,
-        isOnGCD = frameState and frameState.isOnGCD == true or false,
-        countText = frameState and frameState.countText or nil,
-        count = frameState and frameState.count or nil,
-        maxCharges = frameState and frameState.maxCharges or nil,
-        stateKind = frameState and frameState.stateKind or nil,
-      }
-    end
-  end
-
-  for _, frame in ipairs(self:FindFramesByCooldownID(cooldownID)) do
-    local auraInstanceID = GetFrameAuraInstanceID(frame)
-    if auraInstanceID ~= nil then
-      local auraData = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, auraInstanceID)
-      if auraData then
-        local frameState = BuildFrameCooldownState(frame)
-        self.auraStateCache[cooldownID] = {
-          auraInstanceID = auraInstanceID,
-        }
-        self.auraFrameRefs[cooldownID] = frame
-        return {
-          cooldownID = cooldownID,
-          unit = unit,
-          frame = frame,
-          auraInstanceID = auraInstanceID,
-          auraData = auraData,
-          duration = frameState and frameState.duration or 0,
-          expirationTime = frameState and frameState.expirationTime or 0,
-          durationObject = frameState and frameState.durationObject or nil,
-          active = frameState and frameState.active == true or false,
-          rawActive = frameState and frameState.rawActive == true or false,
-          isOnActualCooldown = frameState and frameState.isOnActualCooldown == true or false,
-          isOnGCD = frameState and frameState.isOnGCD == true or false,
-          countText = frameState and frameState.countText or nil,
-          count = frameState and frameState.count or nil,
-          maxCharges = frameState and frameState.maxCharges or nil,
-          stateKind = frameState and frameState.stateKind or nil,
-        }
-      end
-    end
-  end
-
+function Manager:GetAuraStateForSpellID()
   return nil
 end
 
-local function ScoreAuraState(entry)
-  if not entry or type(entry.auraData) ~= "table" then
-    return -1
-  end
-
-  local auraData = entry.auraData
-  local applications = SafeNumber(auraData.applications) or SafeNumber(auraData.charges) or 0
-  local expirationTime = SafeNumber(auraData.expirationTime) or 0
-  local duration = SafeNumber(auraData.duration) or 0
-  local score = 0
-
-  if applications > 0 then
-    score = score + 10 + applications
-  end
-  if expirationTime > GetTime() then
-    score = score + 5
-  end
-  if duration > 0 then
-    score = score + 2
-  end
-
-  return score
+function Manager:GetCacheStats()
+  local frameCount, catalogCount = 0, 0
+  for _, frames in pairs(self.frameCache) do frameCount = frameCount + #frames end
+  self:EnsureCatalog()
+  for _ in pairs(self.cooldownInfo) do catalogCount = catalogCount + 1 end
+  return { frameCacheEntries = frameCount, auraStateEntries = 0, hookedFrameEntries = 0, catalogEntries = catalogCount }
 end
 
-function CooldownManager:GetAuraStateForSpell(spellID, unit)
-  spellID = tonumber(spellID or 0) or 0
-  if spellID <= 0 or not unit or not C_UnitAuras or not C_UnitAuras.GetAuraDataByAuraInstanceID then
-    return nil
-  end
-
-  local bestState = nil
-  local bestScore = -1
-
-  for _, cooldownID in ipairs(self:GetCooldownIDsForSpellID(spellID)) do
-    local state = BuildAuraStateForCooldownID(self, cooldownID, unit)
-    if state then
-      local score = ScoreAuraState(state)
-      if not bestState or score > bestScore then
-        bestState = state
-        bestScore = score
-      end
+function Manager:Initialize()
+  self:RestoreAllHiddenFrames()
+  self:Invalidate()
+  self:EnsureCatalog()
+  if not self.eventFrame then
+    local frame = CreateFrame("Frame")
+    for _, event in ipairs({
+      "COOLDOWN_VIEWER_DATA_LOADED",
+      "TABLE_HOTFIXED",
+      "UPDATE_OVERRIDE_ACTIONBAR",
+      "SPELL_OVERRIDE_UPDATED",
+      "PLAYER_SPECIALIZATION_CHANGED",
+    }) do
+      pcall(frame.RegisterEvent, frame, event)
     end
-  end
-
-  return bestState
-end
-
-function CooldownManager:GetCacheStats()
-  return {
-    frameCacheEntries = CountEntries(self.frameCache),
-    auraStateEntries = CountEntries(self.auraStateCache),
-    hookedFrameEntries = CountEntries(self.hookedAuraFrames),
-  }
-end
-
-local function ForEachFrameTree(root, callback, visited)
-  if not root then
-    return
-  end
-  visited = visited or {}
-  if visited[root] then
-    return
-  end
-  visited[root] = true
-  callback(root)
-  if root.GetChildren then
-    for _, child in ipairs({ root:GetChildren() }) do
-      ForEachFrameTree(child, callback, visited)
-    end
-  end
-end
-
-local function ApplyForcedHiddenAlpha(frame)
-  if not frame or not frame.SetAlpha or frame._popaurasApplyingHiddenAlpha then
-    return
-  end
-
-  frame._popaurasApplyingHiddenAlpha = true
-  pcall(frame.SetAlpha, frame, 0)
-  frame._popaurasApplyingHiddenAlpha = false
-end
-
-local function EnsureHiddenAlphaHook(frame)
-  if not frame or frame._popaurasHiddenAlphaHooked then
-    return
-  end
-
-  frame._popaurasHiddenAlphaHooked = true
-
-  if frame.HookScript then
-    frame:HookScript("OnShow", function(self)
-      if self._popaurasForceHidden == true then
-        ApplyForcedHiddenAlpha(self)
-      end
+    frame:SetScript("OnEvent", function()
+      self:Invalidate()
+      self:ScheduleVisibilityOverrideSync()
+      self:ScheduleAuraSourceSync()
     end)
+    self.eventFrame = frame
   end
-
-  if frame.SetAlpha then
-    hooksecurefunc(frame, "SetAlpha", function(self, alpha)
-      if self._popaurasForceHidden == true and alpha ~= 0 then
-        ApplyForcedHiddenAlpha(self)
-      end
-    end)
-  end
-end
-
-function CooldownManager:ApplyHiddenFrame(record)
-  if not record or not record.frame then
-    return
-  end
-
-  record.alpha = record.alpha or record.frame:GetAlpha()
-  record.nodes = record.nodes or {}
-  if not record.nodes[record.frame] then
-    record.nodes[record.frame] = {
-      alpha = record.alpha,
-    }
-  end
-
-  EnsureHiddenAlphaHook(record.frame)
-  record.frame._popaurasForceHidden = true
-  ApplyForcedHiddenAlpha(record.frame)
-
-  if GameTooltip and GameTooltip.Hide then
-    pcall(GameTooltip.Hide, GameTooltip)
-  end
-end
-
-function CooldownManager:RestoreHiddenRecord(record)
-  local frame = record and record.frame
-  if not frame then
-    return
-  end
-
-  frame._popaurasForceHidden = false
-  for node, entry in pairs(record.nodes or {}) do
-    if node.SetAlpha and entry.alpha ~= nil then
-      pcall(node.SetAlpha, node, entry.alpha)
-    end
-  end
-end
-
-function CooldownManager:RestoreHiddenFrames(cooldownID)
-  local records = self.hiddenFrames[cooldownID]
-  if not records then
-    return
-  end
-
-  for _, record in ipairs(records) do
-    self:RestoreHiddenRecord(record)
-  end
-
-  self.hiddenFrames[cooldownID] = nil
-end
-
-function CooldownManager:RestoreAllHiddenFrames()
-  for cooldownID in pairs(self.hiddenFrames) do
-    self:RestoreHiddenFrames(cooldownID)
-  end
-end
-
-local function AddHiddenCooldownID(hiddenCooldownIDs, cooldownID)
-  cooldownID = tonumber(cooldownID or 0) or 0
-  if cooldownID > 0 then
-    hiddenCooldownIDs[cooldownID] = true
-  end
-end
-
-local function AddTriggerSpellCooldownIDs(self, hiddenCooldownIDs, trigger)
-  if type(trigger) ~= "table" then
-    return
-  end
-
-  local spellIDs = {}
-  local seen = {}
-
-  local function addSpellID(spellID)
-    spellID = tonumber(spellID or 0) or 0
-    if spellID > 0 and not seen[spellID] then
-      seen[spellID] = true
-      spellIDs[#spellIDs + 1] = spellID
-    end
-  end
-
-  addSpellID(trigger.spellId)
-
-  if type(trigger.spellIDs) == "table" then
-    for _, spellID in ipairs(trigger.spellIDs) do
-      addSpellID(spellID)
-    end
-  end
-
-  for _, spellID in ipairs(spellIDs) do
-    for _, cooldownID in ipairs(self:GetCooldownIDsForSpellID(spellID)) do
-      AddHiddenCooldownID(hiddenCooldownIDs, cooldownID)
-    end
-  end
-end
-
-function CooldownManager:GetHiddenCooldownIDsForAura(aura)
-  if not aura or not aura.display or aura.display.hideCDMIcon ~= true then
-    return nil
-  end
-  if not ns.runtime or not ns.runtime.GetState then
-    return nil
-  end
-
-  local state = ns.runtime:GetState(aura.id)
-  if not state or state.show ~= true then
-    return nil
-  end
-
-  local hiddenCooldownIDs = {}
-  for _, trigger in ns.TriggerBase:IterateTriggers(aura) do
-    if trigger.type == "spell_cooldown" or trigger.type == "aura" then
-      AddTriggerSpellCooldownIDs(self, hiddenCooldownIDs, trigger)
-    end
-  end
-
-  return next(hiddenCooldownIDs) and hiddenCooldownIDs or nil
-end
-
-function CooldownManager:ApplyVisibilityOverrides()
-  if self.applyingVisibilityOverrides == true then
-    self.pendingVisibilityOverrideSync = true
-    return
-  end
-
-  self.applyingVisibilityOverrides = true
-  self.pendingVisibilityOverrideSync = false
-
-  local ok = xpcall(function()
-    local desiredByCooldownID = {}
-
-    if ns.Registry and ns.Registry.GetFlatOrder then
-      for _, auraId in ipairs(ns.Registry:GetFlatOrder()) do
-        local aura = ns.Registry:GetAura(auraId)
-        local hiddenCooldownIDs = self:GetHiddenCooldownIDsForAura(aura)
-        if hiddenCooldownIDs then
-          for cooldownID in pairs(hiddenCooldownIDs) do
-            desiredByCooldownID[cooldownID] = true
-          end
-        end
-      end
-    end
-
-    for cooldownID in pairs(self.hiddenFrames) do
-      if not desiredByCooldownID[cooldownID] then
-        self:RestoreHiddenFrames(cooldownID)
-      end
-    end
-
-    for cooldownID in pairs(desiredByCooldownID) do
-      local existingRecords = self.hiddenFrames[cooldownID] or {}
-      local existingByFrame = {}
-      for _, record in ipairs(existingRecords) do
-        if record and record.frame then
-          existingByFrame[record.frame] = record
-        end
-      end
-
-      local updatedRecords = {}
-      for _, frame in ipairs(self:FindFramesByCooldownID(cooldownID, true)) do
-        local record = existingByFrame[frame]
-        if not record then
-          record = { frame = frame }
-          self:ApplyHiddenFrame(record)
-        end
-        updatedRecords[#updatedRecords + 1] = record
-        existingByFrame[frame] = nil
-      end
-
-      for _, record in pairs(existingByFrame) do
-        self:RestoreHiddenRecord(record)
-      end
-
-      self.hiddenFrames[cooldownID] = #updatedRecords > 0 and updatedRecords or nil
-    end
-  end, geterrorhandler())
-
-  self.applyingVisibilityOverrides = false
-  if self.pendingVisibilityOverrideSync == true then
-    self:ScheduleVisibilityOverrideSync()
-  end
-
-  return ok
 end

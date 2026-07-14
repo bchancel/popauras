@@ -10,6 +10,12 @@ local DEFAULT_READY_COLOR = { r = 0.20, g = 0.95, b = 0.20, a = 1 }
 local DEFAULT_BACKGROUND_COLOR = { r = 0.05, g = 0.07, b = 0.10, a = 0.88 }
 local DEFAULT_BAR_BACKGROUND_COLOR = { r = 0.09, g = 0.11, b = 0.16, a = 0.94 }
 local MAX_BAR_NAME_CHARS = 4
+local ANNOUNCE_CHAT_COMMANDS = {
+  INSTANCE_CHAT = "/i",
+  PARTY = "/p",
+  SAY = "/s",
+  YELL = "/y",
+}
 
 local function GetStatusBarTexture()
   return "Interface\\TargetingFrame\\UI-StatusBar"
@@ -84,6 +90,65 @@ local function GetNumeric(value, fallback)
   return number
 end
 
+local function IsSecretValue(value)
+  return issecretvalue and issecretvalue(value) or false
+end
+
+local function GetSafeText(value, fallback)
+  if IsSecretValue(value) then
+    return fallback
+  end
+  if type(value) == "string" and value ~= "" then
+    return value
+  end
+  if value == nil then
+    return fallback
+  end
+  return tostring(value)
+end
+
+local function GetSafeNumber(value, fallback)
+  if IsSecretValue(value) then
+    return fallback
+  end
+  if type(value) == "number" then
+    return value
+  end
+  return fallback
+end
+
+local function WriteChatLine(message)
+  if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+    DEFAULT_CHAT_FRAME:AddMessage(message)
+  elseif print then
+    print(message)
+  end
+end
+
+local function CanUseAnnounceChannel(channel)
+  if channel == "SAY" or channel == "YELL" then
+    return true
+  end
+  if channel == "INSTANCE_CHAT" then
+    return IsInGroup and IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
+  end
+  return channel == "PARTY" and IsInGroup and IsInGroup()
+end
+
+local function OpenAnnouncementChat(message, channel)
+  if not ChatFrame_OpenChat then
+    return false
+  end
+
+  local command = ANNOUNCE_CHAT_COMMANDS[channel]
+  if not command then
+    return false
+  end
+
+  ChatFrame_OpenChat(command .. " " .. message)
+  return true
+end
+
 local function GetReadyText(aura)
   local readyText = aura and aura.display and aura.display.readyText or nil
   if readyText == nil or readyText == "" or readyText == "Ready" then
@@ -130,7 +195,7 @@ local function TruncateUTF8(value, maxChars)
 end
 
 local function GetBasePlayerName(name)
-  local baseName = tostring(name or "Player")
+  local baseName = GetSafeText(name, "Player")
   local dash = baseName:find("-", 1, true)
   if dash then
     baseName = baseName:sub(1, dash - 1)
@@ -147,7 +212,7 @@ local function BuildRowLabel(entry, settings)
   local showInterruptName = settings and settings.displayInterruptName == true
   local fullPlayerName = GetBasePlayerName(entry and entry.name)
   local shortPlayerName = GetBarPlayerName(entry and entry.name)
-  local spellName = tostring((entry and entry.label) or "Interrupt")
+  local spellName = GetSafeText(entry and entry.label, "Interrupt")
 
   if showPlayerName and showInterruptName then
     return string.format("%s - %s", shortPlayerName, spellName)
@@ -375,7 +440,11 @@ function InterruptTrackerRegion:AnnounceEntry(entry)
     return
   end
 
-  local rowKey = string.format("%s:%s", tostring(entry.name or ""), tostring(entry.spellID or 0))
+  local remaining = GetSafeNumber(entry and entry.remaining, 0) or 0
+  local playerName = GetSafeText(entry and entry.name, "Player")
+  local interruptLabel = GetSafeText(entry and entry.label, "Interrupt")
+  local spellID = GetSafeNumber(entry and entry.spellID, 0) or 0
+  local rowKey = string.format("%s:%s", GetSafeText(entry and entry.name, ""), tostring(spellID))
   self.announceLocks = self.announceLocks or {}
   local now = GetTime()
   if settings.antiSpam == true and (self.announceLocks[rowKey] or 0) > now then
@@ -383,34 +452,23 @@ function InterruptTrackerRegion:AnnounceEntry(entry)
   end
 
   local message
-  if entry.remaining > 0.5 then
-    message = string.format("%s - %s - ready in %.0fs", entry.name or "Player", entry.label or "Interrupt", entry.remaining)
+  if remaining > 0.5 then
+    message = string.format("%s - %s - ready in %.0fs", playerName, interruptLabel, remaining)
   else
-    message = string.format("%s - %s - READY", entry.name or "Player", entry.label or "Interrupt")
+    message = string.format("%s - %s - READY", playerName, interruptLabel)
   end
 
   local channel = settings.announceChannel or "PARTY"
   if channel == "PARTY" and IsInGroup and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
     channel = "INSTANCE_CHAT"
   end
-  local canDirectSend = not (InCombatLockdown and InCombatLockdown())
-  local sent = false
-  if canDirectSend and (channel == "YELL" or channel == "SAY" or channel == "INSTANCE_CHAT" or (channel == "PARTY" and IsInGroup())) then
-    if C_ChatInfo and C_ChatInfo.SendChatMessage then
-      C_ChatInfo.SendChatMessage(message, channel)
-      sent = true
-    elseif SendChatMessage then
-      SendChatMessage(message, channel)
-      sent = true
-    end
-  end
 
-  if not sent then
-    print("|cff66ccffPopAuras|r " .. message)
+  if not CanUseAnnounceChannel(channel) or not OpenAnnouncementChat(message, channel) then
+    WriteChatLine("|cff66ccffPopAuras|r " .. message)
   end
 
   if settings.antiSpam == true then
-    local lockDuration = entry.remaining > 0.5 and entry.remaining or 5
+    local lockDuration = remaining > 0.5 and remaining or 5
     self.announceLocks[rowKey] = now + lockDuration
   end
 end

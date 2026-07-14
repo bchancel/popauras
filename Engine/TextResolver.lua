@@ -3,7 +3,6 @@ local _, ns = ...
 local TextResolver = {}
 ns.TextResolver = TextResolver
 
-local REAL_TIME_MODIFIER = Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime or nil
 local DURATION_REMAINING_CACHE_INTERVAL = 0.05
 local READY_TIMER_SOURCES = {
   item_cooldown = true,
@@ -16,37 +15,6 @@ local READY_TIMER_SOURCES = {
   learned_cast = true,
   learned_cast_deferred = true,
 }
-
-local function SafeDurationNumber(value)
-  if type(value) == "number" and not (issecretvalue and issecretvalue(value)) then
-    return value
-  end
-  return nil
-end
-
-local function CallDurationObjectMethod(durationObject, methodName)
-  if not durationObject then
-    return nil
-  end
-
-  local method = durationObject[methodName]
-  if type(method) ~= "function" then
-    return nil
-  end
-
-  local ok, result
-  if REAL_TIME_MODIFIER ~= nil then
-    ok, result = pcall(method, durationObject, REAL_TIME_MODIFIER)
-  else
-    ok, result = pcall(method, durationObject)
-  end
-
-  if not ok then
-    return nil
-  end
-
-  return SafeDurationNumber(result)
-end
 
 local function GetDurationClockTime()
   if C_DurationUtil and C_DurationUtil.GetCurrentTime then
@@ -104,31 +72,8 @@ function TextResolver:GetDurationObjectRemaining(state, now)
     return state._durationRemainingCacheValue
   end
 
-  local remainingValue = nil
-  local hasNumericTiming = (tonumber(state.expirationTime or 0) or 0) > 0 or (tonumber(state.duration or 0) or 0) > 0
-  local preferDurationObjectOverAuraAPI = (state.source == "cdm_aura" or state.source == "cdm_aura_window") and state.durationObject ~= nil
-  local displayOnlyDurationObject = (state.source == "cdm" or state.source == "cdm_aura" or state.source == "cdm_aura_window") and state.durationObject ~= nil and not hasNumericTiming
-  if not preferDurationObjectOverAuraAPI
-    and C_UnitAuras and C_UnitAuras.GetAuraDurationRemaining
-    and state.unit and state.auraInstanceID and (state.durationObject ~= nil or not hasNumericTiming) then
-    local ok, remaining = pcall(C_UnitAuras.GetAuraDurationRemaining, state.unit, state.auraInstanceID)
-    if ok and SafeDurationNumber(remaining) ~= nil then
-      remainingValue = math.max(0, remaining)
-    end
-  end
-
-  local durationObject = state.durationObject
-  if remainingValue == nil and durationObject and not displayOnlyDurationObject then
-    local remaining = CallDurationObjectMethod(durationObject, "GetRemainingDuration")
-    if remaining ~= nil then
-      remainingValue = math.max(0, remaining)
-    else
-      local endTime = CallDurationObjectMethod(durationObject, "GetEndTime")
-      if endTime ~= nil then
-        remainingValue = math.max(0, endTime - queryTime)
-      end
-    end
-  end
+  local inspected = ns.Duration:Inspect(state.durationObject, queryTime)
+  local remainingValue = inspected.remaining
 
   state._durationRemainingCacheStamp = cacheStamp
   state._durationRemainingCacheValue = remainingValue
