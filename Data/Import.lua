@@ -112,8 +112,17 @@ function Import:Preview(text)
     count = count + 1
   end
 
+  local primaryAura
+  for _, auraId in ipairs(payload.order or {}) do
+    if payload.auras and payload.auras[auraId] then
+      primaryAura = payload.auras[auraId]
+      break
+    end
+  end
+
   return {
     count = count,
+    name = primaryAura and tostring(primaryAura.name or "") or "",
     version = payload.version or 0,
     exportedAt = payload.exportedAt or 0,
     order = payload.order or {},

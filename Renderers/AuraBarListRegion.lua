@@ -9,6 +9,7 @@ local UnitAuraList = ns.util.UnitAuraList
 local Region = {}
 ns.renderers.AuraBarListRegion = Region
 local timerFormatters = {}
+local EMPTY_CANDIDATE_FILTERS = { includeSpellIDs = {} }
 
 local function GetAuraListTimerFormatter(decimals)
   decimals = math.max(0, math.min(2, tonumber(decimals or 1) or 1))
@@ -179,12 +180,21 @@ function Region:InitializeNativeButton(button)
   button.timerText = button.presentation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   button.countText = button.presentation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   button:SetCancelAuraButtons("RightButtonUp")
-  self.nativeButtons[#self.nativeButtons + 1] = button
   StyleButton(button, self.currentAura)
 end
 
 local function NativeSignature(options)
-  return string.format("%s|%s", tostring(options.unit), tostring(options.filterString))
+  local filters = options.candidateFilters or {}
+  return string.format("%s|%s|mine=%s", tostring(options.unit), tostring(options.filterString),
+    tostring(filters.isFromPlayerOrPlayerPet == true))
+end
+
+local function LayoutSignature(display)
+  display = display or {}
+  return string.format("%s|%s|%s|%s", tostring(display.growth or "DOWN"),
+    tostring(tonumber(display.spacing or 0) or 0),
+    tostring(tonumber(display.width or 220) or 220),
+    tostring(tonumber(display.height or 24) or 24))
 end
 
 local function GetExpirationSort(display)
@@ -211,8 +221,9 @@ function Region:CreateNativeContainer(aura, options)
   if container.SetParentKey then container:SetParentKey("AuraListContainer") end
   if container.SetEnabled then container:SetEnabled(false) end
   self.nativeEnabled = false
+  self.nativeSuppressed = false
   container:SetPoint("TOPLEFT", self.frame, "TOPLEFT")
-  self.nativeButtons = {}
+  self.container = container
   self.currentAura = aura
 
   local display = aura.display or {}
@@ -234,11 +245,14 @@ function Region:CreateNativeContainer(aura, options)
   local ok, reason = pcall(container.AddAuraGroup, container, "popauras", options.filterString, groupOptions)
   if not ok then
     if container.SetEnabled then container:SetEnabled(false) end
+    self.container = nil
     return nil, reason
   end
+  self:ApplyContainerLayout(aura)
   container:SetUnit(options.unit)
-  self.container = container
   self.containerSignature = NativeSignature(options)
+  self.nativeCandidateSignature = self.containerSignature
+  self.nativeMaxFrameCount = groupOptions.maxFrameCount
   self.sortSignature = string.format("%s|%s", tostring(sortMethod), tostring(sortDirection))
   return container
 end
@@ -273,6 +287,7 @@ function Region:ApplyContainerLayout(aura)
     elementWidth = width,
     elementHeight = tonumber(display.height or 24) or 24,
   })
+  self.layoutSignature = LayoutSignature(display)
 end
 
 function Region:EnsurePreviewRows()
@@ -328,11 +343,42 @@ function Region:HidePreview()
   for _, row in ipairs(self.previewRows or {}) do row:Hide() end
 end
 
+function Region:SetNativeEnabled(enabled)
+  if not self.container or not self.container.SetEnabled then return end
+  enabled = enabled == true
+  if self.nativeEnabled ~= enabled then
+    self.container:SetEnabled(enabled)
+    self.nativeEnabled = enabled
+  end
+end
+
+function Region:SetNativeSuppressed(suppressed, options)
+  if not self.container then return end
+  suppressed = suppressed == true
+  if suppressed then
+    if self.nativeSuppressed ~= true then
+      -- Let Blizzard securely clear every assigned row before disabling the
+      -- group. The row buttons may already be forbidden at this point.
+      self:SetNativeEnabled(true)
+      self.container:SetAuraGroupCandidateFilters("popauras", EMPTY_CANDIDATE_FILTERS)
+      self.nativeSuppressed = true
+    end
+    self:SetNativeEnabled(false)
+    return
+  end
+
+  if self.nativeSuppressed == true and options then
+    self.container:SetAuraGroupCandidateFilters("popauras", options.candidateFilters)
+    self.nativeCandidateSignature = NativeSignature(options)
+    self.nativeSuppressed = false
+  end
+  self:SetNativeEnabled(true)
+end
+
 function Region:New(aura)
   local instance = setmetatable({}, { __index = self })
   instance.frame = BaseRegion:CreateFrame(aura)
   instance.frame:SetClipsChildren(false)
-  instance.nativeButtons = {}
   instance.errorText = instance.frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   instance.errorText:SetAllPoints()
   instance.errorText:SetJustifyH("CENTER")
@@ -348,8 +394,7 @@ function Region:Update(aura, state)
   self.layoutVisible = true
 
   if state and state.source == "preview" then
-    if self.container and self.nativeEnabled ~= false and self.container.SetEnabled then self.container:SetEnabled(false) end
-    self.nativeEnabled = false
+    self:SetNativeSuppressed(true)
     self.errorText:Hide()
     self:ShowPreview(aura)
     return
@@ -359,8 +404,7 @@ function Region:Update(aura, state)
   local options = UnitAuraList:GetNativeOptions(GetTrigger(aura))
   local signature = NativeSignature(options)
   if not self.container or self.containerSignature ~= signature then
-    if self.container and self.nativeEnabled ~= false and self.container.SetEnabled then self.container:SetEnabled(false) end
-    self.nativeEnabled = false
+    self:SetNativeSuppressed(true)
     local _, reason = self:CreateNativeContainer(aura, options)
     if not self.container then
       self.errorText:SetText("Native aura display unavailable: " .. tostring(reason or "unknown error"))
@@ -370,25 +414,27 @@ function Region:Update(aura, state)
   end
 
   self.errorText:Hide()
-  self.container:SetUnit(options.unit)
-  self.container:SetAuraGroupCandidateFilters("popauras", options.candidateFilters)
-  self.container:SetAuraGroupMaxFrameCount("popauras", tonumber(aura.display.maxAuras or 40) or 40)
+  local inCombat = InCombatLockdown and InCombatLockdown() == true
+  local maxFrameCount = tonumber(aura.display.maxAuras or 40) or 40
+  if not inCombat and self.nativeMaxFrameCount ~= maxFrameCount then
+    self.container:SetAuraGroupMaxFrameCount("popauras", maxFrameCount)
+    self.nativeMaxFrameCount = maxFrameCount
+  end
   local sortMethod, sortDirection = GetExpirationSort(aura.display)
   local sortSignature = string.format("%s|%s", tostring(sortMethod), tostring(sortDirection))
-  if self.sortSignature ~= sortSignature and self.container.SetAuraGroupSortMethod then
+  if not inCombat and self.sortSignature ~= sortSignature and self.container.SetAuraGroupSortMethod then
     self.container:SetAuraGroupSortMethod("popauras", sortMethod, sortDirection)
     self.sortSignature = sortSignature
   end
-  self:ApplyContainerLayout(aura)
-  for _, button in ipairs(self.nativeButtons) do StyleButton(button, aura) end
-  if self.nativeEnabled ~= true and self.container.SetEnabled then self.container:SetEnabled(true) end
-  self.nativeEnabled = true
+  if not inCombat and self.layoutSignature ~= LayoutSignature(aura.display) then
+    self:ApplyContainerLayout(aura)
+  end
+  self:SetNativeSuppressed(false, options)
 end
 
 function Region:Release()
   self.layoutVisible = false
-  if self.container and self.nativeEnabled ~= false and self.container.SetEnabled then self.container:SetEnabled(false) end
-  self.nativeEnabled = false
+  self:SetNativeSuppressed(true)
   self:HidePreview()
   self.errorText:Hide()
 end

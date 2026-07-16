@@ -1,16 +1,13 @@
 # v12.1.0
-- Fixed Thrash tracking and stacks by mapping cast spell 77758 to applied debuff 192090
-- Fixed native bar/icon previews so duration, stacks, visibility, and ancestor group layout update and animate correctly
-- Fixed Starlord tracking by mapping talent spell 202345 to stacking buff 279709
-- Fixed unloaded native auras leaving their showAlways/Ready fallback visible after specialization changes
-- Canonicalized Red Moon and Moonfire configurations to the applied Moonfire debuff 164812
-- Fixed spec-restricted auras remaining loaded after changing specialization by refreshing on Blizzard's authoritative active-spec events
-- Fixed Rake tracking by mapping cast spell 1822 to applied debuff 155722
-- Canonicalized known cast-to-aura mappings so Blizzard's exact native filters receive applied aura IDs rather than mixed cast and aura IDs
-- Fixed native target debuff bars retaining the previous target's aura and timer after target changes
-- Rebuild native target aura state on target identity and death/flags transitions without reintroducing broad UNIT_AURA scans
-- Added explicit Midnight spell-to-aura mappings for Moonfire, Sunfire, and Demon Spikes
+- Re-write for retail version 12.1.0 utilizing new AuraButton styling
+- Adjusting version number to keep in pace with wow retail version it was designed for
+- Added a CDM-backed Trinket Cooldown trigger with independent top/bottom slot entries, active-effect glow, and item name/ID ignores for transforming trinkets
 - Reduced combat aura and item-cooldown refresh fan-out while retaining native Blizzard aura rendering
+- Fixed native bar/icon previews so duration, stacks, visibility, and ancestor group layout update and animate correctly
+- Made export copying restriction-safe, added confirmed green imports with chat feedback, and added descendant-aware deletion confirmations
+- Added an optional No Stacks Bar Color for Spell Cooldown bars when no usable charges remain
+- Canonicalized known cast-to-aura mappings so Blizzard's exact native filters receive applied aura IDs rather than mixed cast and aura IDs
+- Rebuild native target aura state on target identity and death/flags transitions without reintroducing broad UNIT_AURA scans
 
 # v0.4.6
 - Reworked CDM-backed spell cooldown handling to prefer authoritative CDM / Blizzard active-state signals, improving reset, refund, and secret-safe timing reliability

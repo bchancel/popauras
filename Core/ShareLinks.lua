@@ -345,7 +345,7 @@ local function ShowImportString(encoded, owner)
     panel:SetImportText(encoded, true)
   end
 
-  WriteChatLine(string.format("|cff66ccffPopAuras:|r Loaded shared import%s. Review it on the Import/Export tab, then choose Import Add.",
+  WriteChatLine(string.format("|cff66ccffPopAuras:|r Loaded shared import%s. Review it on the Import/Export tab, then choose Import.",
     owner and owner ~= "" and (" from " .. owner) or ""))
 end
 

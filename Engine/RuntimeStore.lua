@@ -87,12 +87,69 @@ local function ShouldPlayReadySound(previousState, nextState)
   return nextReady == true and previousReady ~= true
 end
 
+local DUAL_TRINKET_SOUNDS = {
+  { key = "trinket_slot_13", field = "trinketTopSoundFile" },
+  { key = "trinket_slot_14", field = "trinketBottomSoundFile" },
+}
+
+local function UsesDualTrinketSounds(aura)
+  if not ns.TriggerBase or not ns.TriggerBase.IterateTriggers then
+    return false
+  end
+  for _, trigger in ns.TriggerBase:IterateTriggers(aura, "trinket_cooldown") do
+    if trigger.trinketTop ~= false and trigger.trinketBottom ~= false then
+      return true
+    end
+  end
+  return false
+end
+
+local function FindStateEntry(state, key)
+  if type(state) ~= "table" or type(state.entries) ~= "table" then
+    return nil
+  end
+  for _, entry in ipairs(state.entries) do
+    if entry.key == key then
+      return entry
+    end
+  end
+  return nil
+end
+
+local function IsConfiguredSound(soundFile)
+  return type(soundFile) == "string" and soundFile ~= "" and soundFile ~= "None"
+end
+
+local function PlayDualTrinketSounds(aura, display, previousState, nextState)
+  if not UsesDualTrinketSounds(aura) or type(nextState) ~= "table"
+    or nextState.source ~= "trinket_cooldown" then
+    return false
+  end
+
+  local soundMode = display.soundMode == "ready" and "ready" or "activate"
+  for _, config in ipairs(DUAL_TRINKET_SOUNDS) do
+    local nextEntry = FindStateEntry(nextState, config.key)
+    local previousEntry = FindStateEntry(previousState, config.key)
+    local soundFile = display[config.field]
+    local shouldPlay = soundMode == "ready"
+      and ShouldPlayReadySound(previousEntry, nextEntry)
+      or ShouldPlayActivationSound(previousEntry, nextEntry)
+    if shouldPlay and IsConfiguredSound(soundFile) and ns.Interrupts and ns.Interrupts.PlaySound then
+      ns.Interrupts:PlaySound(soundFile, display.soundChannel or "Master")
+    end
+  end
+  return true
+end
+
 local function PlayAuraActivationSound(aura, previousState, nextState)
   local display = aura and aura.display or nil
   if not display or display.soundEnabled ~= true then
     return
   end
-  if not display.soundFile or display.soundFile == "" or display.soundFile == "None" then
+  if PlayDualTrinketSounds(aura, display, previousState, nextState) then
+    return
+  end
+  if not IsConfiguredSound(display.soundFile) then
     return
   end
   local soundMode = display.soundMode == "ready" and "ready" or "activate"

@@ -3,7 +3,6 @@ local _, ns = ...
 local UnitFrameGlow = {}
 ns.UnitFrameGlow = UnitFrameGlow
 
-local ACTION_GLOW_KEY = "PopAurasAction"
 local activeGlows = {}
 local frameCache = {}
 local FRAME_CACHE_TTL = 1.0
@@ -29,41 +28,20 @@ local function DebugLogAction(aura, message)
   end
 end
 
-local function GetGlowLibrary()
-  if not LibStub then
-    return nil
-  end
-  local lib = LibStub("ArcGlow-1.0", true)
-  if lib and lib.ButtonGlow_Start and lib.ButtonGlow_Stop then
-    return lib
-  end
-  lib = LibStub("LibCustomGlow-1.0", true)
-  if lib and lib.ButtonGlow_Start and lib.ButtonGlow_Stop then
-    return lib
-  end
-  lib = LibStub("LibButtonGlow-1.0", true)
-  if lib and lib.ButtonGlow_Start and lib.ButtonGlow_Stop then
-    return lib
-  end
-  return nil
-end
-
 local function StartGlow(frame)
-  local lib = GetGlowLibrary()
-  if lib then
-    lib.ButtonGlow_Start(frame, nil, nil, 1, ACTION_GLOW_KEY)
-    frame._popAurasActionGlowLib = lib
+  local baseRegion = ns.renderers and ns.renderers.BaseRegion or nil
+  if baseRegion and baseRegion.SetGlow then
+    baseRegion:SetGlow(frame, true)
     return true
   end
   return false
 end
 
 local function StopGlow(frame)
-  local lib = frame._popAurasActionGlowLib or GetGlowLibrary()
-  if lib and lib.ButtonGlow_Stop then
-    lib.ButtonGlow_Stop(frame, ACTION_GLOW_KEY)
+  local baseRegion = ns.renderers and ns.renderers.BaseRegion or nil
+  if baseRegion and baseRegion.SetGlow then
+    baseRegion:SetGlow(frame, false)
   end
-  frame._popAurasActionGlowLib = nil
 end
 
 local function NormalizePlayerName(name)

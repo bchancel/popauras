@@ -146,6 +146,154 @@ function Frames.StylePrimaryButton(button)
   end
 end
 
+function Frames.StyleSuccessButton(button)
+  if not button then
+    return
+  end
+  button:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+  })
+  button:SetBackdropColor(0.07, 0.38, 0.16, 0.98)
+  button:SetBackdropBorderColor(0.18, 0.72, 0.34, 1)
+  if button.GetFontString then
+    local fontString = button:GetFontString()
+    if fontString then
+      Fonts.Apply(fontString, 14, "OUTLINE")
+      fontString:SetTextColor(1, 1, 1)
+    end
+  end
+end
+
+function Frames.StyleDangerButton(button)
+  if not button then
+    return
+  end
+  button:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+  })
+  button:SetBackdropColor(0.48, 0.07, 0.09, 0.98)
+  button:SetBackdropBorderColor(0.86, 0.18, 0.22, 1)
+  if button.GetFontString then
+    local fontString = button:GetFontString()
+    if fontString then
+      Fonts.Apply(fontString, 14, "OUTLINE")
+      fontString:SetTextColor(1, 1, 1)
+    end
+  end
+end
+
+local function AddSpecialFrame(frameName)
+  if not UISpecialFrames or not frameName then
+    return
+  end
+  for _, existingName in ipairs(UISpecialFrames) do
+    if existingName == frameName then
+      return
+    end
+  end
+  UISpecialFrames[#UISpecialFrames + 1] = frameName
+end
+
+function Frames.GetConfirmationDialog()
+  if Frames.confirmationOverlay then
+    return Frames.confirmationOverlay
+  end
+
+  local overlay = CreateFrame("Frame", "PopAurasConfirmationOverlay", UIParent)
+  overlay:SetAllPoints(UIParent)
+  overlay:SetFrameStrata("FULLSCREEN_DIALOG")
+  overlay:SetFrameLevel(900)
+  overlay:EnableMouse(true)
+  overlay:Hide()
+
+  overlay.dim = overlay:CreateTexture(nil, "BACKGROUND")
+  overlay.dim:SetAllPoints()
+  overlay.dim:SetTexture("Interface\\Buttons\\WHITE8x8")
+  overlay.dim:SetVertexColor(0, 0, 0, 0.45)
+
+  local dialog = CreateFrame("Frame", nil, overlay, "BackdropTemplate")
+  dialog:SetSize(470, 220)
+  dialog:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
+  dialog:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+  })
+  dialog:SetBackdropColor(0.07, 0.09, 0.14, 0.99)
+  dialog:SetBackdropBorderColor(0.30, 0.38, 0.50, 1)
+  dialog:SetFrameLevel(overlay:GetFrameLevel() + 10)
+
+  dialog.title = Frames.CreateLabel(dialog, "Confirm", "GameFontNormalLarge")
+  dialog.title:SetPoint("TOPLEFT", 20, -20)
+  dialog.title:SetPoint("TOPRIGHT", -20, -20)
+  dialog.title:SetJustifyH("CENTER")
+  dialog.title:SetTextColor(0.94, 0.96, 1)
+
+  dialog.message = Frames.CreateLabel(dialog, "", "GameFontHighlight")
+  dialog.message:SetPoint("TOPLEFT", 24, -62)
+  dialog.message:SetPoint("TOPRIGHT", -24, -62)
+  dialog.message:SetHeight(82)
+  dialog.message:SetJustifyH("CENTER")
+  dialog.message:SetJustifyV("MIDDLE")
+  dialog.message:SetWordWrap(true)
+  dialog.message:SetTextColor(0.86, 0.90, 0.96)
+
+  dialog.cancelButton = Frames.CreateButton(dialog, "No", 132, 30, function()
+    overlay:Hide()
+  end)
+  dialog.cancelButton:SetPoint("BOTTOMLEFT", 88, 20)
+
+  dialog.acceptButton = Frames.CreateButton(dialog, "Yes", 132, 30, function()
+    local onAccept = overlay.onAccept
+    overlay.onAccept = nil
+    overlay:Hide()
+    if onAccept then
+      onAccept()
+    end
+  end)
+  dialog.acceptButton:SetPoint("BOTTOMRIGHT", -88, 20)
+
+  overlay:SetScript("OnHide", function(selfOverlay)
+    selfOverlay.onAccept = nil
+  end)
+  overlay.dialog = dialog
+  AddSpecialFrame(overlay:GetName())
+  Frames.confirmationOverlay = overlay
+  return overlay
+end
+
+function Frames.ShowConfirmation(options)
+  options = type(options) == "table" and options or {}
+  local overlay = Frames.GetConfirmationDialog()
+  local dialog = overlay.dialog
+  dialog.title:SetText(options.title or "Confirm")
+  dialog.message:SetText(options.message or "Are you sure?")
+  dialog.acceptButton:SetText(options.acceptText or "Yes")
+  dialog.cancelButton:SetText(options.cancelText or "No")
+
+  if options.acceptStyle == "danger" then
+    Frames.StyleDangerButton(dialog.acceptButton)
+  else
+    Frames.StyleSuccessButton(dialog.acceptButton)
+  end
+  if options.cancelStyle == "danger" then
+    Frames.StyleDangerButton(dialog.cancelButton)
+  else
+    Frames.StyleSecondaryButton(dialog.cancelButton)
+  end
+
+  overlay.onAccept = options.onAccept
+  overlay:SetFrameStrata("FULLSCREEN_DIALOG")
+  overlay:Show()
+  overlay:Raise()
+  dialog:Raise()
+  return overlay
+end
+
 function Frames.CreateInput(parent, width, height)
   local input = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
   input:SetAutoFocus(false)

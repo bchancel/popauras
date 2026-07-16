@@ -48,6 +48,8 @@ Defaults.text = {
 Defaults.display = {
   alpha = 1,
   color = { r = 0.1, g = 0.6, b = 1, a = 1 },
+  noStacksBarColorEnabled = false,
+  noStacksBarColor = { r = 0.86, g = 0.18, b = 0.18, a = 1 },
   readyLook = false,
   readyColor = { r = 0.16, g = 0.72, b = 0.26, a = 1 },
   barTexture = "FLAT",
@@ -74,6 +76,8 @@ Defaults.display = {
   soundEnabled = false,
   soundMode = "activate",
   soundFile = "None",
+  trinketTopSoundFile = "None",
+  trinketBottomSoundFile = "None",
   soundChannel = "Master",
   desaturate = false,
   glow = false,
@@ -237,6 +241,24 @@ local function ApplyTriggerTypeDefaults(trigger)
   elseif triggerType == "item_cooldown" then
     trigger.itemId = tonumber(trigger.itemId or 0) or 0
     trigger.itemName = trigger.itemName or ""
+    trigger.cooldownMatch = trigger.cooldownMatch or "cooldown"
+    if trigger.showAlways == nil then
+      trigger.showAlways = false
+    end
+  elseif triggerType == "trinket_cooldown" then
+    if trigger.trinketTop == nil then
+      trigger.trinketTop = true
+    end
+    if trigger.trinketBottom == nil then
+      trigger.trinketBottom = true
+    end
+    if trigger.glowWhileActive == nil then
+      trigger.glowWhileActive = false
+    end
+    if trigger.trinketGrowth ~= "UP" and trigger.trinketGrowth ~= "LEFT" and trigger.trinketGrowth ~= "RIGHT" then
+      trigger.trinketGrowth = "DOWN"
+    end
+    trigger.ignoredTrinkets = trigger.ignoredTrinkets or ""
     trigger.cooldownMatch = trigger.cooldownMatch or "cooldown"
     if trigger.showAlways == nil then
       trigger.showAlways = false
@@ -510,6 +532,14 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].showAuraWindow = false
     elseif triggerType == "item_cooldown" then
       aura.triggers[1].itemId = 0
+      aura.triggers[1].cooldownMatch = "cooldown"
+      aura.triggers[1].showAlways = false
+    elseif triggerType == "trinket_cooldown" then
+      aura.triggers[1].trinketTop = true
+      aura.triggers[1].trinketBottom = true
+      aura.triggers[1].glowWhileActive = false
+      aura.triggers[1].trinketGrowth = "DOWN"
+      aura.triggers[1].ignoredTrinkets = ""
       aura.triggers[1].cooldownMatch = "cooldown"
       aura.triggers[1].showAlways = false
     elseif triggerType == "cast" then

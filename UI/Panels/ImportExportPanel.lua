@@ -78,7 +78,7 @@ function Panel:Create(parent)
   frame.scroll:SetScrollChild(frame.box)
   frame.box:SetHeight(304)
 
-  frame.exportClipboardButton = Frames.CreateButton(frame, "Export to Clipboard", 150, 22, function()
+  frame.exportClipboardButton = Frames.CreateButton(frame, "Export for Copy", 150, 22, function()
     local selected = ns.db.ui.selectedAuraId
     if not selected then return end
     local encoded = ns.Export:Encode({ selected })
@@ -112,14 +112,34 @@ function Panel:Create(parent)
   frame.createLinkButton:SetPoint("LEFT", frame.sendTargetInput, "RIGHT", 8, 0)
   StylePanelButton(frame.createLinkButton, true)
 
-  frame.importButton = Frames.CreateButton(frame, "Import Add", 100, 22, function()
-    local ok, err = ns.Import:Apply(frame.box:GetText(), false)
-    if not ok then
-      print("|cffff4444PopAuras:|r " .. tostring(err))
+  frame.importButton = Frames.CreateButton(frame, "Import", 100, 22, function()
+    local importText = frame.box:GetText()
+    local preview, previewError = ns.Import:Preview(importText)
+    if not preview then
+      print("|cffff4444PopAuras:|r " .. tostring(previewError))
+      return
     end
+
+    local importName = preview.name ~= "" and preview.name or "PopAuras package"
+    Frames.ShowConfirmation({
+      title = "Confirm Import",
+      message = string.format("Are you sure you want to import \"%s\"?", importName),
+      acceptText = "Yes",
+      cancelText = "No",
+      acceptStyle = "success",
+      cancelStyle = "danger",
+      onAccept = function()
+        local ok, importError = ns.Import:Apply(importText, false)
+        if not ok then
+          print("|cffff4444PopAuras:|r " .. tostring(importError))
+          return
+        end
+        print(string.format("|cff66ccffPopAuras:|r |cff66ff88Successfully imported \"%s\".|r", importName))
+      end,
+    })
   end)
   frame.importButton:SetPoint("LEFT", frame.createLinkButton, "RIGHT", 16, 0)
-  StylePanelButton(frame.importButton)
+  Frames.StyleSuccessButton(frame.importButton)
 
   self.frame = frame
 

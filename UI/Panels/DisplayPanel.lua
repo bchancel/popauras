@@ -84,6 +84,28 @@ local function GetSelectedTrigger(aura)
   return aura.triggers[index] or aura.triggers[1] or {}
 end
 
+local function UsesDualTrinketSounds(aura)
+  if not aura or type(aura.triggers) ~= "table" then
+    return false
+  end
+  for _, trigger in ipairs(aura.triggers) do
+    if trigger.enabled ~= false and trigger.type == "trinket_cooldown"
+      and trigger.trinketTop ~= false and trigger.trinketBottom ~= false then
+      return true
+    end
+  end
+  return false
+end
+
+local function HideAllSoundPickers(frame)
+  if not SoundPicker or not frame then
+    return
+  end
+  SoundPicker:HideIfDropdown(frame.soundFileWrap and frame.soundFileWrap.dropdown)
+  SoundPicker:HideIfDropdown(frame.trinketTopSoundFileWrap and frame.trinketTopSoundFileWrap.dropdown)
+  SoundPicker:HideIfDropdown(frame.trinketBottomSoundFileWrap and frame.trinketBottomSoundFileWrap.dropdown)
+end
+
 local function GetDefaultLayoutSpacing(aura)
   if aura and aura.kind == "aura_bar_list" then
     return 0
@@ -697,11 +719,14 @@ function Panel:UpdateControlStates()
   local showBackground = frame.showBackgroundCheck:GetChecked() == true
   local readyLook = frame.readyLookCheck:GetChecked() == true
   local trigger = GetSelectedTrigger(aura)
-  local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura")
+  local supportsNoStacksColor = trigger and trigger.type == "spell_cooldown" and kind == "bar"
+  local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura")
   local showIconCooldownControls = not isGroup and not isText and isIconAura and frame.iconSection.collapsed ~= true
   local showRaidFrameSection = not isGroup and not isText and isIconAura and frame.raidFrameSection:IsShown()
   local showRaidFrameControls = showRaidFrameSection and frame.showOnRaidFramesCheck:GetChecked() == true and frame.raidFrameSection.collapsed ~= true
   local soundEnabled = frame.soundEnabledCheck:GetChecked() == true
+  local dualTrinketSounds = UsesDualTrinketSounds(aura)
+  local showSoundBody = not isGroup and not isAuraBarList and frame.soundSection.collapsed ~= true
   local blizzardSpellAlertEnabled = frame.hideBlizzardSpellAlertCheck and frame.hideBlizzardSpellAlertCheck:GetChecked() == true
 
   SetControlGroupEnabled({
@@ -714,6 +739,9 @@ function Panel:UpdateControlStates()
   SetControlGroupEnabled({ frame.glowWhenActiveCheck }, not isGroup and not isText and not isAuraBarList)
   SetControlGroupEnabled({ frame.showBackgroundCheck }, true)
   SetControlGroupEnabled({ frame.readyColorWrap.button, frame.readyColorWrap.label }, not isGroup and not isText and readyLook)
+  SetControlGroupEnabled({ frame.noStacksBarColorCheck }, supportsNoStacksColor)
+  SetControlGroupEnabled({ frame.noStacksBarColorWrap.button, frame.noStacksBarColorWrap.label },
+    supportsNoStacksColor and frame.noStacksBarColorCheck:GetChecked() == true)
   SetControlGroupEnabled({ frame.showAlwaysReadyCheck }, not isGroup and not isText and supportsShowAlways)
   SetControlGroupEnabled({ frame.backgroundColorWrap.button, frame.backgroundColorWrap.label }, showBackground)
   SetControlGroupEnabled({ frame.backgroundGammaWrap.input, frame.backgroundGammaWrap.label }, showBackground and isAuraBarList)
@@ -795,15 +823,29 @@ function Panel:UpdateControlStates()
   SetControlGroupEnabled({
     frame.soundReadyCheck,
     frame.soundFileButton, frame.soundFileWrap.label,
+    frame.trinketTopSoundFileButton, frame.trinketTopSoundFileWrap.label,
+    frame.trinketBottomSoundFileButton, frame.trinketBottomSoundFileWrap.label,
     frame.soundChannelWrap.dropdown, frame.soundChannelWrap.label,
   }, soundEnabled and not isGroup and not isAuraBarList)
+  SetControlGroupShown({
+    frame.soundFileButton, frame.soundFileWrap.label,
+  }, showSoundBody and not dualTrinketSounds)
+  SetControlGroupShown({
+    frame.trinketTopSoundFileButton, frame.trinketTopSoundFileWrap.label,
+    frame.trinketBottomSoundFileButton, frame.trinketBottomSoundFileWrap.label,
+  }, showSoundBody and dualTrinketSounds)
   SetControlGroupEnabled({
     frame.blizzardSpellAlertWrap.input,
     frame.blizzardSpellAlertWrap.label,
     frame.blizzardSpellAlertHint,
   }, blizzardSpellAlertEnabled and not isGroup)
-  if (not soundEnabled or isGroup or isAuraBarList) and SoundPicker then
+  if not soundEnabled or isGroup or isAuraBarList then
+    HideAllSoundPickers(frame)
+  elseif dualTrinketSounds and SoundPicker then
     SoundPicker:HideIfDropdown(frame.soundFileWrap.dropdown)
+  elseif SoundPicker then
+    SoundPicker:HideIfDropdown(frame.trinketTopSoundFileWrap.dropdown)
+    SoundPicker:HideIfDropdown(frame.trinketBottomSoundFileWrap.dropdown)
   end
 end
 
@@ -849,10 +891,13 @@ function Panel:ApplyCurrent()
   aura.display.orientation = newOrientation
   aura.display.color = Colors.Copy(frame.barColorWrap.color or aura.display.color)
   aura.display.alpha = aura.display.color.a
+  aura.display.noStacksBarColorEnabled = frame.noStacksBarColorCheck:GetChecked() == true
+  aura.display.noStacksBarColor = Colors.Copy(frame.noStacksBarColorWrap.color
+    or aura.display.noStacksBarColor or { r = 0.86, g = 0.18, b = 0.18, a = 1 })
   aura.display.readyLook = frame.readyLookCheck:GetChecked() == true
   aura.display.glowWhenActive = frame.glowWhenActiveCheck:GetChecked() == true
   local trigger = GetSelectedTrigger(aura)
-  if trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura") then
+  if trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura") then
     trigger.showAlways = frame.showAlwaysReadyCheck:GetChecked() == true
   end
   aura.display.readyColor = Colors.Copy(frame.readyColorWrap.color or aura.display.readyColor or aura.display.color)
@@ -929,6 +974,8 @@ function Panel:ApplyCurrent()
   aura.display.soundEnabled = frame.soundEnabledCheck:GetChecked() == true
   aura.display.soundMode = frame.soundReadyCheck:GetChecked() and "ready" or "activate"
   aura.display.soundFile = UIDropDownMenu_GetSelectedValue(frame.soundFileWrap.dropdown) or aura.display.soundFile or "None"
+  aura.display.trinketTopSoundFile = UIDropDownMenu_GetSelectedValue(frame.trinketTopSoundFileWrap.dropdown) or aura.display.trinketTopSoundFile or "None"
+  aura.display.trinketBottomSoundFile = UIDropDownMenu_GetSelectedValue(frame.trinketBottomSoundFileWrap.dropdown) or aura.display.trinketBottomSoundFile or "None"
   aura.display.soundChannel = UIDropDownMenu_GetSelectedValue(frame.soundChannelWrap.dropdown) or aura.display.soundChannel or "Master"
   aura.display.hideBlizzardSpellAlert = frame.hideBlizzardSpellAlertCheck:GetChecked() == true
   CommitBlizzardSpellAlertOverride(frame.blizzardSpellAlertWrap.input, aura)
@@ -998,7 +1045,7 @@ function Panel:Create(parent)
   frame.hint:SetPoint("TOPLEFT", frame.summary, "BOTTOMLEFT", 0, -2)
 
   frame.canvasSection = CreateSection(frame.content, "Look", -36, 480)
-  frame.canvasSection.expandedHeightAura = 480
+  frame.canvasSection.expandedHeightAura = 520
   frame.canvasSection.expandedHeightGroup = 352
   frame.groupSection = CreateSection(frame.content, "Group Layout", -396, 132)
   frame.iconSection = CreateSection(frame.content, "Icon", -560, 270)
@@ -1060,6 +1107,9 @@ function Panel:Create(parent)
   frame.backgroundColorWrap.label:SetPoint("LEFT", frame.backgroundColorWrap.button, "RIGHT", 8, 0)
   frame.backgroundGammaWrap = CreateLabeledInput(frame.canvasSection, "Background Gamma", 430, -364, 70)
   frame.permanentAlphaWrap = CreateLabeledInput(frame.canvasSection, "Permanent Aura Alpha", 540, -364, 70)
+  frame.noStacksBarColorCheck = Frames.CreateCheckbox(frame.canvasSection, "No Stacks Bar Color")
+  frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -412)
+  frame.noStacksBarColorWrap = CreateColorSwatch(frame.canvasSection, "Color", 220, -404)
   frame.barColorWrap.button:SetScript("OnClick", function()
     local widget = frame.barColorWrap
     local starting = widget.color or { r = 0.1, g = 0.6, b = 1, a = 1 }
@@ -1226,6 +1276,44 @@ function Panel:Create(parent)
       end,
     })
   end)
+  frame.trinketTopSoundFileWrap = CreateLabeledDropdown(frame.soundSection, "Trinket 1 (Top)", 12, -68, 460, GetSoundDropdownValues)
+  frame.trinketTopSoundFileWrap.dropdown:Hide()
+  frame.trinketTopSoundFileButton = Frames.CreateSelectorButton(frame.soundSection, 446, 24)
+  frame.trinketTopSoundFileButton:SetPoint("TOPLEFT", frame.trinketTopSoundFileWrap.label, "BOTTOMLEFT", 0, -6)
+  frame.trinketTopSoundFileButton:SetScript("OnClick", function()
+    if not SoundPicker then
+      return
+    end
+    SoundPicker:Toggle(frame.trinketTopSoundFileButton, frame.trinketTopSoundFileWrap.dropdown, GetSoundDropdownValues, {
+      title = "Select Trinket 1 Sound",
+      onChanged = function()
+        UpdateSelectorButtonText(frame.trinketTopSoundFileButton, frame.trinketTopSoundFileWrap.dropdown)
+        Panel:ApplyCurrent()
+      end,
+      channelProvider = function()
+        return UIDropDownMenu_GetSelectedValue(frame.soundChannelWrap.dropdown) or "Master"
+      end,
+    })
+  end)
+  frame.trinketBottomSoundFileWrap = CreateLabeledDropdown(frame.soundSection, "Trinket 2 (Bottom)", 12, -130, 460, GetSoundDropdownValues)
+  frame.trinketBottomSoundFileWrap.dropdown:Hide()
+  frame.trinketBottomSoundFileButton = Frames.CreateSelectorButton(frame.soundSection, 446, 24)
+  frame.trinketBottomSoundFileButton:SetPoint("TOPLEFT", frame.trinketBottomSoundFileWrap.label, "BOTTOMLEFT", 0, -6)
+  frame.trinketBottomSoundFileButton:SetScript("OnClick", function()
+    if not SoundPicker then
+      return
+    end
+    SoundPicker:Toggle(frame.trinketBottomSoundFileButton, frame.trinketBottomSoundFileWrap.dropdown, GetSoundDropdownValues, {
+      title = "Select Trinket 2 Sound",
+      onChanged = function()
+        UpdateSelectorButtonText(frame.trinketBottomSoundFileButton, frame.trinketBottomSoundFileWrap.dropdown)
+        Panel:ApplyCurrent()
+      end,
+      channelProvider = function()
+        return UIDropDownMenu_GetSelectedValue(frame.soundChannelWrap.dropdown) or "Master"
+      end,
+    })
+  end)
   frame.soundChannelWrap = CreateLabeledDropdown(frame.soundSection, "Channel", 488, -68, 150, GetSoundChannelDropdownValues)
   frame.soundHint = Frames.CreateLabel(frame.soundSection, "Choose whether the sound plays when the aura activates or when it becomes ready/off cooldown. The picker is scrollable and color-codes sounds by source pack. Use %m in text auras if you want the matched chat message rendered.", "GameFontDisableSmall")
   frame.soundHint:SetPoint("TOPLEFT", 12, -146)
@@ -1259,6 +1347,8 @@ function Panel:Create(parent)
     frame.strataWrap.label, frame.strataWrap.dropdown,
     frame.levelWrap.label, frame.levelWrap.input,
     frame.barColorWrap.label, frame.barColorWrap.button, frame.barColorWrap.valueText,
+    frame.noStacksBarColorCheck,
+    frame.noStacksBarColorWrap.label, frame.noStacksBarColorWrap.button, frame.noStacksBarColorWrap.valueText,
     frame.readyLookCheck,
     frame.glowWhenActiveCheck,
     frame.showAlwaysReadyCheck,
@@ -1337,6 +1427,8 @@ function Panel:Create(parent)
     frame.soundEnabledCheck,
     frame.soundReadyCheck,
     frame.soundFileWrap.label, frame.soundFileButton,
+    frame.trinketTopSoundFileWrap.label, frame.trinketTopSoundFileButton,
+    frame.trinketBottomSoundFileWrap.label, frame.trinketBottomSoundFileButton,
     frame.soundChannelWrap.label, frame.soundChannelWrap.dropdown,
     frame.soundHint
   )
@@ -1432,6 +1524,7 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.showBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupShowBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.readyLookCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.noStacksBarColorCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.glowWhenActiveCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showAlwaysReadyCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupMaintainOrderCheck, function() Panel:ApplyCurrent() end)
@@ -1453,6 +1546,8 @@ function Panel:Create(parent)
   InitDropdownWithCallback(frame.raidFrameAnchorWrap.dropdown, raidFrameAnchorValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.raidFrameGrowthWrap.dropdown, raidFrameGrowthValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.soundFileWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.trinketTopSoundFileWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.trinketBottomSoundFileWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.soundChannelWrap.dropdown, GetSoundChannelDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.nameControls.fontWrap.dropdown, fontStyleValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.nameControls.rotationWrap.dropdown, textRotationValues, function() Panel:ApplyCurrent() end)
@@ -1499,6 +1594,7 @@ function Panel:Create(parent)
   WireColor(frame.stacksControls.colorWrap, { r = 1, g = 1, b = 1, a = 1 })
   WireColor(frame.iconSwipeColorWrap, { r = 0, g = 0, b = 0, a = 0.60 })
   WireColor(frame.groupBackgroundColorWrap, { r = 0, g = 0, b = 0, a = 0.45 })
+  WireColor(frame.noStacksBarColorWrap, { r = 0.86, g = 0.18, b = 0.18, a = 1 })
 
   return frame
 end
@@ -1565,6 +1661,9 @@ function Panel:ApplyCanvasLayout(isGroup)
   PositionColorSwatch(frame.backgroundColorWrap, 220, -364)
   PositionLabeledInput(frame.backgroundGammaWrap, 430, -364)
   PositionLabeledInput(frame.permanentAlphaWrap, 540, -364)
+  frame.noStacksBarColorCheck:ClearAllPoints()
+  frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -412)
+  PositionColorSwatch(frame.noStacksBarColorWrap, 220, -404)
 end
 
 function Panel:LayoutSections()
@@ -1593,7 +1692,7 @@ function Panel:Refresh(aura)
   local isAuraBarList = aura.kind == "aura_bar_list"
   local usesLayoutSection = isGroup or isAuraBarList
   local trigger = GetSelectedTrigger(aura)
-  local supportsShowAlways = trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "aura"
+  local supportsShowAlways = trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura"
   local summaryText = aura.kind:gsub("_", " ")
   summaryText = summaryText:gsub("(%a)([%w']*)", function(first, rest)
     return string.upper(first) .. rest
@@ -1621,6 +1720,8 @@ function Panel:Refresh(aura)
   RefreshDropdown(self.frame.framePointWrap.dropdown)
   RefreshDropdown(self.frame.parentPointWrap.dropdown)
   RefreshDropdown(self.frame.soundFileWrap.dropdown)
+  RefreshDropdown(self.frame.trinketTopSoundFileWrap.dropdown)
+  RefreshDropdown(self.frame.trinketBottomSoundFileWrap.dropdown)
   RefreshDropdown(self.frame.soundChannelWrap.dropdown)
   SetDropdown(self.frame.strataWrap.dropdown, aura.display.frameStrata or "MEDIUM")
   self.frame.levelWrap.input:SetText(tostring(aura.display.frameLevel or 1))
@@ -1630,6 +1731,9 @@ function Panel:Refresh(aura)
     b = aura.display.color.b or 0,
     a = aura.display.color.a == nil and (aura.display.alpha or 1) or aura.display.color.a,
   })
+  self.frame.noStacksBarColorCheck:SetChecked(aura.display.noStacksBarColorEnabled == true)
+  SetColorSwatch(self.frame.noStacksBarColorWrap,
+    aura.display.noStacksBarColor or { r = 0.86, g = 0.18, b = 0.18, a = 1 })
   self.frame.readyLookCheck:SetChecked(aura.display.readyLook == true)
   self.frame.glowWhenActiveCheck:SetChecked(aura.display.glowWhenActive == true)
   self.frame.showAlwaysReadyCheck:SetChecked(trigger.showAlways == true)
@@ -1709,9 +1813,15 @@ function Panel:Refresh(aura)
   self.frame.soundReadyCheck:SetChecked(aura.display.soundMode == "ready")
   SetDropdown(self.frame.soundFileWrap.dropdown, aura.display.soundFile or "None")
   UpdateSelectorButtonText(self.frame.soundFileButton, self.frame.soundFileWrap.dropdown)
+  SetDropdown(self.frame.trinketTopSoundFileWrap.dropdown, aura.display.trinketTopSoundFile or "None")
+  UpdateSelectorButtonText(self.frame.trinketTopSoundFileButton, self.frame.trinketTopSoundFileWrap.dropdown)
+  SetDropdown(self.frame.trinketBottomSoundFileWrap.dropdown, aura.display.trinketBottomSoundFile or "None")
+  UpdateSelectorButtonText(self.frame.trinketBottomSoundFileButton, self.frame.trinketBottomSoundFileWrap.dropdown)
   SetDropdown(self.frame.soundChannelWrap.dropdown, aura.display.soundChannel or "Master")
   if SoundPicker then
     SoundPicker:RefreshIfOpen(self.frame.soundFileWrap.dropdown)
+    SoundPicker:RefreshIfOpen(self.frame.trinketTopSoundFileWrap.dropdown)
+    SoundPicker:RefreshIfOpen(self.frame.trinketBottomSoundFileWrap.dropdown)
   end
 
   self.frame.nameControls.showCheck:SetChecked(aura.display.showName == true)
@@ -1754,13 +1864,17 @@ function Panel:Refresh(aura)
   self.frame.stacksSection:SetShown(not isGroup and not isText)
   self.frame.soundSection:SetShown(not isGroup and not isAuraBarList)
   self.frame.blizzardSection:SetShown(not isGroup)
-  if (isGroup or isAuraBarList) and SoundPicker then
-    SoundPicker:HideIfDropdown(self.frame.soundFileWrap.dropdown)
+  if isGroup or isAuraBarList then
+    HideAllSoundPickers(self.frame)
   end
 
   self.frame.canvasSection.expandedHeight = isGroup
       and self.frame.canvasSection.expandedHeightGroup
       or self.frame.canvasSection.expandedHeightAura
+  local dualTrinketSounds = UsesDualTrinketSounds(aura)
+  self.frame.soundSection.expandedHeight = dualTrinketSounds and 226 or 164
+  self.frame.soundHint:ClearAllPoints()
+  self.frame.soundHint:SetPoint("TOPLEFT", 12, dualTrinketSounds and -208 or -146)
 
   SetSectionCollapsed(self.frame.canvasSection, self.frame.collapsedSections.canvas)
   SetSectionCollapsed(self.frame.groupSection, self.frame.collapsedSections.group)
@@ -1781,6 +1895,11 @@ function Panel:Refresh(aura)
   self.frame.barColorWrap.label:SetShown(not isGroup and not isText)
   self.frame.barColorWrap.button:SetShown(not isGroup and not isText)
   self.frame.barColorWrap.valueText:SetShown(not isGroup and not isText)
+  local showNoStacksColor = trigger.type == "spell_cooldown" and aura.kind == "bar"
+  self.frame.noStacksBarColorCheck:SetShown(showNoStacksColor)
+  self.frame.noStacksBarColorWrap.label:SetShown(showNoStacksColor)
+  self.frame.noStacksBarColorWrap.button:SetShown(showNoStacksColor)
+  self.frame.noStacksBarColorWrap.valueText:SetShown(showNoStacksColor)
   self.frame.readyLookCheck:SetShown(not isGroup and not isText)
   self.frame.glowWhenActiveCheck:SetShown(not isGroup and not isText and not isAuraBarList)
   self.frame.showAlwaysReadyCheck:SetShown(not isGroup and not isText and supportsShowAlways)

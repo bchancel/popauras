@@ -6,6 +6,7 @@ ns.TextResolver = TextResolver
 local DURATION_REMAINING_CACHE_INTERVAL = 0.05
 local READY_TIMER_SOURCES = {
   item_cooldown = true,
+  trinket_cooldown = true,
   spell_cooldown = true,
   api = true,
   api_duration = true,

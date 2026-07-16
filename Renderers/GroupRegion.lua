@@ -12,6 +12,17 @@ local function IsRegionLayoutVisible(region)
   return region.frame:IsShown()
 end
 
+local function AppendLayoutRegions(target, region)
+  if not region then return end
+  if region.GetLayoutRegions then
+    for _, layoutRegion in ipairs(region:GetLayoutRegions()) do
+      target[#target + 1] = layoutRegion
+    end
+    return
+  end
+  target[#target + 1] = region
+end
+
 function GroupRegion:New(aura)
   local instance = setmetatable({}, { __index = self })
   instance.frame = BaseRegion:CreateFrame(aura)
@@ -37,9 +48,7 @@ function GroupRegion:CollectChildren(aura)
       local childState = ns.runtime:GetPresentation(childId)
       ns.Render:RenderAura(childAura, childState)
       local region = ns.runtime:GetRegionByAuraId(childId)
-      if region then
-        regions[#regions + 1] = region
-      end
+      AppendLayoutRegions(regions, region)
     end
   end
   return regions
@@ -49,7 +58,7 @@ function GroupRegion:CollectExistingChildren(aura)
   local regions = {}
   for _, childId in ipairs(aura.children or {}) do
     local region = ns.runtime:GetRegionByAuraId(childId)
-    if region then regions[#regions + 1] = region end
+    AppendLayoutRegions(regions, region)
   end
   return regions
 end

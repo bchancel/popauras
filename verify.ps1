@@ -60,8 +60,21 @@ if ($safeValuesText -notmatch 'if\s+type\(value\)\s*==\s*"boolean"\s+then\s+retu
 }
 
 $spellCooldownText = Get-Content -LiteralPath (Join-Path $root "Triggers\SpellCooldownProvider.lua") -Raw
-if ($spellCooldownText -notmatch 'UPDATE_OVERRIDE_ACTIONBAR' -or $spellCooldownText -notmatch 'SPELL_OVERRIDE_UPDATED') {
-    throw "Spell cooldown provider does not cover both 12.0 and 12.1 override events"
+if ($spellCooldownText -notmatch 'UPDATE_OVERRIDE_ACTIONBAR' -or $spellCooldownText -notmatch 'SPELLS_CHANGED') {
+    throw "Spell cooldown provider does not cover action-bar and spellbook override changes"
+}
+if ($spellCooldownText -notmatch 'local outOfCharges\s*=\s*chargeStateKnown and chargeActive and cooldownActive' -or
+    $spellCooldownText -notmatch 'local timerActive\s*=\s*useCharge or useSpell' -or
+    $spellCooldownText -notmatch 'progressType\s*=\s*candidate\.timerActive' -or
+    $spellCooldownText -match 'local active\s*=\s*useCharge or cooldownActive') {
+    throw "Spell charge matching is not separated from partial-recharge timer presentation"
+}
+if ($spellCooldownText -notmatch 'onCooldown\s*=\s*outOfCharges or \(partiallyCharged and showCharge\)' -or
+    $spellCooldownText -notmatch 'AliasCandidateScore[\s\S]*candidate\.chargeStateKnown') {
+    throw "Spell charge cooldown behavior no longer preserves ready-with-charge and zero-charge semantics"
+}
+if ($runtimeFiles | Select-String -Pattern 'SPELL_OVERRIDE_UPDATED' | Select-Object -First 1) {
+    throw "Removed 12.1 event SPELL_OVERRIDE_UPDATED is still registered"
 }
 
 $nativeAurasText = Get-Content -LiteralPath (Join-Path $root "Core\NativeAuras.lua") -Raw
@@ -92,6 +105,10 @@ if ($nativeAuraRegionText -notmatch 'SetExplicitBounds\(button\.bar') {
 }
 if ($nativeAuraRegionText -notmatch 'SetExplicitBounds\(button\.presentation') {
     throw "Native aura text does not use an explicitly bounded presentation overlay"
+}
+if ($nativeAuraRegionText -notmatch 'initializeFrame\s*=\s*function\(button\) self:InitializeButton\(button\) end' -or
+    $nativeAuraRegionText -match 'function Region:Update\(aura, state\)[\s\S]*?self:StyleButton\(aura\)[\s\S]*?function Region:OnTimerUpdate') {
+    throw "Native AuraButtons are styled outside their safe initialization callback"
 }
 if ($nativeAuraRegionText -notmatch 'SetHideCountdownNumbers\(true\)') {
     throw "Native aura cooldown still exposes Blizzard's duplicate countdown numbers"
@@ -237,6 +254,15 @@ if ($auraBarListRegionText -match 'BaseRegion:ApplyCommonAppearance' -or $auraBa
 if ($auraBarListRegionText -notmatch 'ExpirationOnly' -or $auraBarListRegionText -notmatch 'SetAuraGroupSortMethod') {
     throw "Aura-list rendering does not enforce visual expiration ordering"
 }
+if ($auraBarListRegionText -match 'nativeButtons' -or
+    $auraBarListRegionText -match 'function Region:Update\(aura, state\)[\s\S]*?StyleButton\(button, aura\)[\s\S]*?function Region:Release') {
+    throw "Aura-list updates retain or restyle forbidden Blizzard AuraButtons"
+}
+if ($auraBarListRegionText -notmatch 'initializeFrame\s*=\s*function\(button\) self:InitializeNativeButton\(button\) end' -or
+    $auraBarListRegionText -notmatch 'SetAuraGroupCandidateFilters\("popauras", EMPTY_CANDIDATE_FILTERS\)' -or
+    $auraBarListRegionText -notmatch 'local inCombat\s*=\s*InCombatLockdown') {
+    throw "Aura-list buttons are not initialized and suppressed through the combat-safe native container path"
+}
 
 $layoutsText = Get-Content -LiteralPath (Join-Path $root "Renderers\Layouts.lua") -Raw
 if ($layoutsText -notmatch 'layoutVisible') {
@@ -256,6 +282,21 @@ $baseRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\BaseRegio
 if ($baseRegionText -notmatch 'SetParentKey' -or $baseRegionText -notmatch 'PopAurasRegion_') {
     throw "Runtime regions are not identifiable as PopAuras objects in /fstack"
 }
+if ($baseRegionText -match 'LibCustomGlow' -or $baseRegionText -match 'ArcGlow' -or
+    $baseRegionText -match 'LibButtonGlow' -or $baseRegionText -match 'GetGlowLibrary') {
+    throw "Runtime glow rendering still discovers third-party addon libraries"
+}
+if ($baseRegionText -notmatch 'EnsureBuiltInGlow' -or $baseRegionText -notmatch 'StartBuiltInGlow') {
+    throw "Runtime glow rendering does not provide a self-contained PopAuras glow"
+}
+$unitFrameGlowText = Get-Content -LiteralPath (Join-Path $root "Engine\UnitFrameGlow.lua") -Raw
+if ($unitFrameGlowText -match 'LibCustomGlow' -or $unitFrameGlowText -match 'ArcGlow' -or
+    $unitFrameGlowText -match 'LibButtonGlow' -or $unitFrameGlowText -match 'GetGlowLibrary') {
+    throw "Unit-frame glow actions still discover third-party addon libraries"
+}
+if ($unitFrameGlowText -notmatch 'BaseRegion' -or $baseRegionText -notmatch 'function BaseRegion:SetGlow') {
+    throw "Unit-frame glow actions do not use the self-contained PopAuras glow"
+}
 
 $cooldownManagerText = Get-Content -LiteralPath (Join-Path $root "Core\CooldownManager.lua") -Raw
 if ($cooldownManagerText -notmatch 'GetDirectCooldownIDsForSpellID') {
@@ -271,6 +312,76 @@ if ($cooldownManagerText -notmatch 'function Manager:FindAuraDisplaySource' -or
     $cooldownManagerText -notmatch 'viewer ~= _G\.BuffBarCooldownViewer') {
     throw "CDM aura source selection is not restricted to tracked buff-bar frames"
 }
+if ($cooldownManagerText -notmatch 'EquipSlotEssential' -or
+    $cooldownManagerText -notmatch 'FindOnUseEquipSlotFrame') {
+    throw "CDM catalog does not expose known on-use equipment-slot entries"
+}
+
+$trinketProviderText = Get-Content -LiteralPath (Join-Path $root "Triggers\TrinketCooldownProvider.lua") -Raw
+if ($trinketProviderText -notmatch 'INVSLOT_TRINKET1' -or
+    $trinketProviderText -notmatch 'INVSLOT_TRINKET2' -or
+    $trinketProviderText -notmatch 'GetInventoryItemCooldown') {
+    throw "Trinket cooldown provider does not track both equipped trinket slots"
+}
+if ($trinketProviderText -notmatch 'GetUseAuraDisplayTime' -or
+    $trinketProviderText -match 'C_UnitAuras' -or
+    $trinketProviderText -match 'GetAuraData') {
+    throw "Trinket active-effect glow is not using the CDM presentation boolean boundary"
+}
+if ($trinketProviderText -notmatch 'ignoredTrinkets' -or
+    $trinketProviderText -notmatch 'entries\s*=\s*entries') {
+    throw "Trinket cooldown provider does not support ignores or independent slot entries"
+}
+
+$multiStateRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\MultiStateRegion.lua") -Raw
+if ($multiStateRegionText -notmatch 'GetLayoutRegions' -or
+    $multiStateRegionText -notmatch 'layoutOrder') {
+    throw "Independent trinket entries do not participate in group layouts"
+}
+if ($multiStateRegionText -notmatch 'GetCountdownFontString' -or
+    $multiStateRegionText -notmatch 'trinketCountdownFontString:GetText\(\)' -or
+    $multiStateRegionText -match 'GetCooldownTimes' -or
+    $multiStateRegionText -match 'GetCooldownDuration') {
+    throw "Trinket active-effect duration is not mirrored through CDM's presentation-only countdown text"
+}
+if ($runtimeStoreText -notmatch 'trinketTopSoundFile' -or
+    $runtimeStoreText -notmatch 'trinketBottomSoundFile' -or
+    $runtimeStoreText -notmatch 'FindStateEntry') {
+    throw "Dual trinket entries do not have independent sound transitions"
+}
+
+$displayPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\DisplayPanel.lua") -Raw
+foreach ($label in @('Trinket 1 (Top)', 'Trinket 2 (Bottom)')) {
+    if ($displayPanelText -notmatch [regex]::Escape($label)) {
+        throw "Dual trinket sound UI is missing '$label'"
+    }
+}
+$defaultsText = Get-Content -LiteralPath (Join-Path $root "Data\Defaults.lua") -Raw
+$schemaText = Get-Content -LiteralPath (Join-Path $root "Data\Schema.lua") -Raw
+$triggerEngineText = Get-Content -LiteralPath (Join-Path $root "Engine\TriggerEngine.lua") -Raw
+$barRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\BarRegion.lua") -Raw
+if ($displayPanelText -notmatch 'No Stacks Bar Color' -or
+    $displayPanelText -notmatch 'noStacksBarColorEnabled' -or
+    $defaultsText -notmatch 'noStacksBarColorEnabled\s*=\s*false') {
+    throw "Spell Cooldown bars do not expose a saved No Stacks Bar Color option"
+}
+if ($spellCooldownText -notmatch 'noCharges\s*=\s*chargeStateKnown and outOfCharges' -or
+    $schemaText -notmatch 'state\.noCharges\s*=\s*SafeBoolean' -or
+    $triggerEngineText -notmatch '"noCharges"' -or
+    $barRegionText -notmatch 'state\.noCharges\s*==\s*true') {
+    throw "No Stacks Bar Color is not driven by the secret-safe zero-charge state"
+}
+
+$triggerPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\TriggerPanel.lua") -Raw
+foreach ($label in @('Trinket Cooldown', 'Top Trinket Slot', 'Bottom Trinket Slot', 'Grow Direction', 'Glow While Active', 'Ignored Trinkets')) {
+    if ($triggerPanelText -notmatch [regex]::Escape($label)) {
+        throw "Trinket trigger UI is missing '$label'"
+    }
+}
+if ($triggerPanelText -notmatch 'trinketGrowthValues' -or
+    $multiStateRegionText -notmatch 'trigger\.trinketGrowth') {
+    throw "Independent trinket entries do not expose or apply their growth direction"
+}
 
 $mainWindowText = Get-Content -LiteralPath (Join-Path $root "UI\MainWindow.lua") -Raw
 if ($mainWindowText -notmatch 'GetAddOnMetadata' -or $mainWindowText -notmatch 'PopAuras.*version') {
@@ -281,6 +392,37 @@ if ($mainWindowText -notmatch 'OnHide' -or $mainWindowText -notmatch 'runtime:Re
 }
 if ($mainWindowText -notmatch 'previewAnimateCheck[\s\S]*?runtime:RefreshAuras\(\{ aura\.id \}\)') {
     throw "Preview animation changes do not refresh ancestor group layout"
+}
+
+$debugText = Get-Content -LiteralPath (Join-Path $root "Core\Debug.lua") -Raw
+if ($debugText -match 'CopyToClipboard' -or
+    $debugText -notmatch 'HighlightText\(\)' -or
+    $debugText -notmatch 'Press Ctrl\+C to copy it') {
+    throw "Export copy mode calls a protected clipboard API or lacks the restriction-safe selected-text flow"
+}
+
+$framesText = Get-Content -LiteralPath (Join-Path $root "Util\Frames.lua") -Raw
+if ($framesText -notmatch 'function Frames\.ShowConfirmation' -or
+    $framesText -notmatch 'StyleSuccessButton' -or
+    $framesText -notmatch 'StyleDangerButton') {
+    throw "Shared confirmation modal or its success/danger button styles are missing"
+}
+
+$importText = Get-Content -LiteralPath (Join-Path $root "Data\Import.lua") -Raw
+$importPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\ImportExportPanel.lua") -Raw
+if ($importText -notmatch 'name = primaryAura' -or
+    $importPanelText -notmatch 'Confirm Import' -or
+    $importPanelText -notmatch 'Successfully imported' -or
+    $importPanelText -match 'Import Add') {
+    throw "Import UI does not preview, confirm, and report the named import package"
+}
+
+$registryText = Get-Content -LiteralPath (Join-Path $root "Core\Registry.lua") -Raw
+$auraTreeText = Get-Content -LiteralPath (Join-Path $root "UI\AuraTree.lua") -Raw
+if ($registryText -notmatch 'function Registry:CountDescendants' -or
+    $auraTreeText -notmatch 'CountDescendants' -or
+    $auraTreeText -notmatch 'Deleting the group will permanently delete') {
+    throw "Aura deletion does not confirm or warn about nested group descendants"
 }
 
 & (Join-Path $root "deploy.ps1") -WhatIf

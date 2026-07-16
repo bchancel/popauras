@@ -56,6 +56,7 @@ Triggers\AuraProvider.lua
 Triggers\AuraListProvider.lua
 Triggers\SpellCooldownProvider.lua
 Triggers\ItemCooldownProvider.lua
+Triggers\TrinketCooldownProvider.lua
 Triggers\CastProvider.lua
 Triggers\ChatProvider.lua
 Triggers\SimpleProvider.lua
@@ -72,6 +73,7 @@ Renderers\TextRegion.lua
 Renderers\InterruptTrackerRegion.lua
 Renderers\GroupRegion.lua
 Renderers\DynamicGroupRegion.lua
+Renderers\MultiStateRegion.lua
 
 Engine\TriggerEngine.lua
 

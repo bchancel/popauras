@@ -65,7 +65,7 @@ end
 
 function Debug:CopyAll()
   if not self.frame then
-    return
+    return false
   end
   if self.frame.minimized == true then
     self:SetWindowMinimized(false)
@@ -75,7 +75,9 @@ function Debug:CopyAll()
   self.frame.editBox:SetText(text)
   self.frame.editBox:SetFocus()
   self.frame.editBox:HighlightText()
+  self.frame.copyHint:SetText("The complete text is selected. Press Ctrl+C to copy it, then Escape to close copy mode.")
   self.frame.copyHint:Show()
+  return true
 end
 
 function Debug:ShowSnapshot(title, lines, autoCopy)
@@ -232,7 +234,7 @@ function Debug:CreateWindow()
   end)
   frame.clear:SetPoint("RIGHT", frame.minimize, "LEFT", -6, 0)
 
-  frame.copy = ns.util.Frames.CreateButton(frame.header, "Copy", 58, 20, function()
+  frame.copy = ns.util.Frames.CreateButton(frame.header, "Select", 58, 20, function()
     Debug:CopyAll()
   end)
   frame.copy:SetPoint("RIGHT", frame.clear, "LEFT", -6, 0)
@@ -241,7 +243,7 @@ function Debug:CreateWindow()
   Fonts.Apply(frame.copyHint, 10, "")
   frame.copyHint:SetPoint("TOPLEFT", 12, -36)
   frame.copyHint:SetPoint("TOPRIGHT", -12, -36)
-  frame.copyHint:SetText("Copy mode: text is frozen and highlighted. Press Escape to resume live updates.")
+  frame.copyHint:SetText("The complete text is selected. Press Ctrl+C to copy it, then Escape to close copy mode.")
   frame.copyHint:SetTextColor(0.80, 0.92, 1)
   frame.copyHint:Hide()
 

@@ -144,6 +144,33 @@ function Registry:CreateAura(kind, triggerType)
   return aura
 end
 
+function Registry:CountDescendants(auraId)
+  self:NormalizeTree()
+  local seen = {}
+
+  local function CountChildren(currentId)
+    if seen[currentId] then
+      return 0
+    end
+    seen[currentId] = true
+
+    local aura = Registry:GetAura(currentId)
+    if not aura then
+      return 0
+    end
+
+    local count = 0
+    for _, childId in ipairs(aura.children or {}) do
+      if not seen[childId] and Registry:GetAura(childId) then
+        count = count + 1 + CountChildren(childId)
+      end
+    end
+    return count
+  end
+
+  return CountChildren(auraId)
+end
+
 function Registry:DeleteAura(auraId)
   local aura = self:GetAura(auraId)
   if not aura then

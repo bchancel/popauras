@@ -24,6 +24,11 @@ function DynamicGroupRegion:CollectChildren(aura)
       local leftIndex = childOrder[leftId] or math.huge
       local rightIndex = childOrder[rightId] or math.huge
       if leftIndex == rightIndex then
+        local leftEntryOrder = left.layoutOrder or 0
+        local rightEntryOrder = right.layoutOrder or 0
+        if leftEntryOrder ~= rightEntryOrder then
+          return leftEntryOrder < rightEntryOrder
+        end
         return (leftId or "") < (rightId or "")
       end
       return leftIndex < rightIndex
@@ -33,6 +38,11 @@ function DynamicGroupRegion:CollectChildren(aura)
       local leftOrder = ns.runtime:GetActivationOrder(left.frame and left.frame.auraId)
       local rightOrder = ns.runtime:GetActivationOrder(right.frame and right.frame.auraId)
       if leftOrder == rightOrder then
+        local leftEntryOrder = left.layoutOrder or 0
+        local rightEntryOrder = right.layoutOrder or 0
+        if leftEntryOrder ~= rightEntryOrder then
+          return leftEntryOrder < rightEntryOrder
+        end
         return (left.frame and left.frame.auraId or "") < (right.frame and right.frame.auraId or "")
       end
       return leftOrder < rightOrder

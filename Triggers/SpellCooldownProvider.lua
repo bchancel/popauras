@@ -11,7 +11,6 @@ local provider = ns.TriggerBase:CreateProvider("spell_cooldown", {
     "UNIT_SPELLCAST_SUCCEEDED",
     "COOLDOWN_VIEWER_DATA_LOADED",
     "UPDATE_OVERRIDE_ACTIONBAR",
-    "SPELL_OVERRIDE_UPDATED",
     "PLAYER_TALENT_UPDATE",
     "PLAYER_SPECIALIZATION_CHANGED",
     "SPELLS_CHANGED",
@@ -170,7 +169,9 @@ local function BuildManualTimer(spellID, timer)
   local object = Duration:CreateFromEnd(expirationTime, duration)
   return {
     active = true,
+    timerActive = true,
     enabled = true,
+    ready = false,
     onGCD = false,
     timer = Duration:BuildTimer(object, "manual", true),
     duration = duration,
@@ -187,62 +188,89 @@ local function ReadCandidate(configuredSpellID, apiSpellID, trigger)
   end
 
   local cooldownActive = cooldown and cooldown.active and not cooldown.onGCD or false
-  local hasCharges = charges and charges.max and charges.max > 1 or false
-  local chargeActive = hasCharges and charges.active or false
+  local currentCharges = charges and charges.current or nil
+  local maxCharges = charges and charges.max or nil
+  local hasCharges = maxCharges and maxCharges > 1 or false
+  local chargeStateKnown = hasCharges and charges ~= nil
+  local chargeCountKnown = chargeStateKnown and currentCharges ~= nil
+  local chargeActive = chargeStateKnown and charges.active or false
+  local outOfCharges = chargeStateKnown and chargeActive and cooldownActive
+  local partiallyCharged = chargeStateKnown and chargeActive and not cooldownActive
+  if chargeCountKnown then
+    outOfCharges = currentCharges <= 0
+    partiallyCharged = currentCharges > 0 and currentCharges < maxCharges
+  end
+
+  -- Blizzard keeps charge isActive and spell-cooldown isActive non-secret even
+  -- when the exact current charge count is restricted. Together they identify
+  -- full, partially recharging, and out-of-charges states without inspecting a
+  -- secret count. Showing partial recharge is itself an On Cooldown match;
+  -- showAlways remains the independent placeholder override.
   local showCharge = trigger.showChargeCooldown ~= false
-  local useCharge = showCharge and chargeActive
-  local active = useCharge or cooldownActive
-  local durationObject = useCharge and GetChargeDurationObject(apiSpellID) or GetCooldownDurationObject(apiSpellID)
-  local timer = Duration:BuildTimer(durationObject, useCharge and "charges" or "spell", active)
+  local onCooldown
+  local ready
+  if chargeStateKnown then
+    onCooldown = outOfCharges or (partiallyCharged and showCharge)
+    ready = not outOfCharges
+  else
+    onCooldown = cooldownActive
+    ready = not onCooldown
+  end
 
-  if not useCharge and timer.zero then
-    cooldownActive = false
-    active = false
+  local useCharge = chargeActive and (outOfCharges or (partiallyCharged and showCharge))
+  local useSpell = not useCharge and cooldownActive and (not chargeStateKnown or outOfCharges)
+  local timerActive = useCharge or useSpell
+  local durationObject
+  if useCharge then
+    durationObject = GetChargeDurationObject(apiSpellID)
+  elseif useSpell then
+    durationObject = GetCooldownDurationObject(apiSpellID)
+  end
+  local timer = Duration:BuildTimer(durationObject, useCharge and "charges" or "spell", timerActive)
+  local timing = useCharge and charges or (useSpell and cooldown or nil)
+
+  if timer.duration == nil and timing and timing.duration and timing.duration > 0 then
+    timer.duration = timing.duration
+  end
+  if timer.expirationTime == nil and timing and timing.startTime and timer.duration then
+    timer.expirationTime = timing.startTime + timer.duration
+  end
+
+  -- A zero-span object cannot drive presentation. Known zero charges still
+  -- remain an On Cooldown match even if Blizzard supplies no usable timer.
+  if timer.zero then
+    timerActive = false
     timer.active = false
-  end
-
-  -- A full-charge API response may carry a zero-span duration object. It is a
-  -- ready state and must never be promoted to an active timer.
-  if timer.zero and not active then
     timer.object = nil
+    if not (chargeStateKnown and outOfCharges) then
+      onCooldown = false
+      ready = true
+    end
   end
 
-  if timer.duration == nil and cooldown and cooldown.duration and cooldown.duration > 0 then
-    timer.duration = cooldown.duration
-  end
-  if timer.expirationTime == nil and cooldown and cooldown.startTime and timer.duration then
-    timer.expirationTime = cooldown.startTime + timer.duration
-  end
-
-  if not active then
+  if not timerActive and not chargeStateKnown then
     local manual = BuildManualTimer(configuredSpellID, provider.manualTimers[configuredSpellID])
     if manual then
       return manual
     end
-  else
+  elseif timerActive then
     provider.manualTimers[configuredSpellID] = nil
-  end
-
-  local currentCharges = charges and charges.current or nil
-  local maxCharges = charges and charges.max or nil
-  local ready
-  if hasCharges and currentCharges ~= nil then
-    ready = currentCharges > 0
-  else
-    ready = not active
   end
 
   return {
     configuredSpellID = configuredSpellID,
     spellID = apiSpellID,
-    active = active,
+    active = onCooldown,
+    timerActive = timerActive,
     enabled = cooldown == nil or cooldown.enabled,
     ready = ready,
     usable = GetUsable(apiSpellID),
     timer = timer,
     currentCharges = currentCharges,
     maxCharges = maxCharges,
-    source = useCharge and "charges" or "spell_cooldown",
+    chargeStateKnown = chargeStateKnown,
+    noCharges = chargeStateKnown and outOfCharges or false,
+    source = (useCharge or chargeStateKnown) and "charges" or "spell_cooldown",
   }
 end
 
@@ -251,6 +279,7 @@ local function CandidateScore(candidate)
     return -1
   end
   local score = candidate.active and 100 or 0
+  if candidate.timerActive then score = score + 50 end
   if candidate.timer and candidate.timer.object then score = score + 20 end
   if candidate.timer and candidate.timer.expirationTime then score = score + 10 end
   if candidate.enabled then score = score + 2 end
@@ -258,15 +287,28 @@ local function CandidateScore(candidate)
   return score
 end
 
+local function AliasCandidateScore(candidate)
+  local score = CandidateScore(candidate)
+  if candidate and candidate.chargeStateKnown then
+    score = score + 200
+  end
+  return score
+end
+
 local function SelectCandidate(trigger)
   local best, bestScore
   for _, configuredSpellID in ipairs(GetConfiguredSpellIDs(trigger)) do
+    local aliasBest, aliasBestScore
     for _, apiSpellID in ipairs(GetAPISpellIDs(configuredSpellID)) do
       local candidate = ReadCandidate(configuredSpellID, apiSpellID, trigger)
-      local score = CandidateScore(candidate)
-      if best == nil or score > bestScore then
-        best, bestScore = candidate, score
+      local score = AliasCandidateScore(candidate)
+      if aliasBest == nil or score > aliasBestScore then
+        aliasBest, aliasBestScore = candidate, score
       end
+    end
+    local score = CandidateScore(aliasBest)
+    if best == nil or score > bestScore then
+      best, bestScore = aliasBest, score
     end
   end
   return best
@@ -329,20 +371,22 @@ function provider:Evaluate(trigger, auraConfig)
     spellId = primarySpellID,
     stacks = candidate.currentCharges or 0,
     maxStacks = candidate.maxCharges,
+    noCharges = candidate.noCharges == true,
     stackDisplayValue = displayCount,
     hasStackDisplayValue = hasDisplayCount,
     duration = duration,
     expirationTime = expirationTime,
     durationObject = timer.object,
     timer = timer,
-    progressType = candidate.active and "timed" or "static",
+    progressType = candidate.timerActive and "timed" or "static",
     value = duration,
     total = duration,
     source = candidate.source,
     availability = "available",
     statusText = candidate.ready and "Ready" or "On Cooldown",
-    debugExtra = string.format("configured=%d api=%d source=%s opaque=%s",
-      configured[1], primarySpellID, tostring(candidate.source), tostring(timer.opaque == true)),
+    debugExtra = string.format("configured=%d api=%d source=%s timer=%s charges=%s/%s opaque=%s",
+      configured[1], primarySpellID, tostring(candidate.source), tostring(candidate.timerActive == true),
+      tostring(candidate.currentCharges), tostring(candidate.maxCharges), tostring(timer.opaque == true)),
   })
 end
 
@@ -386,7 +430,6 @@ end
 
 function provider:HandleEvent(event, ...)
   if event == "COOLDOWN_VIEWER_DATA_LOADED" or event == "UPDATE_OVERRIDE_ACTIONBAR"
-    or event == "SPELL_OVERRIDE_UPDATED"
     or event == "PLAYER_TALENT_UPDATE" or event == "PLAYER_SPECIALIZATION_CHANGED"
     or event == "SPELLS_CHANGED" or event == "PLAYER_ENTERING_WORLD" then
     if ns.CooldownManager and ns.CooldownManager.Invalidate then
@@ -491,10 +534,13 @@ function provider:CaptureCooldownDebugSnapshot(reason)
   if not self.debugSpellID then return false end
   local candidate = ReadCandidate(self.debugSpellID, self.debugSpellID, { showChargeCooldown = true })
   local timer = candidate and candidate.timer or {}
-  local line = string.format("%s spell=%d active=%s ready=%s enabled=%s source=%s duration=%s expiration=%s object=%s opaque=%s",
+  local line = string.format("%s spell=%d active=%s timer=%s ready=%s enabled=%s charges=%s/%s source=%s duration=%s expiration=%s object=%s opaque=%s",
     tostring(reason or "snapshot"), self.debugSpellID,
-    tostring(candidate and candidate.active == true), tostring(candidate and candidate.ready == true),
-    tostring(candidate and candidate.enabled ~= false), tostring(candidate and candidate.source or "none"),
+    tostring(candidate and candidate.active == true), tostring(candidate and candidate.timerActive == true),
+    tostring(candidate and candidate.ready == true),
+    tostring(candidate and candidate.enabled ~= false),
+    tostring(candidate and candidate.currentCharges or ""), tostring(candidate and candidate.maxCharges or ""),
+    tostring(candidate and candidate.source or "none"),
     tostring(timer.duration or ""), tostring(timer.expirationTime or ""),
     tostring(timer.object ~= nil), tostring(timer.opaque == true))
   self.debugHistory = self.debugHistory or {}

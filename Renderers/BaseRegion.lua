@@ -6,35 +6,11 @@ ns.renderers.BaseRegion = BaseRegion
 local Anchors = ns.util.Anchors
 local Frames = ns.util.Frames
 
-local GLOW_KEY = "PopAuras"
 local GLOW_TEXTURE = "Interface\\SpellActivationOverlay\\IconAlert"
 local GLOW_PADDING_RATIO = 0.18
 local GLOW_MIN_PADDING = 8
 local GLOW_OUTER_TEXCOORD = { 0.00781250, 0.50781250, 0.27734375, 0.52734375 }
 local GLOW_PULSE_TEXCOORD = { 0.00781250, 0.50781250, 0.53515625, 0.78515625 }
-
-local function GetGlowLibrary()
-  if not LibStub then
-    return nil
-  end
-
-  local lib = LibStub("ArcGlow-1.0", true)
-  if lib and lib.ButtonGlow_Start and lib.ButtonGlow_Stop then
-    return lib
-  end
-
-  lib = LibStub("LibCustomGlow-1.0", true)
-  if lib and lib.ButtonGlow_Start and lib.ButtonGlow_Stop then
-    return lib
-  end
-
-  lib = LibStub("LibButtonGlow-1.0", true)
-  if lib and lib.ButtonGlow_Start and lib.ButtonGlow_Stop then
-    return lib
-  end
-
-  return nil
-end
 
 local function CleanupLegacyGlow(frame)
   if frame and frame.spellActivationAlert and ActionButton_HideOverlayGlow then
@@ -141,37 +117,10 @@ local function StartBuiltInGlow(frame)
   end
 end
 
-local function StopExternalGlow(frame)
-  if not frame then
-    return
-  end
-
-  local lib = frame._popAurasGlowLib or GetGlowLibrary()
-  if lib and lib.ButtonGlow_Stop then
-    lib.ButtonGlow_Stop(frame, GLOW_KEY)
-  end
-  frame._popAurasGlowLib = nil
-end
-
-local function StartExternalGlow(frame)
-  if not frame then
-    return false
-  end
-
-  local lib = GetGlowLibrary()
-  if not (lib and lib.ButtonGlow_Start and lib.ButtonGlow_Stop) then
-    return false
-  end
-
-  lib.ButtonGlow_Start(frame, nil, nil, 1, GLOW_KEY)
-  frame._popAurasGlowLib = lib
-  return true
-end
-
 function BaseRegion:CreateFrame(aura)
   local frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
   if frame.SetParentKey then
-    local auraKey = tostring(aura.id or "Unknown"):gsub("[^%w_]", "_")
+    local auraKey = tostring(aura.regionKey or aura.id or "Unknown"):gsub("[^%w_]", "_")
     frame:SetParentKey("PopAurasRegion_" .. auraKey)
   end
   frame.auraId = aura.id
@@ -304,19 +253,20 @@ local function SetAuraGlow(frame, shouldGlow)
     if frame._popAurasGlowShown ~= true then
       CleanupLegacyGlow(frame)
       StopBuiltInGlow(frame)
-      if not StartExternalGlow(frame) then
-        StartBuiltInGlow(frame)
-      end
+      StartBuiltInGlow(frame)
       frame._popAurasGlowShown = true
-    elseif frame._popAurasGlowLib == nil and frame._popAurasBuiltInGlow then
+    elseif frame._popAurasBuiltInGlow then
       UpdateBuiltInGlowLayout(frame)
     end
-  elseif frame._popAurasGlowShown == true or frame._popAurasBuiltInGlow or frame._popAurasGlowLib or frame.spellActivationAlert then
+  elseif frame._popAurasGlowShown == true or frame._popAurasBuiltInGlow or frame.spellActivationAlert then
     CleanupLegacyGlow(frame)
-    StopExternalGlow(frame)
     StopBuiltInGlow(frame)
     frame._popAurasGlowShown = false
   end
+end
+
+function BaseRegion:SetGlow(frame, shouldGlow)
+  SetAuraGlow(frame, shouldGlow == true)
 end
 
 function BaseRegion:ApplyCommonAppearance(aura, frame, state, glowTarget)

@@ -26,7 +26,7 @@ local PRESENTATION_FIELDS = {
   "stacks", "maxStacks", "stackText", "stackDisplayValue", "hasStackDisplayValue",
   "unit", "matchedUnits", "unitStates", "auraInstanceID", "helpful", "auraIndex",
   "spellId", "itemId", "source", "availability", "isReady", "isEnabled",
-  "isUsable", "color", "desaturate", "glow", "actionEventKey", "debugExtra",
+  "isUsable", "noCharges", "color", "desaturate", "glow", "entries", "actionEventKey", "debugExtra",
 }
 
 local function PresentationScore(state)
@@ -192,8 +192,17 @@ end
 
 ns.Render = ns.Render or {}
 
-function ns.Render:CreateRegion(aura)
-  if ns.renderers.NativeAuraRegion and ns.renderers.NativeAuraRegion:CanHandle(aura) then
+local function AuraUsesMultiStateRegion(aura)
+  if not aura or aura.kind == "group" or aura.kind == "dynamic_group" or aura.kind == "interrupt_tracker" then
+    return false
+  end
+  return ns.TriggerBase:AnyTriggerMatches(aura, "trinket_cooldown") == true
+end
+
+function ns.Render:CreateRegion(aura, wantsMultiState)
+  if wantsMultiState and ns.renderers.MultiStateRegion then
+    return ns.renderers.MultiStateRegion:New(aura)
+  elseif ns.renderers.NativeAuraRegion and ns.renderers.NativeAuraRegion:CanHandle(aura) then
     return ns.renderers.NativeAuraRegion:New(aura)
   elseif aura.kind == "icon" then
     return ns.renderers.IconRegion:New(aura)
@@ -215,13 +224,16 @@ function ns.Render:RenderAura(aura, state)
   local renderBucket = string.format("render:%s", tostring(aura and aura.kind or "unknown"))
   local renderProfile = ProfileStart(renderBucket)
   local region = ns.runtime:GetRegionByAuraId(aura.id)
-  local wantsNativeAura = ns.renderers.NativeAuraRegion and ns.renderers.NativeAuraRegion:CanHandle(aura) or false
-  if region and (region.isNativeAuraRegion == true) ~= wantsNativeAura then
+  local wantsMultiState = AuraUsesMultiStateRegion(aura)
+  local wantsNativeAura = not wantsMultiState
+    and ns.renderers.NativeAuraRegion and ns.renderers.NativeAuraRegion:CanHandle(aura) or false
+  if region and ((region.isNativeAuraRegion == true) ~= wantsNativeAura
+    or (region.isMultiStateRegion == true) ~= wantsMultiState) then
     if region.Release then region:Release() elseif region.frame then region.frame:Hide() end
     region = nil
   end
   if not region then
-    region = self:CreateRegion(aura)
+    region = self:CreateRegion(aura, wantsMultiState)
     ns.runtime:SetRegion(aura.id, region)
   end
   local presentation = state or ns.runtime:GetPresentation(aura.id) or ns.Schema.NormalizeRuntimeState()

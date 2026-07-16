@@ -189,7 +189,12 @@ function BarRegion:Update(aura, state)
 
   local remainingFromObject = ns.TextResolver:GetDurationObjectRemaining(state)
   local readyLookActive = aura.display.readyLook == true and ns.TextResolver:IsReadyState(state, remainingFromObject)
-  local color = readyLookActive and (aura.display.readyColor or aura.display.color) or state.color or aura.display.color
+  local color = aura.display.color
+  if aura.display.noStacksBarColorEnabled == true and state.noCharges == true then
+    color = aura.display.noStacksBarColor or color
+  end
+  if state.color then color = state.color end
+  if readyLookActive then color = aura.display.readyColor or aura.display.color end
   local timerColor = readyLookActive and (aura.display.readyTextColor or aura.display.timerColor) or aura.display.timerColor or DEFAULT_TEXT_COLOR
   local useNativeCooldownText = ShouldUseNativeCooldownText(aura, state, remainingFromObject)
   if state.durationObject and ns.TimerPresenter then

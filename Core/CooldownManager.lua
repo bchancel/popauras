@@ -5,6 +5,7 @@ local Manager = {
   spellToCooldownIDs = nil,
   directSpellToCooldownIDs = nil,
   cooldownInfo = nil,
+  onUseEquipSlotCooldownIDs = nil,
   frameCache = {},
   hiddenFrames = {},
   applyingVisibilityOverrides = false,
@@ -65,14 +66,18 @@ local function AddMapping(mapping, spellID, cooldownID)
 end
 
 function Manager:BuildCatalog()
-  local mapping, directMapping, infoByID = {}, {}, {}
+  local mapping, directMapping, infoByID, onUseEquipSlotCooldownIDs = {}, {}, {}, {}
   if not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCategorySet
     or not C_CooldownViewer.GetCooldownViewerCooldownInfo then
     self.spellToCooldownIDs = mapping
     self.directSpellToCooldownIDs = directMapping
     self.cooldownInfo = infoByID
+    self.onUseEquipSlotCooldownIDs = onUseEquipSlotCooldownIDs
     return
   end
+
+  local onUseEquipCategory = Enum and Enum.CooldownViewerCategory
+    and Safe:Number(Enum.CooldownViewerCategory.EquipSlotEssential) or 7
 
   for _, category in ipairs(GetCategories()) do
     local okSet, cooldownIDs = pcall(C_CooldownViewer.GetCooldownViewerCategorySet, category, true)
@@ -90,6 +95,17 @@ function Manager:BuildCatalog()
             for _, linkedSpellID in ipairs(type(info.linkedSpellIDs) == "table" and info.linkedSpellIDs or EMPTY) do
               AddMapping(mapping, linkedSpellID, cooldownID)
             end
+            local equipSlot = Safe:Number(info.equipSlot)
+            local infoCategory = Safe:Number(info.category)
+            local isKnown = Safe:Boolean(info.isKnown)
+            if equipSlot and equipSlot > 0 and infoCategory == onUseEquipCategory and isKnown == true then
+              local slotIDs = onUseEquipSlotCooldownIDs[equipSlot]
+              if not slotIDs then
+                slotIDs = {}
+                onUseEquipSlotCooldownIDs[equipSlot] = slotIDs
+              end
+              slotIDs[#slotIDs + 1] = cooldownID
+            end
           end
         end
       end
@@ -98,10 +114,12 @@ function Manager:BuildCatalog()
   self.spellToCooldownIDs = mapping
   self.directSpellToCooldownIDs = directMapping
   self.cooldownInfo = infoByID
+  self.onUseEquipSlotCooldownIDs = onUseEquipSlotCooldownIDs
 end
 
 function Manager:EnsureCatalog()
-  if not self.spellToCooldownIDs or not self.directSpellToCooldownIDs or not self.cooldownInfo then
+  if not self.spellToCooldownIDs or not self.directSpellToCooldownIDs or not self.cooldownInfo
+    or not self.onUseEquipSlotCooldownIDs then
     self:BuildCatalog()
   end
 end
@@ -110,7 +128,49 @@ function Manager:Invalidate()
   self.spellToCooldownIDs = nil
   self.directSpellToCooldownIDs = nil
   self.cooldownInfo = nil
+  self.onUseEquipSlotCooldownIDs = nil
   self.frameCache = {}
+end
+
+function Manager:GetOnUseEquipSlotCooldownIDs(equipSlot)
+  equipSlot = Safe:Number(equipSlot)
+  if not equipSlot or equipSlot <= 0 then return {} end
+  self:EnsureCatalog()
+  local copy = {}
+  for _, cooldownID in ipairs(self.onUseEquipSlotCooldownIDs[equipSlot] or EMPTY) do
+    copy[#copy + 1] = cooldownID
+  end
+  return copy
+end
+
+function Manager:FindOnUseEquipSlotFrame(equipSlot, forceRefresh)
+  equipSlot = Safe:Number(equipSlot)
+  if not equipSlot or equipSlot <= 0 then return nil, nil end
+
+  local fallbackFrame, fallbackCooldownID
+  for _, cooldownID in ipairs(self:GetOnUseEquipSlotCooldownIDs(equipSlot)) do
+    for _, frame in ipairs(self:FindFramesByCooldownID(cooldownID, forceRefresh)) do
+      if type(frame.GetEquipSlot) == "function" and type(frame.GetCooldownFrame) == "function"
+        and type(frame.IsOnCooldown) == "function" then
+        local okSlot, frameSlot = pcall(frame.GetEquipSlot, frame)
+        frameSlot = okSlot and Safe:Number(frameSlot) or nil
+        if frameSlot == equipSlot then
+          local okCooldown, cooldown = pcall(frame.GetCooldownFrame, frame)
+          if okCooldown and cooldown then
+            local okShown, shown = pcall(frame.IsShown, frame)
+            shown = okShown and Safe:Boolean(shown) or false
+            if shown == true then
+              return frame, cooldownID
+            end
+            if not fallbackFrame then
+              fallbackFrame, fallbackCooldownID = frame, cooldownID
+            end
+          end
+        end
+      end
+    end
+  end
+  return fallbackFrame, fallbackCooldownID
 end
 
 function Manager:GetCooldownIDsForSpellID(spellID)
@@ -310,6 +370,24 @@ local function AddTriggerCooldownIDs(manager, target, trigger)
   if linkedCooldownID then target[linkedCooldownID] = true end
 end
 
+local function AddTrinketCooldownIDs(manager, target, trigger, state)
+  if type(state and state.entries) == "table" then
+    for _, entry in ipairs(state.entries) do
+      local cooldownID = entry.show == true and Safe:Number(entry.cooldownID) or nil
+      if cooldownID and cooldownID > 0 then target[cooldownID] = true end
+    end
+    return
+  end
+  local equipSlots = {}
+  if trigger.trinketTop ~= false then equipSlots[#equipSlots + 1] = INVSLOT_TRINKET1 or 13 end
+  if trigger.trinketBottom ~= false then equipSlots[#equipSlots + 1] = INVSLOT_TRINKET2 or 14 end
+  for _, equipSlot in ipairs(equipSlots) do
+    for _, cooldownID in ipairs(manager:GetOnUseEquipSlotCooldownIDs(equipSlot)) do
+      target[cooldownID] = true
+    end
+  end
+end
+
 function Manager:GetDesiredHiddenIDs()
   local desired = {}
   if not ns.Registry or not ns.runtime then return desired end
@@ -325,6 +403,8 @@ function Manager:GetDesiredHiddenIDs()
       for _, trigger in ns.TriggerBase:IterateTriggers(aura) do
         if trigger.type == "spell_cooldown" or trigger.type == "aura" then
           AddTriggerCooldownIDs(self, desired, trigger)
+        elseif trigger.type == "trinket_cooldown" then
+          AddTrinketCooldownIDs(self, desired, trigger, state)
         end
       end
     end
@@ -371,6 +451,18 @@ function Manager:ScheduleAuraSourceSync()
   end)
 end
 
+function Manager:ScheduleTrinketSourceSync()
+  if self.trinketSourceSyncPending then return end
+  self.trinketSourceSyncPending = true
+  C_Timer.After(0, function()
+    self.trinketSourceSyncPending = false
+    local provider = ns.providers and ns.providers.trinket_cooldown or nil
+    if provider and provider.RefreshTrackedAuras then
+      provider:RefreshTrackedAuras()
+    end
+  end)
+end
+
 function Manager:GetCooldownStateForSpellID(spellID)
   return nil, self:FindCooldownIDForSpellID(spellID)
 end
@@ -395,9 +487,10 @@ function Manager:Initialize()
     local frame = CreateFrame("Frame")
     for _, event in ipairs({
       "COOLDOWN_VIEWER_DATA_LOADED",
-      "TABLE_HOTFIXED",
+      "COOLDOWN_VIEWER_TABLE_HOTFIXED",
       "UPDATE_OVERRIDE_ACTIONBAR",
-      "SPELL_OVERRIDE_UPDATED",
+      "SPELLS_CHANGED",
+      "PLAYER_EQUIPMENT_CHANGED",
       "PLAYER_SPECIALIZATION_CHANGED",
     }) do
       pcall(frame.RegisterEvent, frame, event)
@@ -406,6 +499,7 @@ function Manager:Initialize()
       self:Invalidate()
       self:ScheduleVisibilityOverrideSync()
       self:ScheduleAuraSourceSync()
+      self:ScheduleTrinketSourceSync()
     end)
     self.eventFrame = frame
   end

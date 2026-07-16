@@ -494,6 +494,7 @@ function Region:InitializeButton(button)
   button.timerText = button.presentation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   button.countText = button.presentation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   self:StyleButton(self.currentAura)
+  if self.container then button:SetAllPoints(self.container) end
 end
 
 function Region:StyleButton(aura)
@@ -605,6 +606,8 @@ function Region:CreateNative(aura)
   self.nativeEnabled = false
   self.nativeSuppressed = false
   container:SetAllPoints()
+  container:SetFrameLevel(self.frame:GetFrameLevel() + 5)
+  self.container = container
   self.currentAura = aura
   local options = {
     initializeFrame = function(button) self:InitializeButton(button) end,
@@ -615,11 +618,11 @@ function Region:CreateNative(aura)
   local ok, button = pcall(container.AddAuraSlot, container, "popauras", helpful and "HELPFUL" or "HARMFUL", options)
   if not ok then
     if container.SetEnabled then container:SetEnabled(false) end
+    self.container = nil
+    self.button = nil
     return false
   end
-  self.container = container
   self.button = button or self.button
-  if self.button then self.button:SetAllPoints(container) end
   local unit = trigger.unit or "player"
   container:SetUnit(unit)
   self.nativeUnit = unit
@@ -707,8 +710,9 @@ function Region:Update(aura, state)
       end
       self.nativeCandidateSignature = candidateSignature
     end
-    self.container:SetFrameLevel(self.frame:GetFrameLevel() + 5)
-    self:StyleButton(aura)
+    -- The AuraButton is styled only by initializeFrame while the slot is being
+    -- created. After Blizzard assigns an aura the button may be forbidden, so
+    -- Update must never resize or otherwise restyle it.
   end
 
   local decimals = math.max(0, math.min(2, tonumber(aura.display and aura.display.timerDecimals or 1) or 1))

@@ -892,10 +892,43 @@ function AuraTree:Refresh()
     row.deleteButton.text:SetPoint("CENTER")
     row.deleteButton.text:SetText("X")
     row.deleteButton:SetScript("OnClick", function(selfButton)
-      ns.db.ui.editorMode = "config"
-      ns.Registry:DeleteAura(selfButton.auraId)
-      ns.runtime:RefreshAll()
-      ns.ui.MainWindow:Refresh()
+      GameTooltip:Hide()
+      local aura = ns.Registry:GetAura(selfButton.auraId)
+      if not aura then
+        return
+      end
+
+      local descendantCount = ns.Registry:CountDescendants(aura.id)
+      local isGroup = IsGroupAura(aura)
+      local message = string.format("Are you sure you want to delete \"%s\"?", tostring(aura.name or "Aura"))
+      if descendantCount > 0 then
+        local noun = descendantCount == 1 and "aura" or "auras"
+        message = string.format(
+          "%s\n\nThis group contains %d nested %s. Deleting the group will permanently delete %s as well.",
+          message,
+          descendantCount,
+          noun,
+          descendantCount == 1 and "it" or "them"
+        )
+      end
+
+      Frames.ShowConfirmation({
+        title = isGroup and "Delete Group" or "Delete Aura",
+        message = message,
+        acceptText = "Delete",
+        cancelText = "Cancel",
+        acceptStyle = "danger",
+        cancelStyle = "secondary",
+        onAccept = function()
+          if not ns.Registry:GetAura(aura.id) then
+            return
+          end
+          ns.db.ui.editorMode = "config"
+          ns.Registry:DeleteAura(aura.id)
+          ns.runtime:RefreshAll()
+          ns.ui.MainWindow:Refresh()
+        end,
+      })
     end)
     row.deleteButton:SetScript("OnEnter", function(selfButton)
       ShowTooltip(selfButton, "Delete Aura", "Deletes this aura. Groups delete their child auras too.")

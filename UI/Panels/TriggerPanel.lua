@@ -11,6 +11,7 @@ local triggerTypes = {
   aura = "Aura",
   spell_cooldown = "Spell Cooldown",
   item_cooldown = "Item Cooldown",
+  trinket_cooldown = "Trinket Cooldown",
   cast = "Cast / Channel",
   chat = "Chat",
   timer = "Internal Timer",
@@ -66,6 +67,13 @@ local simpleModeValues = {
 local cooldownMatchValues = {
   { value = "cooldown", label = "On Cooldown" },
   { value = "ready", label = "Ready" },
+}
+
+local trinketGrowthValues = {
+  { value = "DOWN", label = "Down" },
+  { value = "UP", label = "Up" },
+  { value = "LEFT", label = "Left" },
+  { value = "RIGHT", label = "Right" },
 }
 
 local chatChannelValues = {
@@ -207,6 +215,42 @@ local function UpdateChatTriggerLayout(frame)
   if frame.chatHint and frame.chatDurationInput then
     frame.chatHint:ClearAllPoints()
     frame.chatHint:SetPoint("TOPLEFT", frame.chatDurationInput, "BOTTOMLEFT", 0, -6)
+  end
+end
+
+local function UpdateTrinketTriggerLayout(frame, isTrinketCooldown, showGrowth)
+  if not frame or not frame.trinketSlotsLabel then return end
+
+  frame.trinketSlotsLabel:ClearAllPoints()
+  frame.trinketSlotsLabel:SetPoint("TOPLEFT", frame.argLabel, "TOPLEFT", 0, 0)
+  frame.trinketTopCheck:ClearAllPoints()
+  frame.trinketTopCheck:SetPoint("TOPLEFT", frame.trinketSlotsLabel, "BOTTOMLEFT", 0, -6)
+  frame.trinketBottomCheck:ClearAllPoints()
+  frame.trinketBottomCheck:SetPoint("TOPLEFT", frame.trinketTopCheck, "TOPRIGHT", 170, 0)
+  frame.trinketGrowthLabel:ClearAllPoints()
+  frame.trinketGrowthLabel:SetPoint("TOPLEFT", frame.trinketTopCheck, "BOTTOMLEFT", 0, -8)
+  frame.trinketGrowthDropDown:ClearAllPoints()
+  frame.trinketGrowthDropDown:SetPoint("TOPLEFT", frame.trinketGrowthLabel, "BOTTOMLEFT", -14, -4)
+  frame.trinketGlowCheck:ClearAllPoints()
+  if showGrowth then
+    frame.trinketGlowCheck:SetPoint("LEFT", frame.trinketGrowthDropDown, "RIGHT", 4, 0)
+  else
+    frame.trinketGlowCheck:SetPoint("TOPLEFT", frame.trinketTopCheck, "BOTTOMLEFT", 0, -6)
+  end
+  frame.trinketIgnoreLabel:ClearAllPoints()
+  if showGrowth then
+    frame.trinketIgnoreLabel:SetPoint("TOPLEFT", frame.trinketGrowthDropDown, "BOTTOMLEFT", 14, -8)
+  else
+    frame.trinketIgnoreLabel:SetPoint("TOPLEFT", frame.trinketGlowCheck, "BOTTOMLEFT", 0, -10)
+  end
+  frame.trinketIgnoreInput:ClearAllPoints()
+  frame.trinketIgnoreInput:SetPoint("TOPLEFT", frame.trinketIgnoreLabel, "BOTTOMLEFT", 0, -6)
+  frame.trinketIgnoreHint:ClearAllPoints()
+  frame.trinketIgnoreHint:SetPoint("TOPLEFT", frame.trinketIgnoreInput, "BOTTOMLEFT", 0, -6)
+
+  if isTrinketCooldown then
+    frame.resolvedLabel:ClearAllPoints()
+    frame.resolvedLabel:SetPoint("TOPLEFT", frame.trinketIgnoreHint, "BOTTOMLEFT", 0, -8)
   end
 end
 
@@ -701,6 +745,10 @@ function Panel:ApplyTriggerType(triggerType)
   ns.Defaults:ApplyTriggerDefaults(trigger)
   triggers[triggerIndex] = trigger
 
+  if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+    ns.TriggerBase:InvalidateProviderCaches("trinket_cooldown")
+  end
+
   ns.runtime:RefreshAura(aura.id)
   if ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
     ns.CooldownManager:ApplyVisibilityOverrides()
@@ -729,6 +777,13 @@ function Panel:ApplyCurrent()
   trigger.cooldownMatch = UIDropDownMenu_GetSelectedValue(frame.cooldownMatchDropDown) or trigger.cooldownMatch or "cooldown"
   trigger.mode = UIDropDownMenu_GetSelectedValue(frame.modeDropDown) or trigger.mode or "always"
   trigger.showAlways = frame.showAlwaysCheck:GetChecked() == true
+  if trigger.type == "trinket_cooldown" then
+    trigger.trinketTop = frame.trinketTopCheck:GetChecked() == true
+    trigger.trinketBottom = frame.trinketBottomCheck:GetChecked() == true
+    trigger.glowWhileActive = frame.trinketGlowCheck:GetChecked() == true
+    trigger.trinketGrowth = UIDropDownMenu_GetSelectedValue(frame.trinketGrowthDropDown) or trigger.trinketGrowth or "DOWN"
+    trigger.ignoredTrinkets = TrimmedText(frame.trinketIgnoreInput:GetText())
+  end
   trigger.manualCooldown = tonumber(frame.manualCooldownInput:GetText()) or 0
   trigger.showChargeCooldown = frame.chargeCooldownCheck:GetChecked() == true
   trigger.showAuraWindow = frame.cooldownAuraWindowCheck:GetChecked() == true
@@ -852,6 +907,24 @@ function Panel:ApplyCurrent()
         frame.resolvedLabel:SetText(string.format("|cffffcc66Saved item name:|r %s  |cffaaaaaaItem ID will resolve when cached or equipped.|r", trigger.itemName))
       end
     end
+  elseif trigger.type == "trinket_cooldown" then
+    trigger.spellIDs = nil
+    trigger.spellNames = nil
+    trigger.spellId = nil
+    trigger.itemId = nil
+    trigger.itemName = nil
+    local slots = {}
+    if trigger.trinketTop then slots[#slots + 1] = "top" end
+    if trigger.trinketBottom then slots[#slots + 1] = "bottom" end
+    if #slots == 0 then
+      frame.resolvedLabel:SetText("|cffffcc66Select at least one trinket slot.|r")
+    else
+      frame.resolvedLabel:SetText(string.format(
+        "|cff88ff88Tracking:|r %s slot%s  |cff66ccffCDM:|r on-use trinkets only",
+        table.concat(slots, " + "),
+        #slots > 1 and "s" or ""
+      ))
+    end
   elseif trigger.type == "cast" then
     local spellIDs, result, names = ResolveSpellList(input)
     if spellIDs then
@@ -921,6 +994,7 @@ function Panel:ApplyCurrent()
   aura.triggerOp = UIDropDownMenu_GetSelectedValue(frame.opDropDown) or "AND"
   if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
     ns.TriggerBase:InvalidateProviderCaches("aura_list")
+    ns.TriggerBase:InvalidateProviderCaches("trinket_cooldown")
   end
   ns.runtime:RefreshAura(aura.id)
   if ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
@@ -1020,6 +1094,31 @@ function Panel:Create(parent)
   frame.chatExactCheck = Frames.CreateCheckbox(frame, "Exact Match")
   frame.chatExactCheck:SetPoint("LEFT", frame.argInput, "RIGHT", 18, 0)
   frame.chatExactCheck:Hide()
+
+  frame.trinketSlotsLabel = Frames.CreateLabel(frame, "Trinket Slots", "GameFontNormal")
+  frame.trinketTopCheck = Frames.CreateCheckbox(frame, "Top Trinket Slot")
+  frame.trinketBottomCheck = Frames.CreateCheckbox(frame, "Bottom Trinket Slot")
+  frame.trinketGrowthLabel = Frames.CreateLabel(frame, "Grow Direction", "GameFontNormal")
+  frame.trinketGrowthDropDown = Frames.CreateDropdown(frame, 140)
+  frame.trinketGlowCheck = Frames.CreateCheckbox(frame, "Glow While Active")
+  frame.trinketIgnoreLabel = Frames.CreateLabel(frame, "Ignored Trinkets", "GameFontNormal")
+  frame.trinketIgnoreInput = Frames.CreateInput(frame, 360, 24)
+  frame.trinketIgnoreHint = Frames.CreateLabel(
+    frame,
+    "Comma-, semicolon-, or line-separated item names and item IDs.",
+    "GameFontDisableSmall"
+  )
+  frame.trinketIgnoreHint:SetWidth(420)
+  UpdateTrinketTriggerLayout(frame, false)
+  frame.trinketSlotsLabel:Hide()
+  frame.trinketTopCheck:Hide()
+  frame.trinketBottomCheck:Hide()
+  frame.trinketGrowthLabel:Hide()
+  frame.trinketGrowthDropDown:Hide()
+  frame.trinketGlowCheck:Hide()
+  frame.trinketIgnoreLabel:Hide()
+  frame.trinketIgnoreInput:Hide()
+  frame.trinketIgnoreHint:Hide()
 
   frame.resolvedLabel = Frames.CreateLabel(frame, "", "GameFontHighlightSmall")
   frame.resolvedLabel:SetPoint("TOPLEFT", frame.argInput, "BOTTOMLEFT", 0, -6)
@@ -1343,6 +1442,11 @@ function Panel:Create(parent)
       UIDropDownMenu_AddButton(info, level)
     end
   end)
+  InitDropdownValues(frame.trinketGrowthDropDown, function()
+    return trinketGrowthValues
+  end, function()
+    Panel:ApplyCurrent()
+  end)
   UIDropDownMenu_Initialize(frame.auraTypeDropDown, function(self, level)
     for _, option in ipairs(auraTypeValues) do
       local info = UIDropDownMenu_CreateInfo()
@@ -1469,6 +1573,7 @@ function Panel:Create(parent)
   SetSoundPreviewTooltip(frame.deathDPSSoundPreview, "Preview DPS Sound")
 
   self:WireLiveInput(frame.argInput)
+  self:WireLiveInput(frame.trinketIgnoreInput)
   self:WireLiveInput(frame.manualCooldownInput)
   self:WireLiveInput(frame.chatSourceInput)
   self:WireLiveInput(frame.chatDurationInput)
@@ -1476,6 +1581,9 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.deathMaxAlertsInput)
   frame.chatExactCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.showAlwaysCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.trinketTopCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.trinketBottomCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.trinketGlowCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraCastByMeCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraAliveOnlyCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraIgnoreNPCsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
@@ -1549,6 +1657,20 @@ function Panel:Refresh(aura)
     else
       self.frame.resolvedLabel:SetText("|cffaaaaaaEnter an item name or item ID.|r")
     end
+  elseif trigger.type == "trinket_cooldown" then
+    self.frame.argInput:SetText("")
+    local slots = {}
+    if trigger.trinketTop ~= false then slots[#slots + 1] = "top" end
+    if trigger.trinketBottom ~= false then slots[#slots + 1] = "bottom" end
+    if #slots == 0 then
+      self.frame.resolvedLabel:SetText("|cffffcc66Select at least one trinket slot.|r")
+    else
+      self.frame.resolvedLabel:SetText(string.format(
+        "|cff88ff88Tracking:|r %s slot%s  |cff66ccffCDM:|r on-use trinkets only",
+        table.concat(slots, " + "),
+        #slots > 1 and "s" or ""
+      ))
+    end
   elseif trigger.type == "chat" then
     self.frame.argLabel:SetText("Matching Text")
     self.frame.argInput:SetText(trigger.chatMessage or "")
@@ -1566,14 +1688,15 @@ function Panel:Refresh(aura)
     self.frame.resolvedLabel:SetText("|cffaaaaaaNo spell or item lookup needed for this trigger.|r")
   end
   self.frame.debugCheck:SetChecked(trigger.debug == true)
-  local isCooldownType = trigger.type == "spell_cooldown" or trigger.type == "item_cooldown"
+  local isCooldownType = trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown"
   local isSimple = trigger.type == "simple"
   local isSpellCooldown = trigger.type == "spell_cooldown"
-  local isItemCooldown = trigger.type == "item_cooldown"
+  local isTrinketCooldown = trigger.type == "trinket_cooldown"
   local isAura = trigger.type == "aura"
   local isChat = trigger.type == "chat"
   local isDeathAlert = trigger.type == "death_alert"
   local isAuraList = trigger.type == "aura_list"
+  local showTrinketGrowth = isTrinketCooldown and trigger.trinketTop ~= false and trigger.trinketBottom ~= false
   local auraListSourceValue = UnitAuraList and UnitAuraList.GetSourceValue and UnitAuraList:GetSourceValue(trigger) or "player_buff"
   local auraListTargetDebuffMode = UnitAuraList and UnitAuraList.GetTargetDebuffFilterMode
     and UnitAuraList:GetTargetDebuffFilterMode(trigger)
@@ -1600,8 +1723,24 @@ function Panel:Refresh(aura)
   self.frame.auraCastByMeCheck:SetShown(isAura and (trigger.unit or "player") ~= "player")
   self.frame.auraAliveOnlyCheck:SetShown(isAura)
   self.frame.auraIgnoreNPCsCheck:SetShown(isAura and (trigger.unit or "player") == "group")
-  self.frame.argLabel:SetShown(not isDeathAlert and not isAuraList)
-  self.frame.argInput:SetShown(not isDeathAlert and not isAuraList)
+  self.frame.argLabel:SetShown(not isDeathAlert and not isAuraList and not isTrinketCooldown)
+  self.frame.argInput:SetShown(not isDeathAlert and not isAuraList and not isTrinketCooldown)
+  self.frame.trinketSlotsLabel:SetShown(isTrinketCooldown)
+  self.frame.trinketTopCheck:SetShown(isTrinketCooldown)
+  self.frame.trinketBottomCheck:SetShown(isTrinketCooldown)
+  self.frame.trinketGrowthLabel:SetShown(showTrinketGrowth)
+  self.frame.trinketGrowthDropDown:SetShown(showTrinketGrowth)
+  self.frame.trinketGlowCheck:SetShown(isTrinketCooldown)
+  self.frame.trinketIgnoreLabel:SetShown(isTrinketCooldown)
+  self.frame.trinketIgnoreInput:SetShown(isTrinketCooldown)
+  self.frame.trinketIgnoreHint:SetShown(isTrinketCooldown)
+  self.frame.trinketTopCheck:SetChecked(trigger.trinketTop ~= false)
+  self.frame.trinketBottomCheck:SetChecked(trigger.trinketBottom ~= false)
+  self.frame.trinketGlowCheck:SetChecked(trigger.glowWhileActive == true)
+  SetDropdownValue(self.frame.trinketGrowthDropDown, trigger.trinketGrowth or "DOWN", function()
+    return trinketGrowthValues
+  end)
+  self.frame.trinketIgnoreInput:SetText(trigger.ignoredTrinkets or "")
   self.frame.chatExactCheck:SetShown(isChat)
   self.frame.chatExactCheck:SetChecked(trigger.chatExact == true)
   self.frame.chatChannelLabel:SetShown(isChat)
@@ -1655,8 +1794,8 @@ function Panel:Refresh(aura)
   self.frame.manualCooldownLabel:SetShown(isSpellCooldown)
   self.frame.manualCooldownInput:SetShown(isSpellCooldown)
   self.frame.manualCooldownHint:SetShown(isSpellCooldown)
-  self.frame.cooldownMatchLabel:SetShown(isSpellCooldown or isItemCooldown)
-  self.frame.cooldownMatchDropDown:SetShown(isSpellCooldown or isItemCooldown)
+  self.frame.cooldownMatchLabel:SetShown(isCooldownType)
+  self.frame.cooldownMatchDropDown:SetShown(isCooldownType)
   self.frame.showAlwaysCheck:SetShown(isCooldownType)
   self.frame.showAlwaysCheck:SetChecked(trigger.showAlways == true)
   self.frame.chargeCooldownCheck:SetShown(isSpellCooldown)
@@ -1667,6 +1806,7 @@ function Panel:Refresh(aura)
   self.frame.chatSourceInput:SetText(trigger.chatSource or "")
   self.frame.chatDurationInput:SetText(isChat and tostring(NormalizeChatDuration(trigger.chatDuration)) or "")
   UpdateChatTriggerLayout(self.frame)
+  UpdateTrinketTriggerLayout(self.frame, isTrinketCooldown, showTrinketGrowth)
   self.frame.deathDurationLabel:SetShown(isDeathAlert)
   self.frame.deathDurationInput:SetShown(isDeathAlert)
   self.frame.deathMaxAlertsLabel:SetShown(isDeathAlert)
