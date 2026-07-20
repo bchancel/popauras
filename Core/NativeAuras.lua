@@ -68,6 +68,10 @@ function NativeAuras:CreateContainer(parent)
     self.probe = nil
     frame:SetParent(parent)
     frame:ClearAllPoints()
+    -- The capability probe is hidden before it is retained. Restore it while
+    -- it still has no aura slots; controllers must never Show/Hide it after a
+    -- restricted AuraButton has been assigned.
+    frame:Show()
     return frame
   end
 
@@ -76,5 +80,6 @@ function NativeAuras:CreateContainer(parent)
     self.createError = DescribeError(frame, "CustomAuraContainerTemplate could not be created")
     return nil, self.createError
   end
+  frame:Show()
   return frame
 end

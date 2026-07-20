@@ -22,8 +22,8 @@ $tocText = Get-Content -LiteralPath $toc -Raw
 if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
     throw "PopAuras.toc is not targeting PTR interface 120100"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.0\s*$') {
-    throw "PopAuras.toc version is not aligned to 12.1.0"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.1\s*$') {
+    throw "PopAuras.toc version is not aligned to release 12.1.1"
 }
 
 $forbiddenPatterns = @(
@@ -72,6 +72,29 @@ if ($spellCooldownText -notmatch 'local outOfCharges\s*=\s*chargeStateKnown and 
 if ($spellCooldownText -notmatch 'onCooldown\s*=\s*outOfCharges or \(partiallyCharged and showCharge\)' -or
     $spellCooldownText -notmatch 'AliasCandidateScore[\s\S]*candidate\.chargeStateKnown') {
     throw "Spell charge cooldown behavior no longer preserves ready-with-charge and zero-charge semantics"
+}
+if ($spellCooldownText -notmatch 'FindAuraStateSource') {
+    throw "Spell cooldown combat state does not use CDM tracked-buff icon sources"
+}
+if ($spellCooldownText -notmatch 'C_Timer\.After\(0\.1' -or
+    $spellCooldownText -notmatch 'activeDurationDebug') {
+    throw "Spell cooldown combat sources do not retry late CDM frame acquisition with safe diagnostics"
+}
+$barRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\BarRegion.lua") -Raw
+if ($barRegionText -match 'local activeDurationRequested\s*=[\s\S]{0,200}state\.activeBuff\s*==\s*true' -or
+    $barRegionText -notmatch 'sourceActive\s*==\s*true') {
+    throw "Active Duration still gates combat presentation on restricted raw aura presence"
+}
+$activeDurationNativeText = Get-Content -LiteralPath (Join-Path $root "Renderers\ActiveDurationNative.lua") -Raw
+if ($activeDurationNativeText -notmatch 'CustomAuraContainer|ActiveDurationAuraContainer' -or
+    $activeDurationNativeText -notmatch 'SetDurationBar' -or
+    $activeDurationNativeText -notmatch 'SetDurationText' -or
+    $activeDurationNativeText -notmatch 'SetAuraSlotCandidateFilters') {
+    throw "Active Duration native fallback is not securely owned by an exact Blizzard aura slot"
+}
+$nativeAurasTextForProbe = Get-Content -LiteralPath (Join-Path $root "Core\NativeAuras.lua") -Raw
+if ($nativeAurasTextForProbe -notmatch 'self\.probe[\s\S]{0,300}frame:Show\(\)') {
+    throw "The retained native AuraContainer capability probe is not restored before slot assignment"
 }
 if ($runtimeFiles | Select-String -Pattern 'SPELL_OVERRIDE_UPDATED' | Select-Object -First 1) {
     throw "Removed 12.1 event SPELL_OVERRIDE_UPDATED is still registered"
@@ -196,33 +219,68 @@ if ($runtimeStoreText -notmatch 'function RuntimeStore:ScheduleGroupLayoutRefres
     throw "Runtime store cannot coalesce native child visibility relayouts"
 }
 
+$spellAuraAliasesPath = Join-Path $root "Data\SpellAuraAliases.lua"
+$spellAuraAliasesText = Get-Content -LiteralPath $spellAuraAliasesPath -Raw
 $spellsText = Get-Content -LiteralPath (Join-Path $root "Util\Spells.lua") -Raw
-if ($spellsText -notmatch '\[203720\]\s*=\s*\{\s*203819\s*\}') {
+$aliasLoadIndex = $tocText.IndexOf('Data\SpellAuraAliases.lua')
+$spellResolverLoadIndex = $tocText.IndexOf('Util\Spells.lua')
+if ($aliasLoadIndex -lt 0 -or $spellResolverLoadIndex -lt 0 -or $aliasLoadIndex -gt $spellResolverLoadIndex) {
+    throw "Spell aura aliases are not loaded before the canonical spell resolver"
+}
+if ($spellsText -notmatch 'AURA_SPELL_ID_ALIASES\s*=\s*ns\.SpellAuraAliases') {
+    throw "Canonical spell resolver does not consume the data-only aura catalogue"
+}
+if ($spellAuraAliasesText -notmatch '\[203720\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*203819\s*\}') {
     throw "Demon Spikes ability-to-aura migration alias is missing"
 }
-if ($spellsText -notmatch '\[8921\]\s*=\s*\{\s*164812\s*\}') {
+if ($spellAuraAliasesText -notmatch '\[8921\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*164812\s*\}') {
     throw "Moonfire cast-to-debuff migration alias is missing"
 }
-if ($spellsText -notmatch '\[155625\]\s*=\s*\{\s*164812\s*\}') {
+if ($spellAuraAliasesText -notmatch '\[155625\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*164812\s*\}') {
     throw "Cat Form Moonfire cast-to-debuff migration alias is missing"
 }
-if ($spellsText -notmatch '\[1252871\]\s*=\s*\{\s*164812\s*\}') {
+if ($spellAuraAliasesText -notmatch '\[1252871\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*164812\s*\}') {
     throw "Red Moon-to-Moonfire debuff migration alias is missing"
 }
-if ($spellsText -notmatch '\[93402\]\s*=\s*\{\s*164815\s*\}') {
+if ($spellAuraAliasesText -notmatch '\[93402\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*164815\s*\}') {
     throw "Sunfire cast-to-debuff migration alias is missing"
 }
-if ($spellsText -notmatch '\[1822\]\s*=\s*\{\s*155722\s*\}') {
+if ($spellAuraAliasesText -notmatch '\[1822\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*155722\s*\}') {
     throw "Rake cast-to-debuff migration alias is missing"
 }
-if ($spellsText -notmatch '\[77758\]\s*=\s*\{\s*192090\s*\}') {
+if ($spellAuraAliasesText -notmatch '\[77758\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*192090\s*\}') {
     throw "Thrash cast-to-debuff migration alias is missing"
 }
-if ($spellsText -notmatch '\[202345\]\s*=\s*\{\s*279709\s*\}') {
+if ($spellAuraAliasesText -notmatch '\[202345\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*279709\s*\}') {
     throw "Starlord talent-to-buff migration alias is missing"
 }
-if ($spellsText -notmatch 'local aliases = AURA_SPELL_ID_ALIASES\[spellID\][\s\S]*?if not aliases then[\s\S]*?return \{ spellID \}') {
-    throw "Known aura aliases still mix cast IDs into Blizzard's exact aura candidate filter"
+if ($spellAuraAliasesText -notmatch '\[49028\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*81256\s*\}' -or
+    $spellAuraAliasesText -notmatch '\[395152\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*395296\s*\}' -or
+    $spellAuraAliasesText -notmatch '\[374968\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*375234\s*\}' -or
+    $spellAuraAliasesText -notmatch '\[62618\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*81782\s*\}' -or
+    $spellAuraAliasesText -notmatch '\[23920\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*23920\s*,\s*385391\s*\}') {
+    throw "Verified Retail 12.1 cooldown-to-player-aura catalogue is incomplete"
+}
+if ($spellAuraAliasesText -notmatch 'verifiedBuild\s*=\s*68745' -or
+    $spellAuraAliasesText -notmatch 'verification\s*=' -or
+    $spellAuraAliasesText -notmatch 'class\s*=' -or
+    $spellAuraAliasesText -notmatch 'specs\s*=') {
+    throw "Spell aura catalogue is missing maintenance metadata"
+}
+if ($spellAuraAliasesText -notmatch '\[198589\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*212800\s*\}[\s\S]*?verifiedBuild\s*=\s*68745') {
+    throw "PTR-verified Blur alias is missing"
+}
+if ($spellAuraAliasesText -notmatch '\[115203\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*115203\s*,\s*120954\s*\}') {
+    throw "Fortifying Brew does not retain its PTR-confirmed player aura ID"
+}
+if ($spellAuraAliasesText -notmatch '\[1241937\]\s*=\s*\{\s*auraSpellIDs\s*=\s*\{\s*1241937\s*,\s*1266696\s*\}[\s\S]*?status\s*=\s*"ptr-candidate"[\s\S]*?candidateBuild\s*=\s*68745') {
+    throw "Soul Immolation correction is not explicitly marked as a PTR candidate"
+}
+if ($spellAuraAliasesText -match '\[(122470|58875|106898|187874)\]\s*=') {
+    throw "Unapproved PTR-unverified spell aura aliases were added to the runtime catalogue"
+}
+if ($spellsText -notmatch 'local aliasRecord = AURA_SPELL_ID_ALIASES\[spellID\][\s\S]*?local aliases = aliasRecord and aliasRecord\.auraSpellIDs[\s\S]*?if not aliases or #aliases == 0 then[\s\S]*?return \{ spellID \}') {
+    throw "Canonical aura resolver does not preserve the configured spell fallback"
 }
 if ($spellsText -notmatch 'function Spells:IsAuraAliasRelated') {
     throw "Aura alias relationships cannot be classified for CDM fallback selection"
@@ -308,9 +366,11 @@ if ($cooldownManagerText -notmatch 'linkedCooldownID[\s\S]*linkedCooldownID ~= n
 if ($cooldownManagerText -notmatch 'ApplyVisibilityOverrides[\s\S]*RestoreAllHiddenFrames\(\)') {
     throw "CDM visibility hiding does not release recycled frame assignments before resync"
 }
-if ($cooldownManagerText -notmatch 'function Manager:FindAuraDisplaySource' -or
-    $cooldownManagerText -notmatch 'viewer ~= _G\.BuffBarCooldownViewer') {
-    throw "CDM aura source selection is not restricted to tracked buff-bar frames"
+if ($cooldownManagerText -notmatch 'function Manager:FindAuraStateSource' -or
+    $cooldownManagerText -notmatch 'viewer == _G\.BuffIconCooldownViewer' -or
+    $cooldownManagerText -notmatch 'function Manager:FindAuraDisplaySource' -or
+    $cooldownManagerText -notmatch 'FindAuraSource\(self, spellIDs, requestedUnit, forceRefresh, IsAuraDisplayFrame\)') {
+    throw "CDM aura state sources do not distinguish tracked icons from bar-only presentation sources"
 }
 if ($cooldownManagerText -notmatch 'EquipSlotEssential' -or
     $cooldownManagerText -notmatch 'FindOnUseEquipSlotFrame') {
@@ -360,6 +420,12 @@ $defaultsText = Get-Content -LiteralPath (Join-Path $root "Data\Defaults.lua") -
 $schemaText = Get-Content -LiteralPath (Join-Path $root "Data\Schema.lua") -Raw
 $triggerEngineText = Get-Content -LiteralPath (Join-Path $root "Engine\TriggerEngine.lua") -Raw
 $barRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\BarRegion.lua") -Raw
+if ($barRegionText -notmatch 'GetAuraSpellInstanceID' -or
+    $barRegionText -notmatch 'C_UnitAuras\.GetAuraDuration' -or
+    $barRegionText -notmatch 'Duration:BuildTimer\(durationObject, "active_buff_cdm", true\)' -or
+    $barRegionText -notmatch 'FindAuraStateSource\(state\.activeBuffSpellIDs, "player", true\)') {
+    throw "Spell cooldown combat presentation does not consume an opaque CDM aura DurationObject on the rendering path"
+}
 if ($displayPanelText -notmatch 'No Stacks Bar Color' -or
     $displayPanelText -notmatch 'noStacksBarColorEnabled' -or
     $defaultsText -notmatch 'noStacksBarColorEnabled\s*=\s*false') {
@@ -381,6 +447,25 @@ foreach ($label in @('Trinket Cooldown', 'Top Trinket Slot', 'Bottom Trinket Slo
 if ($triggerPanelText -notmatch 'trinketGrowthValues' -or
     $multiStateRegionText -notmatch 'trigger\.trinketGrowth') {
     throw "Independent trinket entries do not expose or apply their growth direction"
+}
+
+$spellCastEventText = Get-Content -LiteralPath (Join-Path $root "Triggers\SpellCastEventProvider.lua") -Raw
+if ($spellCastEventText -notmatch 'UNIT_SPELLCAST_SUCCEEDED' -or
+    $spellCastEventText -notmatch 'unit\s*~=\s*"player"' -or
+    $spellCastEventText -notmatch 'Safe:Number\(spellID\)' -or
+    $spellCastEventText -notmatch 'actionEventKey\s*=\s*activeEvent\.eventKey') {
+    throw "Player spell-cast event triggers are not enforcing the secret-safe event boundary"
+}
+if ($triggerPanelText -notmatch 'Spell Cast Event') {
+    throw "Spell Cast Event is missing from the trigger editor"
+}
+
+$constantsText = Get-Content -LiteralPath (Join-Path $root "Core\Constants.lua") -Raw
+$migrationText = Get-Content -LiteralPath (Join-Path $root "Data\Migration.lua") -Raw
+if ($constantsText -notmatch 'DB_VERSION\s*=\s*5' -or
+    $migrationText -notmatch 'aura\.kind\s*==\s*"communication"' -or
+    $migrationText -notmatch 'action\.type\s*~=\s*"send_chat_message"') {
+    throw "Removed Communication auras do not have a saved-variable migration"
 }
 
 $mainWindowText = Get-Content -LiteralPath (Join-Path $root "UI\MainWindow.lua") -Raw

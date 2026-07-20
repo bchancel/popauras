@@ -4,14 +4,79 @@ local BaseRegion = ns.renderers.BaseRegion
 local Fonts = ns.util.Fonts
 local Colors = ns.util.Colors
 local Spells = ns.util.Spells
+local Safe = ns.SafeValues
+local Duration = ns.Duration
 
 local BarRegion = {}
 ns.renderers.BarRegion = BarRegion
 
 local DEFAULT_TEXT_COLOR = { r = 1, g = 1, b = 1, a = 1 }
+local ACTIVE_DURATION_COLOR = { r = 1.00, g = 0.82, b = 0.08, a = 1 }
 
 local STATUS_BAR_DIRECTION = Enum and Enum.StatusBarTimerDirection or nil
 local STATUS_BAR_INTERPOLATION = Enum and Enum.StatusBarInterpolation or nil
+
+local function CreateActiveBuffBorder(parent)
+  local border = CreateFrame("Frame", nil, parent)
+  border:SetAllPoints()
+  border:Hide()
+
+  local function edge(point, relativePoint, width, height, x, y)
+    local texture = border:CreateTexture(nil, "OVERLAY")
+    texture:SetColorTexture(1.00, 0.82, 0.08, 1.00)
+    if width and width > 0 then texture:SetWidth(width) end
+    if height and height > 0 then texture:SetHeight(height) end
+    texture:SetPoint(point, border, relativePoint, x or 0, y or 0)
+    return texture
+  end
+
+  border.top = edge("TOPLEFT", "TOPLEFT", 0, 2, 2, -2)
+  border.top:SetPoint("TOPRIGHT", border, "TOPRIGHT", -2, -2)
+  border.bottom = edge("BOTTOMLEFT", "BOTTOMLEFT", 0, 2, 2, 2)
+  border.bottom:SetPoint("BOTTOMRIGHT", border, "BOTTOMRIGHT", -2, 2)
+  border.left = edge("TOPLEFT", "TOPLEFT", 2, 0, 2, -2)
+  border.left:SetPoint("BOTTOMLEFT", border, "BOTTOMLEFT", 2, 2)
+  border.right = edge("TOPRIGHT", "TOPRIGHT", 2, 0, -2, -2)
+  border.right:SetPoint("BOTTOMRIGHT", border, "BOTTOMRIGHT", -2, 2)
+
+  border.pulse = border:CreateAnimationGroup()
+  border.pulse:SetLooping("REPEAT")
+  local fadeIn = border.pulse:CreateAnimation("Alpha")
+  fadeIn:SetOrder(1)
+  fadeIn:SetDuration(0.35)
+  fadeIn:SetFromAlpha(0.55)
+  fadeIn:SetToAlpha(1.00)
+  local fadeOut = border.pulse:CreateAnimation("Alpha")
+  fadeOut:SetOrder(2)
+  fadeOut:SetDuration(0.90)
+  fadeOut:SetFromAlpha(1.00)
+  fadeOut:SetToAlpha(0.55)
+
+  border:SetScript("OnHide", function(self)
+    if self.pulse and self.pulse:IsPlaying() then
+      self.pulse:Stop()
+    end
+    self:SetAlpha(1)
+  end)
+  return border
+end
+
+local function SetActiveBuffBorder(border, enabled, parent)
+  if not border then return end
+  if enabled then
+    border:SetFrameStrata(parent:GetFrameStrata())
+    border:SetFrameLevel(parent:GetFrameLevel() + 10)
+    border:Show()
+    if border.pulse and not border.pulse:IsPlaying() then
+      border.pulse:Play()
+    end
+  else
+    if border.pulse and border.pulse:IsPlaying() then
+      border.pulse:Stop()
+    end
+    border:Hide()
+  end
+end
 
 local function GetTexturePath(textureKey)
   local textures = {
@@ -46,15 +111,20 @@ function BarRegion:New(aura)
   instance.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
 
   instance.iconHolder = CreateFrame("Frame", nil, instance.frame)
+  instance.iconHolder:SetFrameLevel(instance.frame:GetFrameLevel() + 50)
   instance.iconHolder:SetSize(32, 32)
   instance.icon = instance.iconHolder:CreateTexture(nil, "ARTWORK")
   instance.icon:SetAllPoints()
 
   instance.overlay = CreateFrame("Frame", nil, instance.frame)
   instance.overlay:SetAllPoints()
-  instance.overlay:SetFrameLevel(instance.frame:GetFrameLevel() + 20)
+  instance.overlay:SetFrameLevel(instance.frame:GetFrameLevel() + 50)
+  instance.activeBuffBorder = CreateActiveBuffBorder(instance.frame)
 
-  instance.timerCooldown = CreateFrame("Cooldown", nil, instance.overlay, "CooldownFrameTemplate")
+  instance.timerOverlay = CreateFrame("Frame", nil, instance.frame)
+  instance.timerOverlay:SetAllPoints()
+  instance.timerOverlay:SetFrameLevel(instance.frame:GetFrameLevel() + 20)
+  instance.timerCooldown = CreateFrame("Cooldown", nil, instance.timerOverlay, "CooldownFrameTemplate")
   instance.timerCooldown:SetAllPoints()
   instance.timerCooldown:EnableMouse(false)
   if instance.timerCooldown.SetDrawSwipe then
@@ -71,7 +141,7 @@ function BarRegion:New(aura)
   end
 
   instance.labelText = instance.overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  instance.timerText = instance.overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  instance.timerText = instance.timerOverlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   instance.stackText = instance.overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 
   return instance
@@ -181,24 +251,232 @@ local function ApplyStackText(fontString, state)
   fontString:SetText(state and (state.stackText or (state.stacks and state.stacks > 0 and tostring(state.stacks) or "")) or "")
 end
 
+function BarRegion:UpdateActiveDurationNative(aura, state)
+  local wantsNative = state.activeGlowStyle == "ACTIVE_DURATION"
+    and state.loadMatched ~= false and type(state.activeBuffSpellIDs) == "table"
+  if not wantsNative then
+    if self.activeDurationNative then self.activeDurationNative:Release() end
+    return false, "not-requested"
+  end
+
+  if not self.activeDurationNative and self.activeDurationNativeFailed ~= true then
+    local controllerClass = ns.renderers.ActiveDurationNative
+    local controller, reason
+    if controllerClass then
+      controller, reason = controllerClass:New(self.frame, aura, state.activeBuffSpellIDs)
+    end
+    if controller then
+      self.activeDurationNative = controller
+    else
+      self.activeDurationNativeFailed = true
+      self.activeDurationNativeFailure = reason or "native-create-failed"
+    end
+  end
+  if self.activeDurationNative and self.activeDurationNative:Update(state.activeBuffSpellIDs) then
+    return true, "native-aura-slot"
+  end
+  return false, self.activeDurationNativeFailure or "native-unavailable"
+end
+
+function BarRegion:IsCurrentActiveDurationSource(source, cooldownID, token)
+  return self.activeDurationSource == source
+    and self.activeDurationCooldownID == cooldownID
+    and self.activeDurationBindingToken == token
+    and self.activeDurationCDMMode == true
+end
+
+local function GetActiveDurationSourceState(source)
+  if not source or type(source.IsActive) ~= "function" then return nil end
+  local okActive, sourceActive = pcall(source.IsActive, source)
+  return okActive and Safe:Boolean(sourceActive) or nil
+end
+
+function BarRegion:GetCDMActiveDurationTimer(state)
+  local manager = ns.CooldownManager
+  if not manager or not manager.FindAuraStateSource
+    or type(state.activeBuffSpellIDs) ~= "table" then
+    return nil, "state-source-unavailable"
+  end
+
+  local source = manager:FindAuraStateSource(state.activeBuffSpellIDs, "player")
+  if not source then
+    -- Tracked-buff frames can be acquired after the cast/UNIT_AURA callback.
+    -- Bypass a previously cached empty traversal for this bounded retry.
+    source = manager:FindAuraStateSource(state.activeBuffSpellIDs, "player", true)
+  end
+  if not source then return nil, "state-source-missing" end
+
+  local sourceKind = source.viewerFrame == _G.BuffIconCooldownViewer and "icon"
+    or source.viewerFrame == _G.BuffBarCooldownViewer and "bar" or "unknown"
+  if type(source.IsActive) ~= "function" then
+    return nil, sourceKind .. ":active-api-unavailable"
+  end
+  local sourceActive = GetActiveDurationSourceState(source)
+  if sourceActive ~= true then
+    return nil, sourceKind .. (sourceActive == false and ":inactive" or ":active-unavailable")
+  end
+  if not source or type(source.GetAuraSpellInstanceID) ~= "function"
+    or not C_UnitAuras or not C_UnitAuras.GetAuraDuration then
+    return nil, sourceKind .. ":duration-api-unavailable"
+  end
+
+  local okInstance, auraInstanceID = pcall(source.GetAuraSpellInstanceID, source)
+  auraInstanceID = okInstance and Safe:Number(auraInstanceID) or nil
+  if not auraInstanceID then return nil, sourceKind .. ":instance-unavailable" end
+
+  local okDuration, durationObject = pcall(C_UnitAuras.GetAuraDuration, "player", auraInstanceID)
+  if not okDuration or durationObject == nil then return nil, sourceKind .. ":duration-unavailable" end
+  return Duration:BuildTimer(durationObject, "active_buff_cdm", true), sourceKind .. ":duration-object"
+end
+
+function BarRegion:BindActiveDurationSource(state, aura)
+  local manager = ns.CooldownManager
+  local source, cooldownID
+  if manager and manager.FindAuraDisplaySource and type(state.activeBuffSpellIDs) == "table" then
+    source, cooldownID = manager:FindAuraDisplaySource(state.activeBuffSpellIDs, "player")
+  end
+
+  if self.activeDurationSource == source and self.activeDurationCooldownID == cooldownID then
+    local sourceActive = GetActiveDurationSourceState(source)
+    self.activeDurationCDMMode = source ~= nil and sourceActive == true
+    if self.activeDurationCDMMode and self.activeDurationSourceBar then
+      local okRange, minimum, maximum = pcall(self.activeDurationSourceBar.GetMinMaxValues, self.activeDurationSourceBar)
+      if okRange then pcall(self.bar.SetMinMaxValues, self.bar, minimum, maximum) end
+      local okValue, value = pcall(self.activeDurationSourceBar.GetValue, self.activeDurationSourceBar)
+      if okValue then pcall(self.bar.SetValue, self.bar, value) end
+      if self.activeDurationSourceDuration and type(self.activeDurationSourceDuration.GetText) == "function" then
+        local okText, text = pcall(self.activeDurationSourceDuration.GetText, self.activeDurationSourceDuration)
+        if okText then self.timerText:SetText(text) end
+      end
+    end
+    return self.activeDurationCDMMode
+  end
+
+  self.activeDurationBindingToken = (self.activeDurationBindingToken or 0) + 1
+  local token = self.activeDurationBindingToken
+  self.activeDurationSource = source
+  self.activeDurationCooldownID = cooldownID
+  self.activeDurationSourceBar = nil
+  self.activeDurationSourceDuration = nil
+  self.activeDurationCDMMode = false
+  if not source or not cooldownID or type(source.GetBarFrame) ~= "function" then return false end
+
+  local okBar, sourceBar = pcall(source.GetBarFrame, source)
+  if not okBar or not sourceBar then return false end
+  self.activeDurationSourceBar = sourceBar
+  if type(source.GetDurationFontString) == "function" then
+    local okDuration, duration = pcall(source.GetDurationFontString, source)
+    if okDuration then self.activeDurationSourceDuration = duration end
+  end
+
+  hooksecurefunc(source, "SetIsActive", function(owner)
+    if self:IsCurrentActiveDurationSource(owner, cooldownID, token) and ns.runtime then
+      ns.runtime:RefreshAura(aura.id)
+    end
+  end)
+  hooksecurefunc(sourceBar, "SetMinMaxValues", function(_, minimum, maximum)
+    if self:IsCurrentActiveDurationSource(source, cooldownID, token) then
+      pcall(self.bar.SetMinMaxValues, self.bar, minimum, maximum)
+    end
+  end)
+  hooksecurefunc(sourceBar, "SetValue", function(_, value)
+    if self:IsCurrentActiveDurationSource(source, cooldownID, token) then
+      pcall(self.bar.SetValue, self.bar, value)
+    end
+  end)
+  if self.activeDurationSourceDuration then
+    hooksecurefunc(self.activeDurationSourceDuration, "SetText", function(_, text)
+      if self:IsCurrentActiveDurationSource(source, cooldownID, token) then
+        self.timerText:SetText(text)
+      end
+    end)
+  end
+
+  local sourceActive = GetActiveDurationSourceState(source)
+  self.activeDurationCDMMode = sourceActive == true
+  if self.activeDurationCDMMode then
+    local okRange, minimum, maximum = pcall(sourceBar.GetMinMaxValues, sourceBar)
+    if okRange then pcall(self.bar.SetMinMaxValues, self.bar, minimum, maximum) end
+    local okValue, value = pcall(sourceBar.GetValue, sourceBar)
+    if okValue then pcall(self.bar.SetValue, self.bar, value) end
+    if self.activeDurationSourceDuration and type(self.activeDurationSourceDuration.GetText) == "function" then
+      local okText, text = pcall(self.activeDurationSourceDuration.GetText, self.activeDurationSourceDuration)
+      if okText then self.timerText:SetText(text) end
+    end
+  end
+  return self.activeDurationCDMMode
+end
+
 function BarRegion:Update(aura, state)
   self.currentAura = aura
   self.currentState = state
   BaseRegion:ApplyAnchor(aura, self.frame)
   BaseRegion:ApplyFrameLayer(aura, self.frame, self.overlay)
 
-  local remainingFromObject = ns.TextResolver:GetDurationObjectRemaining(state)
-  local readyLookActive = aura.display.readyLook == true and ns.TextResolver:IsReadyState(state, remainingFromObject)
+  -- Keep ordinary timer presentation below the native aura overlay, while
+  -- labels, charge text, and the configured icon remain above it.
+  local frameLevel = self.frame:GetFrameLevel()
+  self.timerOverlay:SetFrameLevel(frameLevel + 20)
+  self.overlay:SetFrameLevel(frameLevel + 50)
+  self.iconHolder:SetFrameLevel(frameLevel + 50)
+
+  local nativeActiveDuration, nativeActiveDurationDebug =
+    self:UpdateActiveDurationNative(aura, state)
+  self.activeDurationNativeAuthority = nativeActiveDuration == true
+
+  -- In combat the raw player-aura presence can be unavailable. When Blizzard's
+  -- exact AuraContainer slot is unavailable, ask the exact CDM source for its
+  -- public active state instead of requiring raw aura presence first.
+  local activeDurationRequested = state.activeGlowStyle == "ACTIVE_DURATION"
+    and not nativeActiveDuration and state.show and state.active == true
+  local activeBuffTimer, activeDurationDebug
+  if activeDurationRequested then
+    activeBuffTimer, activeDurationDebug = self:GetCDMActiveDurationTimer(state)
+  elseif nativeActiveDuration then
+    activeDurationDebug = nativeActiveDurationDebug
+  else
+    activeDurationDebug = nativeActiveDurationDebug or "not-requested"
+  end
+  self.activeDurationDebug = activeDurationDebug
+  local activeBuffDurationObject = activeBuffTimer and activeBuffTimer.object or state.activeBuffDurationObject
+  local activeDurationCDMMode = false
+  if activeDurationRequested and activeBuffDurationObject == nil then
+    activeDurationCDMMode = self:BindActiveDurationSource(state, aura)
+  else
+    self.activeDurationCDMMode = false
+  end
+  local activeDurationMode = activeDurationRequested
+    and (activeBuffDurationObject ~= nil or activeDurationCDMMode)
+  local timerState = state
+  if activeDurationMode and not activeDurationCDMMode then
+    timerState = {
+      active = true,
+      isReady = false,
+      source = "aura",
+      progressType = "timed",
+      durationObject = activeBuffDurationObject,
+      duration = activeBuffTimer and activeBuffTimer.duration or state.activeBuffDuration,
+      expirationTime = activeBuffTimer and activeBuffTimer.expirationTime or state.activeBuffExpirationTime,
+      value = activeBuffTimer and activeBuffTimer.duration or state.activeBuffDuration,
+      total = activeBuffTimer and activeBuffTimer.duration or state.activeBuffDuration,
+    }
+  end
+  self.currentTimerState = timerState
+  self.activeDurationMode = activeDurationMode
+  local remainingFromObject = ns.TextResolver:GetDurationObjectRemaining(timerState)
+  local readyLookActive = aura.display.readyLook == true and ns.TextResolver:IsReadyState(timerState, remainingFromObject)
   local color = aura.display.color
   if aura.display.noStacksBarColorEnabled == true and state.noCharges == true then
     color = aura.display.noStacksBarColor or color
   end
   if state.color then color = state.color end
   if readyLookActive then color = aura.display.readyColor or aura.display.color end
+  if activeDurationMode then color = ACTIVE_DURATION_COLOR end
   local timerColor = readyLookActive and (aura.display.readyTextColor or aura.display.timerColor) or aura.display.timerColor or DEFAULT_TEXT_COLOR
-  local useNativeCooldownText = ShouldUseNativeCooldownText(aura, state, remainingFromObject)
-  if state.durationObject and ns.TimerPresenter then
-    ns.TimerPresenter:SetCompletionTimer(self.timerCooldown, state.durationObject, aura.id)
+  if activeDurationMode then timerColor = ACTIVE_DURATION_COLOR end
+  local useNativeCooldownText = not activeDurationCDMMode and ShouldUseNativeCooldownText(aura, timerState, remainingFromObject)
+  if timerState.durationObject and ns.TimerPresenter then
+    ns.TimerPresenter:SetCompletionTimer(self.timerCooldown, timerState.durationObject, aura.id)
   end
   local orientation = aura.display.orientation or "HORIZONTAL"
   self.bar:SetStatusBarTexture(GetTexturePath(aura.display.barTexture))
@@ -230,8 +508,19 @@ function BarRegion:Update(aura, state)
     self.iconHolder:Hide()
   end
 
+  -- A spell cooldown's normal active state means "cooldown running." The
+  -- appearance option instead uses its separately resolved player-buff state.
   local glowTarget = aura.display.icon and self.iconHolder or self.frame
-  BaseRegion:ApplyCommonAppearance(aura, self.frame, state, glowTarget)
+  local activeGlowOverride
+  if state.activeBuffGlow == true then
+    activeGlowOverride = state.activeGlowStyle == "OUTER_GLOW" and state.active == true and state.activeBuff == true or false
+    SetActiveBuffBorder(self.activeBuffBorder,
+      state.activeGlowStyle == "INNER_GLOW" and state.show and state.active == true and state.activeBuff == true,
+      self.frame)
+  else
+    SetActiveBuffBorder(self.activeBuffBorder, false, self.frame)
+  end
+  BaseRegion:ApplyCommonAppearance(aura, self.frame, state, glowTarget, activeGlowOverride)
   local cancelEnabled = false
   if state.show and BaseRegion:IsEditModeActive() ~= true then
     cancelEnabled = BaseRegion:ConfigureAuraCancellation(self.frame, state)
@@ -256,13 +545,16 @@ function BarRegion:Update(aura, state)
   ApplyTextRotation(self.timerText, aura.display.timerRotation)
   ApplyTextRotation(self.stackText, aura.display.stacksRotation)
 
-  local remaining = state.progressType == "timed" and math.max(0, (state.expirationTime or 0) - GetTime()) or state.value
-  local total = state.progressType == "timed" and (state.duration > 0 and state.duration or remaining) or math.max(1, state.total or 1)
-  local usingDurationObjectTimer = state.durationObject ~= nil and self.bar.SetTimerDuration ~= nil
+  local remaining = timerState.progressType == "timed" and math.max(0, (timerState.expirationTime or 0) - GetTime()) or timerState.value
+  local total = timerState.progressType == "timed" and (timerState.duration > 0 and timerState.duration or remaining) or math.max(1, timerState.total or 1)
+  local usingDurationObjectTimer = not activeDurationCDMMode and timerState.durationObject ~= nil and self.bar.SetTimerDuration ~= nil
   local transitioningToOpaqueObjectTimer = usingDurationObjectTimer
     and self._usingDurationObjectTimer ~= true
     and remainingFromObject == nil
-  if usingDurationObjectTimer then
+  if activeDurationCDMMode then
+    -- CDM owns the restricted duration values. Its hooks above feed them
+    -- directly into this presentation bar without addon Lua inspecting them.
+  elseif usingDurationObjectTimer then
     local direction = STATUS_BAR_DIRECTION and (
       aura.display.reverse == true
         and STATUS_BAR_DIRECTION.ElapsedTime
@@ -274,9 +566,9 @@ function BarRegion:Update(aura, state)
       self.bar:SetValue(aura.display.reverse == true and 1 or 0)
     end
     if interpolation ~= nil or direction ~= nil then
-      self.bar:SetTimerDuration(state.durationObject, interpolation, direction)
+      self.bar:SetTimerDuration(timerState.durationObject, interpolation, direction)
     else
-      self.bar:SetTimerDuration(state.durationObject)
+      self.bar:SetTimerDuration(timerState.durationObject)
     end
   else
     self.bar:SetMinMaxValues(0, math.max(0.001, total))
@@ -289,15 +581,22 @@ function BarRegion:Update(aura, state)
     self.bar:SetValue(barValue)
   end
   self.labelText:SetText(ns.TextResolver:Resolve(aura.text.label, state, aura))
-  if useNativeCooldownText then
+  if activeDurationCDMMode then
+    -- The CDM duration font string is mirrored by its SetText hook.
+  elseif useNativeCooldownText then
     self.timerText:SetText("")
   else
-    self.timerText:SetText(ns.TextResolver:GetTimerText(state, aura, remainingFromObject))
+    self.timerText:SetText(ns.TextResolver:GetTimerText(timerState, aura, remainingFromObject))
   end
   ApplyStackText(self.stackText, state)
 
-  if useNativeCooldownText and state.durationObject and self.timerCooldown.SetCooldownFromDurationObject then
-    self.timerCooldown:SetCooldownFromDurationObject(state.durationObject, true)
+  if activeDurationCDMMode then
+    if self.timerCooldown.SetHideCountdownNumbers then
+      self.timerCooldown:SetHideCountdownNumbers(true)
+    end
+    self.timerCooldown:Hide()
+  elseif useNativeCooldownText and timerState.durationObject and self.timerCooldown.SetCooldownFromDurationObject then
+    self.timerCooldown:SetCooldownFromDurationObject(timerState.durationObject, true)
     ConfigureNativeCountdown(self.timerCooldown, self.frame, self.iconHolder, aura, timerColor)
     self.timerCooldown:Show()
   else
@@ -308,11 +607,11 @@ function BarRegion:Update(aura, state)
   end
 
   local shouldRegisterTimed = false
-  if state.show then
-    if state.durationObject then
+  if state.show and not activeDurationCDMMode then
+    if timerState.durationObject then
       shouldRegisterTimed = aura.display.showTimer == true and not useNativeCooldownText and remainingFromObject ~= nil and remainingFromObject > 0
     else
-      shouldRegisterTimed = state.progressType == "timed" and (state.expirationTime or 0) > GetTime()
+      shouldRegisterTimed = timerState.progressType == "timed" and (timerState.expirationTime or 0) > GetTime()
     end
   end
 
@@ -325,9 +624,15 @@ function BarRegion:Update(aura, state)
   self._usingDurationObjectTimer = usingDurationObjectTimer == true
 end
 
+function BarRegion:Release()
+  if self.activeDurationNative then self.activeDurationNative:Release() end
+  if self.currentAura and ns.runtime then ns.runtime:UnregisterTimedRegion(self.currentAura.id) end
+  self.frame:Hide()
+end
+
 function BarRegion:OnTimerUpdate(now)
   local aura = self.currentAura
-  local state = self.currentState
+  local state = self.currentTimerState or self.currentState
   if not aura or not state then
     return false
   end
@@ -359,7 +664,9 @@ function BarRegion:OnTimerUpdate(now)
     local readyLookActive = aura.display.readyLook == true and ns.TextResolver:IsReadyState(state, remainingFromObject)
     Colors.Apply(
       self.timerText,
-      readyLookActive and (aura.display.readyTextColor or aura.display.timerColor) or aura.display.timerColor or DEFAULT_TEXT_COLOR
+      self.activeDurationMode and ACTIVE_DURATION_COLOR
+        or readyLookActive and (aura.display.readyTextColor or aura.display.timerColor)
+        or aura.display.timerColor or DEFAULT_TEXT_COLOR
     )
     self.timerText:SetText(ns.TextResolver:GetTimerText(state, aura, remainingFromObject))
     return true
@@ -392,7 +699,9 @@ function BarRegion:OnTimerUpdate(now)
 
   Colors.Apply(
     self.timerText,
-    readyLookActive and (aura.display.readyTextColor or aura.display.timerColor) or aura.display.timerColor or DEFAULT_TEXT_COLOR
+    self.activeDurationMode and ACTIVE_DURATION_COLOR
+      or readyLookActive and (aura.display.readyTextColor or aura.display.timerColor)
+      or aura.display.timerColor or DEFAULT_TEXT_COLOR
   )
   self.timerText:SetText(ns.TextResolver:GetTimerText(state, aura))
   return true

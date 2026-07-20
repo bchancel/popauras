@@ -1,3 +1,11 @@
+# v12.1.1
+- Added a player-only successful spell-cast event trigger for instant abilities such as Darkness
+- Changed Glow When Active on Spell Cooldown bars into selectable None, Inner Glow, Outer Glow, and Active Duration effects; Active Duration uses a bright yellow buff timer before returning to the cooldown
+- Added the verified Retail 12.1 all-spec cooldown-to-player-aura catalogue in a maintainable data-only file while retaining one canonical resolver
+- Fixed Active Duration in combat by accepting CDM tracked-buff icon sources and passing their opaque Blizzard aura `DurationObject` directly to presentation widgets
+- Added late CDM frame acquisition retries and secret-safe Active Duration diagnostics for combat-only failures
+- Added an exact Blizzard AuraContainer overlay for Active Duration bars, covering abilities such as Soul Immolation that have no instantiated CDM frame
+
 # v12.1.0
 - Re-write for retail version 12.1.0 utilizing new AuraButton styling
 - Adjusting version number to keep in pace with wow retail version it was designed for

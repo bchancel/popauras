@@ -2,7 +2,7 @@
 ## Title: PopAuras
 ## Notes: Midnight 12.1 addon focused on reliable bars and icons
 ## Author: Popabeast-Sargeras
-## Version: 12.1.0
+## Version: 12.1.1
 ## X-Curse-Project-ID: 1510249
 ## SavedVariables: PopAurasDB
 ## OptionalDeps: Blizzard_AuraContainer, Blizzard_CooldownViewer
@@ -19,6 +19,7 @@ Util\Fonts.lua
 Util\Anchors.lua
 Util\Frames.lua
 Util\SoundPicker.lua
+Data\SpellAuraAliases.lua
 Util\Spells.lua
 Util\Items.lua
 Util\UnitAuraList.lua
@@ -58,6 +59,7 @@ Triggers\SpellCooldownProvider.lua
 Triggers\ItemCooldownProvider.lua
 Triggers\TrinketCooldownProvider.lua
 Triggers\CastProvider.lua
+Triggers\SpellCastEventProvider.lua
 Triggers\ChatProvider.lua
 Triggers\SimpleProvider.lua
 Triggers\TimerProvider.lua
@@ -66,6 +68,7 @@ Triggers\DeathAlertProvider.lua
 Renderers\BaseRegion.lua
 Renderers\Layouts.lua
 Renderers\NativeAuraRegion.lua
+Renderers\ActiveDurationNative.lua
 Renderers\IconRegion.lua
 Renderers\BarRegion.lua
 Renderers\AuraBarListRegion.lua

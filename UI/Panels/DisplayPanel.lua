@@ -75,6 +75,13 @@ local barTextureValues = {
   "BLIZZARD",
 }
 
+local activeGlowStyleValues = {
+  { value = "NONE", label = "None" },
+  { value = "INNER_GLOW", label = "Inner Glow" },
+  { value = "OUTER_GLOW", label = "Outer Glow" },
+  { value = "ACTIVE_DURATION", label = "Active Duration" },
+}
+
 local function GetSelectedTrigger(aura)
   if not aura or type(aura.triggers) ~= "table" or #aura.triggers == 0 then
     return {}
@@ -720,6 +727,7 @@ function Panel:UpdateControlStates()
   local readyLook = frame.readyLookCheck:GetChecked() == true
   local trigger = GetSelectedTrigger(aura)
   local supportsNoStacksColor = trigger and trigger.type == "spell_cooldown" and kind == "bar"
+  local supportsActiveGlowStyle = trigger and trigger.type == "spell_cooldown" and kind == "bar"
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura")
   local showIconCooldownControls = not isGroup and not isText and isIconAura and frame.iconSection.collapsed ~= true
   local showRaidFrameSection = not isGroup and not isText and isIconAura and frame.raidFrameSection:IsShown()
@@ -736,7 +744,8 @@ function Panel:UpdateControlStates()
     frame.readyColorWrap.button, frame.readyColorWrap.label,
     frame.barTextureWrap.dropdown, frame.barTextureWrap.label,
   }, not isGroup and not isText)
-  SetControlGroupEnabled({ frame.glowWhenActiveCheck }, not isGroup and not isText and not isAuraBarList)
+  SetControlGroupEnabled({ frame.glowWhenActiveCheck }, not isGroup and not isText and not isAuraBarList and not supportsActiveGlowStyle)
+  SetControlGroupEnabled({ frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown }, supportsActiveGlowStyle)
   SetControlGroupEnabled({ frame.showBackgroundCheck }, true)
   SetControlGroupEnabled({ frame.readyColorWrap.button, frame.readyColorWrap.label }, not isGroup and not isText and readyLook)
   SetControlGroupEnabled({ frame.noStacksBarColorCheck }, supportsNoStacksColor)
@@ -894,9 +903,15 @@ function Panel:ApplyCurrent()
   aura.display.noStacksBarColorEnabled = frame.noStacksBarColorCheck:GetChecked() == true
   aura.display.noStacksBarColor = Colors.Copy(frame.noStacksBarColorWrap.color
     or aura.display.noStacksBarColor or { r = 0.86, g = 0.18, b = 0.18, a = 1 })
-  aura.display.readyLook = frame.readyLookCheck:GetChecked() == true
-  aura.display.glowWhenActive = frame.glowWhenActiveCheck:GetChecked() == true
   local trigger = GetSelectedTrigger(aura)
+  aura.display.readyLook = frame.readyLookCheck:GetChecked() == true
+  if trigger.type == "spell_cooldown" and aura.kind == "bar" then
+    local style = UIDropDownMenu_GetSelectedValue(frame.activeGlowStyleWrap.dropdown) or aura.display.activeGlowStyle or "NONE"
+    aura.display.activeGlowStyle = style
+    aura.display.glowWhenActive = style ~= "NONE"
+  else
+    aura.display.glowWhenActive = frame.glowWhenActiveCheck:GetChecked() == true
+  end
   if trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura") then
     trigger.showAlways = frame.showAlwaysReadyCheck:GetChecked() == true
   end
@@ -1094,6 +1109,7 @@ function Panel:Create(parent)
   frame.readyLookCheck:SetPoint("TOPLEFT", 12, -336)
   frame.glowWhenActiveCheck = Frames.CreateCheckbox(frame.canvasSection, "Glow When Active")
   frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 180, -336)
+  frame.activeGlowStyleWrap = CreateLabeledDropdown(frame.canvasSection, "Glow When Active", 180, -324, 155, activeGlowStyleValues)
   frame.showAlwaysReadyCheck = Frames.CreateCheckbox(frame.canvasSection, "Show While Ready")
   frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 360, -336)
   frame.readyColorWrap = CreateColorSwatch(frame.canvasSection, "Ready Color", 220, -284)
@@ -1351,6 +1367,7 @@ function Panel:Create(parent)
     frame.noStacksBarColorWrap.label, frame.noStacksBarColorWrap.button, frame.noStacksBarColorWrap.valueText,
     frame.readyLookCheck,
     frame.glowWhenActiveCheck,
+    frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown,
     frame.showAlwaysReadyCheck,
     frame.reverseCheck,
     frame.readyColorWrap.label, frame.readyColorWrap.button, frame.readyColorWrap.valueText,
@@ -1541,6 +1558,7 @@ function Panel:Create(parent)
   InitDropdownWithCallback(frame.parentPointWrap.dropdown, Anchors.GetPointList, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.anchorWrap.dropdown, Anchors.GetTargetList, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.barTextureWrap.dropdown, barTextureValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.activeGlowStyleWrap.dropdown, activeGlowStyleValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.groupGrowthWrap.dropdown, { "DOWN", "UP", "RIGHT", "LEFT" }, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.iconAnchorWrap.dropdown, iconAnchorValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.raidFrameAnchorWrap.dropdown, raidFrameAnchorValues, function() Panel:ApplyCurrent() end)
@@ -1651,6 +1669,7 @@ function Panel:ApplyCanvasLayout(isGroup)
   frame.readyLookCheck:SetPoint("TOPLEFT", 12, -336)
   frame.glowWhenActiveCheck:ClearAllPoints()
   frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 180, -336)
+  PositionLabeledDropdown(frame.activeGlowStyleWrap, 180, -324)
   frame.showAlwaysReadyCheck:ClearAllPoints()
   frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 360, -336)
   frame.reverseCheck:ClearAllPoints()
@@ -1736,6 +1755,7 @@ function Panel:Refresh(aura)
     aura.display.noStacksBarColor or { r = 0.86, g = 0.18, b = 0.18, a = 1 })
   self.frame.readyLookCheck:SetChecked(aura.display.readyLook == true)
   self.frame.glowWhenActiveCheck:SetChecked(aura.display.glowWhenActive == true)
+  SetDropdown(self.frame.activeGlowStyleWrap.dropdown, aura.display.activeGlowStyle or "NONE")
   self.frame.showAlwaysReadyCheck:SetChecked(trigger.showAlways == true)
   if self.frame.readyLookCheck.Text then
     if trigger.type == "aura" then
@@ -1901,7 +1921,10 @@ function Panel:Refresh(aura)
   self.frame.noStacksBarColorWrap.button:SetShown(showNoStacksColor)
   self.frame.noStacksBarColorWrap.valueText:SetShown(showNoStacksColor)
   self.frame.readyLookCheck:SetShown(not isGroup and not isText)
-  self.frame.glowWhenActiveCheck:SetShown(not isGroup and not isText and not isAuraBarList)
+  local showActiveGlowStyle = trigger.type == "spell_cooldown" and aura.kind == "bar"
+  self.frame.glowWhenActiveCheck:SetShown(not isGroup and not isText and not isAuraBarList and not showActiveGlowStyle)
+  self.frame.activeGlowStyleWrap.label:SetShown(showActiveGlowStyle)
+  self.frame.activeGlowStyleWrap.dropdown:SetShown(showActiveGlowStyle)
   self.frame.showAlwaysReadyCheck:SetShown(not isGroup and not isText and supportsShowAlways)
   self.frame.reverseCheck:SetShown(not isGroup and not isText)
   self.frame.readyColorWrap.label:SetShown(not isGroup and not isText)

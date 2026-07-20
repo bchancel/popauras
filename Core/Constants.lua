@@ -1,7 +1,7 @@
 local _, ns = ...
 
 ns.Constants = {
-  DB_VERSION = 3,
+  DB_VERSION = 5,
   EXPORT_VERSION = 1,
   EXPORT_PREFIX = "POPAURAS:1:",
   AURA_KINDS = {

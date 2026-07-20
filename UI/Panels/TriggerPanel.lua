@@ -13,6 +13,7 @@ local triggerTypes = {
   item_cooldown = "Item Cooldown",
   trinket_cooldown = "Trinket Cooldown",
   cast = "Cast / Channel",
+  spell_cast_event = "Spell Cast Event",
   chat = "Chat",
   timer = "Internal Timer",
   death_alert = "Death Alert",
@@ -747,6 +748,7 @@ function Panel:ApplyTriggerType(triggerType)
 
   if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
     ns.TriggerBase:InvalidateProviderCaches("trinket_cooldown")
+    ns.TriggerBase:InvalidateProviderCaches("spell_cast_event")
   end
 
   ns.runtime:RefreshAura(aura.id)
@@ -828,7 +830,7 @@ function Panel:ApplyCurrent()
   trigger.hideBlizzardDebuffs = frame.auraListHideBlizzardDebuffsCheck:GetChecked() == true
 
   local input = TrimmedText(frame.argInput:GetText())
-  if trigger.type == "spell_cooldown" then
+  if trigger.type == "spell_cooldown" or trigger.type == "spell_cast_event" then
     if input == "" then
       trigger.spellIDs = nil
       trigger.spellNames = nil
@@ -988,6 +990,8 @@ function Panel:ApplyCurrent()
     trigger.ignoreNPCs = false
   elseif trigger.type == "cast" and not trigger.unit then
     trigger.unit = "player"
+  elseif trigger.type == "spell_cast_event" then
+    trigger.unit = "player"
   end
 
   triggers[triggerIndex] = trigger
@@ -995,6 +999,7 @@ function Panel:ApplyCurrent()
   if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
     ns.TriggerBase:InvalidateProviderCaches("aura_list")
     ns.TriggerBase:InvalidateProviderCaches("trinket_cooldown")
+    ns.TriggerBase:InvalidateProviderCaches("spell_cast_event")
   end
   ns.runtime:RefreshAura(aura.id)
   if ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
@@ -1626,7 +1631,7 @@ function Panel:Refresh(aura)
     else
       self.frame.resolvedLabel:SetText("|cffaaaaaaEnter aura names or spell IDs separated by commas.|r")
     end
-  elseif trigger.type == "spell_cooldown" or trigger.type == "cast" then
+  elseif trigger.type == "spell_cooldown" or trigger.type == "cast" or trigger.type == "spell_cast_event" then
     self.frame.argLabel:SetText(trigger.type == "cast" and "Spell Name or IDs (optional)" or "Spell Name or IDs")
     local spellIDs = GetTriggerSpellIDs(trigger)
     local idTokens = {}
@@ -1640,7 +1645,8 @@ function Panel:Refresh(aura)
         local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellId)
         resolvedNames[#resolvedNames + 1] = string.format("%s (%d)", spellName or "Spell", spellId)
       end
-      self.frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s", table.concat(resolvedNames, ", ")))
+      local label = trigger.type == "spell_cast_event" and "|cff88ff88Player cast event:|r %s" or "|cff88ff88Resolved:|r %s"
+      self.frame.resolvedLabel:SetText(string.format(label, table.concat(resolvedNames, ", ")))
     else
       self.frame.resolvedLabel:SetText("|cffaaaaaaEnter spell names or IDs separated by commas.|r")
     end

@@ -5,26 +5,17 @@ ns.util.Spells = Spells
 
 Spells.learnedNameToId = Spells.learnedNameToId or {}
 
--- Some spellbook abilities apply an aura under a different spell ID. Midnight
--- only provides exact spell-ID filters for secret-safe native aura containers,
--- so these relationships must be explicit rather than learned by scanning all
--- unit auras. These are canonical applied-aura IDs: presentation continues to
--- use the configured spell ID, while matching uses only the actual aura IDs.
-local AURA_SPELL_ID_ALIASES = {
-  [8921] = { 164812 },   -- Moonfire (cast -> periodic debuff)
-  [155625] = { 164812 }, -- Moonfire (Cat Form cast -> periodic debuff)
-  [1252871] = { 164812 }, -- Red Moon (ability -> Moonfire periodic debuff)
-  [93402] = { 164815 },  -- Sunfire (cast -> periodic debuff)
-  [1822] = { 155722 },   -- Rake (cast -> periodic debuff)
-  [77758] = { 192090 },  -- Thrash (cast -> stacking periodic debuff)
-  [202345] = { 279709 }, -- Starlord (talent -> stacking buff)
-  [203720] = { 203819 }, -- Demon Spikes (ability -> active buff)
-}
+-- Midnight only provides exact spell-ID filters for secret-safe native aura
+-- containers. Data/SpellAuraAliases.lua owns the explicit configured-spell to
+-- applied-aura catalogue; this module remains its single public resolver.
+local AURA_SPELL_ID_ALIASES = ns.SpellAuraAliases or {}
 
 local AURA_ALIAS_RELATED_IDS = {}
-for abilitySpellID, auraSpellIDs in pairs(AURA_SPELL_ID_ALIASES) do
+for abilitySpellID, aliasRecord in pairs(AURA_SPELL_ID_ALIASES) do
   AURA_ALIAS_RELATED_IDS[abilitySpellID] = true
-  for _, auraSpellID in ipairs(auraSpellIDs) do AURA_ALIAS_RELATED_IDS[auraSpellID] = true end
+  for _, auraSpellID in ipairs(aliasRecord.auraSpellIDs or {}) do
+    AURA_ALIAS_RELATED_IDS[auraSpellID] = true
+  end
 end
 
 local function Trim(value)
@@ -92,8 +83,9 @@ function Spells:GetAuraSpellIDs(value)
     return {}
   end
 
-  local aliases = AURA_SPELL_ID_ALIASES[spellID]
-  if not aliases then
+  local aliasRecord = AURA_SPELL_ID_ALIASES[spellID]
+  local aliases = aliasRecord and aliasRecord.auraSpellIDs
+  if not aliases or #aliases == 0 then
     return { spellID }
   end
 

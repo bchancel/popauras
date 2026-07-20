@@ -26,7 +26,7 @@ local PRESENTATION_FIELDS = {
   "stacks", "maxStacks", "stackText", "stackDisplayValue", "hasStackDisplayValue",
   "unit", "matchedUnits", "unitStates", "auraInstanceID", "helpful", "auraIndex",
   "spellId", "itemId", "source", "availability", "isReady", "isEnabled",
-  "isUsable", "noCharges", "color", "desaturate", "glow", "entries", "actionEventKey", "debugExtra",
+  "isUsable", "noCharges", "activeBuff", "activeBuffGlow", "activeGlowStyle", "activeBuffDurationObject", "activeBuffDuration", "activeBuffExpirationTime", "activeBuffSpellIDs", "color", "desaturate", "glow", "entries", "actionEventKey", "debugExtra",
 }
 
 local function PresentationScore(state)

@@ -269,7 +269,7 @@ function BaseRegion:SetGlow(frame, shouldGlow)
   SetAuraGlow(frame, shouldGlow == true)
 end
 
-function BaseRegion:ApplyCommonAppearance(aura, frame, state, glowTarget)
+function BaseRegion:ApplyCommonAppearance(aura, frame, state, glowTarget, activeGlowOverride)
   frame:EnableMouse(self:CanMove(aura))
   frame:SetAlpha((aura.display and aura.display.alpha) or 1)
   if state.show then
@@ -279,7 +279,11 @@ function BaseRegion:ApplyCommonAppearance(aura, frame, state, glowTarget)
   end
 
   local allowActiveGlow = aura == nil or aura.kind ~= "aura_bar_list"
-  local shouldGlow = state and (state.glow == true or (allowActiveGlow and (aura.display and aura.display.glowWhenActive == true) and state.active == true)) or false
+  local activeForGlow = activeGlowOverride
+  if activeForGlow == nil then
+    activeForGlow = state and state.active == true
+  end
+  local shouldGlow = state and (state.glow == true or (allowActiveGlow and (aura.display and aura.display.glowWhenActive == true) and activeForGlow == true)) or false
   if not state.show then
     shouldGlow = false
   end

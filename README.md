@@ -18,6 +18,12 @@ PopAuras is a saved-variable-compatible aura addon for WoW Retail 12.1.
   as a missing aura.
 - Secret display values remain opaque and are passed directly to Blizzard
   widgets. They are not compared, formatted, logged, or persisted.
+- Player spell-cast event triggers can activate normal PopAuras regions and
+  actions after a configured spell successfully casts.
+- Verified configured-spell to applied-aura identities live in the data-only
+  `Data/SpellAuraAliases.lua` catalogue and resolve only through
+  `Util/Spells.lua`; explicitly marked PTR candidates may be loaded for a
+  controlled in-client test without being represented as verified.
 
 Existing PopAuras saved variables, imports, groups, actions, conditions, load
 rules, and editor panels are retained.

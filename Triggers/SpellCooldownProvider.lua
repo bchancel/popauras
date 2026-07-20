@@ -2,12 +2,14 @@ local _, ns = ...
 
 local Safe = ns.SafeValues
 local Duration = ns.Duration
+local Spells = ns.util.Spells
 
 local provider = ns.TriggerBase:CreateProvider("spell_cooldown", {
   events = {
     "SPELL_UPDATE_COOLDOWN",
     "SPELL_UPDATE_CHARGES",
     "SPELL_UPDATE_USES",
+    "UNIT_AURA",
     "UNIT_SPELLCAST_SUCCEEDED",
     "COOLDOWN_VIEWER_DATA_LOADED",
     "UPDATE_OVERRIDE_ACTIONBAR",
@@ -20,6 +22,12 @@ local provider = ns.TriggerBase:CreateProvider("spell_cooldown", {
 })
 
 local EMPTY = {}
+local ACTIVE_GLOW_STYLES = {
+  NONE = true,
+  INNER_GLOW = true,
+  OUTER_GLOW = true,
+  ACTIVE_DURATION = true,
+}
 
 local function AddUnique(target, seen, value)
   value = Safe:Number(value)
@@ -154,6 +162,96 @@ local function GetUsable(spellID)
   end
   local safe = Safe:Boolean(usable)
   return safe == nil or safe
+end
+
+local function AddAuraSpellIDs(target, seen, spellID)
+  if not Spells or not Spells.GetAuraSpellIDs then
+    AddUnique(target, seen, spellID)
+    return
+  end
+  for _, auraSpellID in ipairs(Spells:GetAuraSpellIDs(spellID)) do
+    AddUnique(target, seen, auraSpellID)
+  end
+end
+
+-- A cooldown being active is not the same thing as its applied player buff
+-- being active. Prefer the public IsActive() signal exposed by CDM's tracked
+-- buff bars; if CDM has no source, exact player-aura queries are safe only
+-- when Blizzard returns an ordinary, non-secret result.
+local function BuildActiveBuffTimer(auraData)
+  local auraInstanceID = Safe:Number(auraData and auraData.auraInstanceID)
+  local durationObject
+  if auraInstanceID and C_UnitAuras and C_UnitAuras.GetAuraDuration then
+    local ok, object = pcall(C_UnitAuras.GetAuraDuration, "player", auraInstanceID)
+    if ok then durationObject = object end
+  end
+  local timer = Duration:BuildTimer(durationObject, "active_buff", true)
+  timer.duration = timer.duration or Safe:Number(auraData and auraData.duration)
+  timer.expirationTime = timer.expirationTime or Safe:Number(auraData and auraData.expirationTime)
+  if timer.object == nil and timer.duration and timer.expirationTime then
+    timer.object = Duration:CreateFromEnd(timer.expirationTime, timer.duration)
+  end
+  return timer
+end
+
+local function ReadActivePlayerBuff(spellIDs)
+  local manager = ns.CooldownManager
+  local cdmActive
+  if manager and (manager.FindAuraStateSource or manager.FindAuraDisplaySource) then
+    local finder = manager.FindAuraStateSource or manager.FindAuraDisplaySource
+    local source = finder(manager, spellIDs, "player")
+    if source and type(source.IsActive) == "function" then
+      local ok, active = pcall(source.IsActive, source)
+      active = ok and Safe:Boolean(active) or nil
+      if active ~= nil then
+        cdmActive = active
+      end
+    end
+  end
+
+  if not C_UnitAuras or not C_UnitAuras.GetUnitAuraBySpellID then
+    return false, false, "unavailable"
+  end
+
+  local unavailable = false
+  for _, spellID in ipairs(spellIDs) do
+    if not Safe:ShouldSpellAuraBeSecret(spellID) then
+      local ok, auraData = pcall(C_UnitAuras.GetUnitAuraBySpellID, "player", spellID)
+      if ok then
+        if Safe:IsSecret(auraData) then
+          unavailable = true
+        elseif type(auraData) == "table" then
+          if Safe:Boolean(auraData.isHelpful) == true then
+            return true, true, "aura", BuildActiveBuffTimer(auraData)
+          end
+        end
+      else
+        unavailable = true
+      end
+    else
+      unavailable = true
+    end
+  end
+
+  if cdmActive ~= nil then
+    return cdmActive, true, "cdm", nil
+  end
+  return false, not unavailable, unavailable and "unavailable" or "aura", nil
+end
+
+local function GetActiveGlowStyle(auraConfig)
+  local display = auraConfig and auraConfig.display or nil
+  if not auraConfig or not display then return "NONE" end
+  if auraConfig.kind == "bar" then
+    local style = tostring(display.activeGlowStyle or "")
+    if ACTIVE_GLOW_STYLES[style] then return style end
+    return display.glowWhenActive == true and "INNER_GLOW" or "NONE"
+  end
+  return display.glowWhenActive == true and "OUTER_GLOW" or "NONE"
+end
+
+local function ShouldResolveActiveBuffGlow(auraConfig)
+  return GetActiveGlowStyle(auraConfig) ~= "NONE"
 end
 
 local function BuildManualTimer(spellID, timer)
@@ -357,6 +455,17 @@ function provider:Evaluate(trigger, auraConfig)
   local duration = Safe:Number(timer.duration) or 0
   local expirationTime = Safe:Number(timer.expirationTime) or 0
   local displayCount, hasDisplayCount = GetDisplayCount(primarySpellID)
+  local activeGlowStyle = GetActiveGlowStyle(auraConfig)
+  local activeBuffGlow = activeGlowStyle ~= "NONE"
+  local activeBuff, activeBuffKnown, activeBuffSource, activeBuffTimer = false, false, nil, nil
+  local activeBuffSpellIDs
+  if activeBuffGlow then
+    local auraSpellIDs, seen = {}, {}
+    AddAuraSpellIDs(auraSpellIDs, seen, candidate.configuredSpellID)
+    AddAuraSpellIDs(auraSpellIDs, seen, candidate.spellID)
+    activeBuff, activeBuffKnown, activeBuffSource, activeBuffTimer = ReadActivePlayerBuff(auraSpellIDs)
+    activeBuffSpellIDs = auraSpellIDs
+  end
 
   return ns.Schema.NormalizeRuntimeState({
     show = show,
@@ -372,6 +481,13 @@ function provider:Evaluate(trigger, auraConfig)
     stacks = candidate.currentCharges or 0,
     maxStacks = candidate.maxCharges,
     noCharges = candidate.noCharges == true,
+    activeBuff = activeBuff,
+    activeBuffGlow = activeBuffGlow,
+    activeGlowStyle = activeGlowStyle,
+    activeBuffDurationObject = activeBuffTimer and activeBuffTimer.object or nil,
+    activeBuffDuration = activeBuffTimer and activeBuffTimer.duration or nil,
+    activeBuffExpirationTime = activeBuffTimer and activeBuffTimer.expirationTime or nil,
+    activeBuffSpellIDs = activeBuffSpellIDs,
     stackDisplayValue = displayCount,
     hasStackDisplayValue = hasDisplayCount,
     duration = duration,
@@ -384,18 +500,23 @@ function provider:Evaluate(trigger, auraConfig)
     source = candidate.source,
     availability = "available",
     statusText = candidate.ready and "Ready" or "On Cooldown",
-    debugExtra = string.format("configured=%d api=%d source=%s timer=%s charges=%s/%s opaque=%s",
+    debugExtra = string.format("configured=%d api=%d source=%s timer=%s charges=%s/%s opaque=%s buff=%s/%s/%s",
       configured[1], primarySpellID, tostring(candidate.source), tostring(candidate.timerActive == true),
-      tostring(candidate.currentCharges), tostring(candidate.maxCharges), tostring(timer.opaque == true)),
+      tostring(candidate.currentCharges), tostring(candidate.maxCharges), tostring(timer.opaque == true),
+      tostring(activeBuff), tostring(activeBuffKnown), tostring(activeBuffSource)),
   })
 end
 
 function provider:RebuildIndex()
-  local bySpellID, all = {}, {}
+  local bySpellID, all, activeGlowAuras, activeGlowSeen = {}, {}, {}, {}
   for _, auraId in ipairs(ns.Registry:GetFlatOrder()) do
     local aura = ns.Registry:GetAura(auraId)
     for _, trigger in ns.TriggerBase:IterateTriggers(aura, "spell_cooldown") do
       all[#all + 1] = auraId
+      if ShouldResolveActiveBuffGlow(aura) and not activeGlowSeen[auraId] then
+        activeGlowSeen[auraId] = true
+        activeGlowAuras[#activeGlowAuras + 1] = auraId
+      end
       for _, spellID in ipairs(GetConfiguredSpellIDs(trigger)) do
         bySpellID[spellID] = bySpellID[spellID] or {}
         bySpellID[spellID][#bySpellID[spellID] + 1] = auraId
@@ -404,11 +525,13 @@ function provider:RebuildIndex()
   end
   self.indexBySpellID = bySpellID
   self.allAuraIDs = all
+  self.activeGlowAuraIDs = activeGlowAuras
 end
 
 function provider:InvalidateCaches()
   self.indexBySpellID = nil
   self.allAuraIDs = nil
+  self.activeGlowAuraIDs = nil
 end
 
 function provider:GetAffectedAurasForSpellIDs(spellIDs)
@@ -440,6 +563,17 @@ function provider:HandleEvent(event, ...)
     return true
   end
 
+  if event == "UNIT_AURA" then
+    local unit = Safe:String((...))
+    if unit ~= "player" then
+      return {}
+    end
+    if not self.indexBySpellID then self:RebuildIndex() end
+    -- UNIT_AURA can be very frequent. Only refresh the small opt-in set that
+    -- needs a player-buff state to drive its bar glow.
+    return self.activeGlowAuraIDs or EMPTY
+  end
+
   if event == "UNIT_SPELLCAST_SUCCEEDED" then
     local unit, _, spellID = ...
     if Safe:String(unit) ~= "player" then
@@ -459,12 +593,16 @@ function provider:HandleEvent(event, ...)
         end
       end
     end
+    local affected = self:GetAffectedAurasForSpellIDs({ spellID })
     if C_Timer and C_Timer.After then
       C_Timer.After(0, function()
-        if ns.runtime then ns.runtime:RefreshAuras(self:GetAffectedAurasForSpellIDs({ spellID })) end
+        if ns.runtime then ns.runtime:RefreshAuras(affected) end
+      end)
+      C_Timer.After(0.1, function()
+        if ns.runtime then ns.runtime:RefreshAuras(affected) end
       end)
     end
-    return self:GetAffectedAurasForSpellIDs({ spellID })
+    return affected
   end
 
   local spellIDs = {}
@@ -485,13 +623,18 @@ function provider:GetAffectedAuras(event, ...)
   return self:HandleEvent(event, ...)
 end
 
-function provider:LogCooldownRenderDebug(aura, state, _, eventName, extra)
+function provider:LogCooldownRenderDebug(aura, state, region, eventName, extra)
   if not aura or not state or not ns.Debug or not ns.Debug.LogTrigger then
     return
   end
   local _, trigger = ns.TriggerBase:AnyTriggerMatches(aura, "spell_cooldown")
   if trigger and trigger.debug == true then
-    ns.Debug:LogTrigger(aura, trigger, state, string.format("%s %s", tostring(eventName or "render"), tostring(extra or "")))
+    local activeDurationDebug = region and region.activeDurationDebug or "unavailable"
+    ns.Debug:LogTrigger(aura, trigger, state, string.format(
+      "%s %s activeDuration=%s mode=%s native=%s",
+      tostring(eventName or "render"), tostring(extra or ""),
+      tostring(activeDurationDebug), tostring(region and region.activeDurationMode == true),
+      tostring(region and region.activeDurationNativeAuthority == true)))
   end
 end
 

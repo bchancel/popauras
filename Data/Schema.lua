@@ -77,6 +77,13 @@ function Schema.NormalizeRuntimeState(state)
   state.isUsable = SafeBoolean(state.isUsable, true)
   state.isReady = SafeBoolean(state.isReady, false)
   state.noCharges = SafeBoolean(state.noCharges, false)
+  -- Spell cooldowns use a separate, buff-aware active signal for appearance.
+  -- Their ordinary `active` value means that the cooldown/recharge is running.
+  state.activeBuff = SafeBoolean(state.activeBuff, false)
+  state.activeBuffGlow = SafeBoolean(state.activeBuffGlow, false)
+  state.activeGlowStyle = SafeString(state.activeGlowStyle, "NONE")
+  state.activeBuffDuration = SafeNumber(state.activeBuffDuration, 0)
+  state.activeBuffExpirationTime = SafeNumber(state.activeBuffExpirationTime, 0)
   state.isEnabled = SafeBoolean(state.isEnabled, true)
   state.loadMatched = SafeBoolean(state.loadMatched, true)
   state.source = SafeString(state.source, "")

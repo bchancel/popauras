@@ -82,6 +82,7 @@ Defaults.display = {
   desaturate = false,
   glow = false,
   glowWhenActive = false,
+  activeGlowStyle = "NONE",
   showName = true,
   showTimer = true,
   showStacks = true,
@@ -265,6 +266,11 @@ local function ApplyTriggerTypeDefaults(trigger)
     end
   elseif triggerType == "cast" then
     trigger.unit = trigger.unit or "player"
+  elseif triggerType == "spell_cast_event" then
+    trigger.unit = "player"
+    trigger.spellId = tonumber(trigger.spellId or 0) or 0
+    trigger.castEventDuration = tonumber(trigger.castEventDuration or 1) or 1
+    trigger.castEventDuration = math.max(0.1, math.min(trigger.castEventDuration, 10))
   elseif triggerType == "death_alert" then
     trigger.alertDuration = tonumber(trigger.alertDuration or 2) or 2
     trigger.maxAlertsPerCombat = tonumber(trigger.maxAlertsPerCombat or 7) or 7
@@ -544,6 +550,10 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].showAlways = false
     elseif triggerType == "cast" then
       aura.triggers[1].unit = "player"
+    elseif triggerType == "spell_cast_event" then
+      aura.triggers[1].unit = "player"
+      aura.triggers[1].spellId = 0
+      aura.triggers[1].castEventDuration = 1
     elseif triggerType == "death_alert" then
       aura.triggers[1].alertDuration = 2
       aura.triggers[1].maxAlertsPerCombat = 7

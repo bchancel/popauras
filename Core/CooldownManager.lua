@@ -257,6 +257,18 @@ local function IsAuraDisplayFrame(frame)
   return ok and bar ~= nil and type(bar.SetValue) == "function"
 end
 
+local function IsAuraStateFrame(frame)
+  if not frame then return false end
+  local viewer = frame.viewerFrame
+  if viewer == _G.BuffBarCooldownViewer then
+    return type(frame.GetBarFrame) == "function"
+  end
+  if viewer == _G.BuffIconCooldownViewer then
+    return type(frame.GetCooldownFrame) == "function"
+  end
+  return false
+end
+
 local function AddCooldownIDsForSpells(manager, result, seen, spellIDs, directOnly)
   for _, spellID in ipairs(type(spellIDs) == "table" and spellIDs or EMPTY) do
     local cooldownIDs = directOnly and manager:GetDirectCooldownIDsForSpellID(spellID)
@@ -270,21 +282,17 @@ local function AddCooldownIDsForSpells(manager, result, seen, spellIDs, directOn
   end
 end
 
--- CDM's tracked-buff-bar frames are allowed to evaluate aura relationships
--- that remain secret to normal addon Lua. Return only Blizzard bar frames;
--- essential/utility cooldown frames can share linked spell IDs but are not
--- authoritative aura sources.
-function Manager:FindAuraDisplaySource(spellIDs, requestedUnit, forceRefresh)
+local function FindAuraSource(manager, spellIDs, requestedUnit, forceRefresh, predicate)
   local cooldownIDs, seen = {}, {}
   -- Direct relationships win. Applied/override aura IDs supplied by the spell
   -- resolver normally lead directly to the tracked buff/bar entry.
-  AddCooldownIDsForSpells(self, cooldownIDs, seen, spellIDs, true)
-  AddCooldownIDsForSpells(self, cooldownIDs, seen, spellIDs, false)
+  AddCooldownIDsForSpells(manager, cooldownIDs, seen, spellIDs, true)
+  AddCooldownIDsForSpells(manager, cooldownIDs, seen, spellIDs, false)
 
   local inactiveSource, inactiveCooldownID
   for _, cooldownID in ipairs(cooldownIDs) do
-    for _, frame in ipairs(self:FindFramesByCooldownID(cooldownID, forceRefresh)) do
-      if IsAuraDisplayFrame(frame) and type(frame.IsActive) == "function"
+    for _, frame in ipairs(manager:FindFramesByCooldownID(cooldownID, forceRefresh)) do
+      if predicate(frame) and type(frame.IsActive) == "function"
         and type(frame.GetAuraDataUnit) == "function"
         and type(frame.GetAuraSpellID) == "function" then
         local okActive, active = pcall(frame.IsActive, frame)
@@ -302,6 +310,20 @@ function Manager:FindAuraDisplaySource(spellIDs, requestedUnit, forceRefresh)
     end
   end
   return inactiveSource, inactiveCooldownID
+end
+
+-- Both tracked-buff icon and bar frames own aura identity and active state.
+-- Their public aura-instance ID can be used to request an opaque Blizzard
+-- DurationObject without reading restricted aura records or scalar timing.
+function Manager:FindAuraStateSource(spellIDs, requestedUnit, forceRefresh)
+  return FindAuraSource(self, spellIDs, requestedUnit, forceRefresh, IsAuraStateFrame)
+end
+
+-- Only tracked-buff bars expose presentation values that can be mirrored
+-- directly into another StatusBar. Keep that narrower contract for native
+-- aura regions and for the final fallback when no DurationObject is available.
+function Manager:FindAuraDisplaySource(spellIDs, requestedUnit, forceRefresh)
+  return FindAuraSource(self, spellIDs, requestedUnit, forceRefresh, IsAuraDisplayFrame)
 end
 
 local function SetForcedHidden(frame, hidden)
