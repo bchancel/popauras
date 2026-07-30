@@ -74,6 +74,15 @@ local auraOptions = {
     accent = { 0.22, 0.78, 0.66 },
     art = "aura_bars",
   },
+  {
+    kind = "icon",
+    preset = "nameplate_buffs",
+    feature = "feature_nameplate_buffs",
+    title = "Nameplate Buffs",
+    description = "Show native, category-filtered buff icons above hostile NPC nameplates with dungeon load filters.",
+    accent = { 0.24, 0.72, 0.96 },
+    art = "icon",
+  },
 }
 
 local function CreateArtHost(parent)
@@ -457,14 +466,20 @@ function NewAuraPanel:Create(parent)
   frame.hint:SetTextColor(0.76, 0.82, 0.92)
 
   frame.tiles = {}
-  for index, option in ipairs(auraOptions) do
-    local tile = CreateTile(frame.content, option)
-    tile:SetPoint(GetTilePoint(index))
-    frame.tiles[index] = tile
+  local visibleOptionCount = 0
+  for _, option in ipairs(auraOptions) do
+    local enabled = not option.feature
+      or (ns.Features and ns.Features:IsEnabled(option.feature) == true)
+    if enabled then
+      visibleOptionCount = visibleOptionCount + 1
+      local tile = CreateTile(frame.content, option)
+      tile:SetPoint(GetTilePoint(visibleOptionCount))
+      frame.tiles[visibleOptionCount] = tile
+    end
   end
 
   frame.placeholders = {}
-  for index = #auraOptions + 1, (GRID_COLUMNS * GRID_ROWS) do
+  for index = visibleOptionCount + 1, (GRID_COLUMNS * GRID_ROWS) do
     local tile = CreatePlaceholderTile(frame.content)
     tile:SetPoint(GetTilePoint(index))
     frame.placeholders[#frame.placeholders + 1] = tile

@@ -11,6 +11,9 @@ PopAuras is a saved-variable-compatible aura addon for WoW Retail 12.1.
 - Cooldown Manager IDs are catalog metadata only and are never treated as
   spell IDs or timing records.
 - Aura lists are rendered by Blizzard `AuraContainer`/`AuraButton` objects.
+- The hostile-NPC nameplate buff implementation uses load-filtered native
+  category groups and no aura scans. It remains behind the
+  `feature_nameplate_buffs` source flag, which is enabled for PTR testing.
 - Eligible exact player-buff and enemy-target-debuff icons/bars use native
   `AuraSlot` presentation.
 - Logical aura queries use `GetUnitAuraBySpellID` only for non-secret spells.

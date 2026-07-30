@@ -1,5 +1,15 @@
 local _, ns = ...
 
+ns.Features = {
+  -- Keep experimental native-nameplate behavior behind one reversible switch
+  -- while it is enabled for PTR testing.
+  feature_nameplate_buffs = true,
+}
+
+function ns.Features:IsEnabled(featureName)
+  return self[featureName] == true
+end
+
 ns.Constants = {
   DB_VERSION = 5,
   EXPORT_VERSION = 1,

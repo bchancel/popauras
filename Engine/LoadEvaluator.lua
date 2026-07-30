@@ -432,8 +432,29 @@ local function MatchesVisibility(load)
   return IsVisibilityEnabled(load.visibility, "open_world")
 end
 
+function LoadEvaluator:GetDisabledFeature(aura)
+  if ns.Features and ns.Features:IsEnabled("feature_nameplate_buffs") then
+    return nil
+  end
+
+  for _, trigger in ipairs(type(aura and aura.triggers) == "table" and aura.triggers or {}) do
+    if type(trigger) == "table" and trigger.enabled ~= false
+        and trigger.type == "aura" and trigger.unit == "nameplate" then
+      return "feature_nameplate_buffs"
+    end
+  end
+
+  return nil
+end
+
 function LoadEvaluator:Matches(aura)
   if not aura or aura.enabled == false then
+    return false
+  end
+
+  -- Feature-disabled auras remain saved and editable, but they must participate
+  -- in every runtime and editor load query as not loaded.
+  if self:GetDisabledFeature(aura) then
     return false
   end
 

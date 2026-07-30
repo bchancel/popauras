@@ -1,4 +1,22 @@
-# v12.1.1
+# v12.1.8
+- Added a Buffs and Debuffs Display option for Blizzard's radial cooldown swipe; changing it safely replaces the one-time native button presentation without scanning aura data
+
+# v12.1.7
+- Added configurable Blizzard-native aura-list sorting: Soonest Expiring First for target-oriented lists and Longest / Permanent First as the Player Buff default
+- Removed the ineffective Player Cast Only aura-list filter
+- Fixed capped aura lists to retain Blizzard's shortest-expiring timed auras before permanent auras, and changed the displayed-row default to 0 for unlimited
+- Added Blizzard-native maximum-original-duration and maximum-row filters; edits reconfigure the active native container without `/reload`
+- Made Buffs and Debuffs row backgrounds duration-aware so permanent auras remain icon/text-only while timed auras retain their full track and draining fill
+- Fixed target Buffs and Debuffs lists retaining the previous target's native aura assignments after `PLAYER_TARGET_CHANGED`
+- Fixed the Nameplate Anchor dropdown not committing its selected placement or refreshing active nameplate containers
+- Fixed Buffs and Debuffs native containers remaining active after their aura failed load conditions or "Load this aura" was unchecked
+- Simplified Nameplate Buff filters to All Buffs, Stealable, Magic, Boss / encounter, and Priority; retired Role-relevant, All-nameplates, and Personal-nameplate filters fail closed when migrating old PTR settings
+- Removed the generic Trigger and Trigger Type selectors from the dedicated Nameplate Buff trigger screen
+- Re-enabled native nameplate buff displays for PTR testing and replaced generic parent/frame-point controls with a dedicated eight-position Nameplate Anchor
+- Reworked nameplate buff filtering into an explained category panel, with clearer Blizzard flag names, explicit AND behavior, and fixed nameplate-only trigger fields removed from view
+- Retained nameplate buff creation, load matching, and runtime activation behind the reversible `feature_nameplate_buffs` flag; feature-blocked auras explain their unloaded state at the top of the Load tab
+- Fixed aura-list and nameplate growth on PTR build 68914 by supporting Blizzard's renamed FlowLayout API and explicit vertical axis
+- Added load-filtered hostile-NPC nameplate buff displays with native category filters, icon packing, and no addon-side aura scans; native containers remain UIParent-owned to avoid inheriting protected nameplate execution, with capability-safe layout calls across PTR builds
 - Added a player-only successful spell-cast event trigger for instant abilities such as Darkness
 - Changed Glow When Active on Spell Cooldown bars into selectable None, Inner Glow, Outer Glow, and Active Duration effects; Active Duration uses a bright yellow buff timer before returning to the cooldown
 - Added the verified Retail 12.1 all-spec cooldown-to-player-aura catalogue in a maintainable data-only file while retaining one canonical resolver

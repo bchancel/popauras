@@ -91,6 +91,13 @@ local function GetSelectedTrigger(aura)
   return aura.triggers[index] or aura.triggers[1] or {}
 end
 
+local function IsNameplateAura(aura)
+  local trigger = GetSelectedTrigger(aura)
+  return aura and aura.kind == "icon"
+    and trigger.type == "aura"
+    and trigger.unit == "nameplate"
+end
+
 local function UsesDualTrinketSounds(aura)
   if not aura or type(aura.triggers) ~= "table" then
     return false
@@ -755,6 +762,7 @@ function Panel:UpdateControlStates()
   SetControlGroupEnabled({ frame.backgroundColorWrap.button, frame.backgroundColorWrap.label }, showBackground)
   SetControlGroupEnabled({ frame.backgroundGammaWrap.input, frame.backgroundGammaWrap.label }, showBackground and isAuraBarList)
   SetControlGroupEnabled({ frame.permanentAlphaWrap.input, frame.permanentAlphaWrap.label }, isAuraBarList)
+  SetControlGroupEnabled({ frame.auraListSwipeCheck }, isAuraBarList)
   SetControlGroupEnabled({ frame.reverseCheck }, not isGroup and not isText)
 
   SetControlGroupEnabled({
@@ -869,6 +877,7 @@ function Panel:ApplyCurrent()
     return
   end
   local isAuraBarList = aura.kind == "aura_bar_list"
+  local isNameplateAura = IsNameplateAura(aura)
 
   aura.name = ns.Registry:GetUniqueAuraName(frame.nameInputWrap.input:GetText(), aura.id)
   frame.nameInputWrap.input:SetText(aura.name)
@@ -892,9 +901,17 @@ function Panel:ApplyCurrent()
   end
   aura.position.x = CommitNumeric(frame.xWrap.input, aura.position.x or 0)
   aura.position.y = CommitNumeric(frame.yWrap.input, aura.position.y or 0)
-  aura.position.relativeTo = UIDropDownMenu_GetSelectedValue(frame.anchorWrap.dropdown) or aura.position.relativeTo or "UIParent"
-  aura.position.point = UIDropDownMenu_GetSelectedValue(frame.framePointWrap.dropdown) or aura.position.point or "CENTER"
-  aura.position.relativePoint = UIDropDownMenu_GetSelectedValue(frame.parentPointWrap.dropdown) or aura.position.relativePoint or "CENTER"
+  if isNameplateAura then
+    Anchors.ApplyNameplateAnchor(
+      aura.position,
+      UIDropDownMenu_GetSelectedValue(frame.nameplateAnchorWrap.dropdown)
+        or Anchors.GetNameplateAnchor(aura.position)
+    )
+  else
+    aura.position.relativeTo = UIDropDownMenu_GetSelectedValue(frame.anchorWrap.dropdown) or aura.position.relativeTo or "UIParent"
+    aura.position.point = UIDropDownMenu_GetSelectedValue(frame.framePointWrap.dropdown) or aura.position.point or "CENTER"
+    aura.position.relativePoint = UIDropDownMenu_GetSelectedValue(frame.parentPointWrap.dropdown) or aura.position.relativePoint or "CENTER"
+  end
   aura.display.frameStrata = UIDropDownMenu_GetSelectedValue(frame.strataWrap.dropdown) or aura.display.frameStrata or "MEDIUM"
   aura.display.frameLevel = CommitNumeric(frame.levelWrap.input, aura.display.frameLevel or 1)
   aura.display.orientation = newOrientation
@@ -923,6 +940,9 @@ function Panel:ApplyCurrent()
   aura.display.backgroundGamma = CommitNumeric(frame.backgroundGammaWrap.input, aura.display.backgroundGamma or 1)
   aura.display.permanentAlpha = math.max(0, math.min(1, CommitNumeric(frame.permanentAlphaWrap.input, aura.display.permanentAlpha or 0.25)))
   frame.permanentAlphaWrap.input:SetText(string.format("%.2f", aura.display.permanentAlpha))
+  if isAuraBarList then
+    aura.display.swipe = frame.auraListSwipeCheck:GetChecked() == true
+  end
 
   aura.display.spacing = CommitNumeric(frame.groupSpacingWrap.input, aura.display.spacing or GetDefaultLayoutSpacing(aura))
   aura.display.growth = UIDropDownMenu_GetSelectedValue(frame.groupGrowthWrap.dropdown) or aura.display.growth
@@ -1062,6 +1082,7 @@ function Panel:Create(parent)
   frame.canvasSection = CreateSection(frame.content, "Look", -36, 480)
   frame.canvasSection.expandedHeightAura = 520
   frame.canvasSection.expandedHeightGroup = 352
+  frame.canvasSection.expandedHeightNameplate = 270
   frame.groupSection = CreateSection(frame.content, "Group Layout", -396, 132)
   frame.iconSection = CreateSection(frame.content, "Icon", -560, 270)
   frame.raidFrameSection = CreateSection(frame.content, "Raid Frames", -846, 236)
@@ -1101,6 +1122,8 @@ function Panel:Create(parent)
   frame.parentPointWrap = CreateLabeledDropdown(frame.canvasSection, "Parent Point", 460, -150, 170, Anchors.GetPointList)
 
   frame.anchorWrap = CreateLabeledDropdown(frame.canvasSection, "Anchor / Parent", 12, -150, 200, Anchors.GetTargetList)
+  frame.nameplateAnchorWrap = CreateLabeledDropdown(
+    frame.canvasSection, "Nameplate Anchor", 380, -88, 180, Anchors.GetNameplateAnchorList)
   frame.strataWrap = CreateLabeledDropdown(frame.canvasSection, "Strata", 12, -212, 150, strataValues)
   frame.levelWrap = CreateLabeledInput(frame.canvasSection, "Level", 200, -212, 58)
 
@@ -1123,6 +1146,8 @@ function Panel:Create(parent)
   frame.backgroundColorWrap.label:SetPoint("LEFT", frame.backgroundColorWrap.button, "RIGHT", 8, 0)
   frame.backgroundGammaWrap = CreateLabeledInput(frame.canvasSection, "Background Gamma", 430, -364, 70)
   frame.permanentAlphaWrap = CreateLabeledInput(frame.canvasSection, "Permanent Aura Alpha", 540, -364, 70)
+  frame.auraListSwipeCheck = Frames.CreateCheckbox(frame.canvasSection, "Show Cooldown Swipe")
+  frame.auraListSwipeCheck:SetPoint("TOPLEFT", 12, -412)
   frame.noStacksBarColorCheck = Frames.CreateCheckbox(frame.canvasSection, "No Stacks Bar Color")
   frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -412)
   frame.noStacksBarColorWrap = CreateColorSwatch(frame.canvasSection, "Color", 220, -404)
@@ -1360,6 +1385,7 @@ function Panel:Create(parent)
     frame.framePointWrap.label, frame.framePointWrap.dropdown,
     frame.parentPointWrap.label, frame.parentPointWrap.dropdown,
     frame.anchorWrap.label, frame.anchorWrap.dropdown,
+    frame.nameplateAnchorWrap.label, frame.nameplateAnchorWrap.dropdown,
     frame.strataWrap.label, frame.strataWrap.dropdown,
     frame.levelWrap.label, frame.levelWrap.input,
     frame.barColorWrap.label, frame.barColorWrap.button, frame.barColorWrap.valueText,
@@ -1375,7 +1401,8 @@ function Panel:Create(parent)
     frame.showBackgroundCheck,
     frame.backgroundColorWrap.label, frame.backgroundColorWrap.button, frame.backgroundColorWrap.valueText,
     frame.backgroundGammaWrap.label, frame.backgroundGammaWrap.input,
-    frame.permanentAlphaWrap.label, frame.permanentAlphaWrap.input
+    frame.permanentAlphaWrap.label, frame.permanentAlphaWrap.input,
+    frame.auraListSwipeCheck
   )
   RegisterSectionWidgets(frame.groupSection,
     frame.groupSpacingWrap.label, frame.groupSpacingWrap.input,
@@ -1539,6 +1566,7 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.raidFrameDurationCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.raidFrameStacksCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showBackgroundCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.auraListSwipeCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupShowBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.readyLookCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.noStacksBarColorCheck, function() Panel:ApplyCurrent() end)
@@ -1557,6 +1585,7 @@ function Panel:Create(parent)
   InitDropdownWithCallback(frame.framePointWrap.dropdown, Anchors.GetPointList, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.parentPointWrap.dropdown, Anchors.GetPointList, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.anchorWrap.dropdown, Anchors.GetTargetList, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.nameplateAnchorWrap.dropdown, Anchors.GetNameplateAnchorList, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.barTextureWrap.dropdown, barTextureValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.activeGlowStyleWrap.dropdown, activeGlowStyleValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.groupGrowthWrap.dropdown, { "DOWN", "UP", "RIGHT", "LEFT" }, function() Panel:ApplyCurrent() end)
@@ -1617,7 +1646,7 @@ function Panel:Create(parent)
   return frame
 end
 
-function Panel:ApplyCanvasLayout(isGroup)
+function Panel:ApplyCanvasLayout(isGroup, isNameplateAura)
   if not self.frame then
     return
   end
@@ -1642,6 +1671,28 @@ function Panel:ApplyCanvasLayout(isGroup)
     frame.showBackgroundCheck:ClearAllPoints()
     frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -274)
     PositionColorSwatch(frame.backgroundColorWrap, 180, -274)
+    frame.backgroundGammaWrap.label:Hide()
+    frame.backgroundGammaWrap.input:Hide()
+    frame.permanentAlphaWrap.label:Hide()
+    frame.permanentAlphaWrap.input:Hide()
+    return
+  end
+
+  if isNameplateAura then
+    PositionLabeledInput(frame.widthWrap, 12, -88)
+    PositionLabeledInput(frame.heightWrap, 96, -88)
+    PositionLabeledInput(frame.xWrap, 180, -88)
+    PositionLabeledInput(frame.yWrap, 280, -88)
+    PositionLabeledDropdown(frame.nameplateAnchorWrap, 380, -88)
+
+    PositionLabeledDropdown(frame.strataWrap, 12, -150)
+    PositionLabeledInput(frame.levelWrap, 200, -150)
+
+    frame.showBackgroundCheck:ClearAllPoints()
+    frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -212)
+    PositionColorSwatch(frame.backgroundColorWrap, 220, -212)
+    frame.reverseCheck:ClearAllPoints()
+    frame.reverseCheck:SetPoint("TOPLEFT", 430, -212)
     frame.backgroundGammaWrap.label:Hide()
     frame.backgroundGammaWrap.input:Hide()
     frame.permanentAlphaWrap.label:Hide()
@@ -1682,7 +1733,40 @@ function Panel:ApplyCanvasLayout(isGroup)
   PositionLabeledInput(frame.permanentAlphaWrap, 540, -364)
   frame.noStacksBarColorCheck:ClearAllPoints()
   frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -412)
+  frame.auraListSwipeCheck:ClearAllPoints()
+  frame.auraListSwipeCheck:SetPoint("TOPLEFT", 12, -412)
   PositionColorSwatch(frame.noStacksBarColorWrap, 220, -404)
+end
+
+function Panel:ApplyIconLayout(isNameplateAura)
+  local frame = self.frame
+  if not frame then
+    return
+  end
+
+  if isNameplateAura then
+    frame.iconSection.expandedHeight = 180
+    frame.showIconCheck:ClearAllPoints()
+    frame.showIconCheck:SetPoint("TOPLEFT", 12, -34)
+    frame.iconEdgeCheck:ClearAllPoints()
+    frame.iconEdgeCheck:SetPoint("TOPLEFT", 180, -34)
+    frame.iconFinishFlashCheck:ClearAllPoints()
+    frame.iconFinishFlashCheck:SetPoint("TOPLEFT", 380, -34)
+    PositionColorSwatch(frame.iconSwipeColorWrap, 12, -78)
+    frame.iconHint:ClearAllPoints()
+    frame.iconHint:SetPoint("TOPLEFT", 12, -126)
+  else
+    frame.iconSection.expandedHeight = 270
+    frame.showIconCheck:ClearAllPoints()
+    frame.showIconCheck:SetPoint("TOPLEFT", 12, -34)
+    frame.iconEdgeCheck:ClearAllPoints()
+    frame.iconEdgeCheck:SetPoint("TOPLEFT", 180, -64)
+    frame.iconFinishFlashCheck:ClearAllPoints()
+    frame.iconFinishFlashCheck:SetPoint("TOPLEFT", 380, -64)
+    PositionColorSwatch(frame.iconSwipeColorWrap, 360, -158)
+    frame.iconHint:ClearAllPoints()
+    frame.iconHint:SetPoint("TOPLEFT", 12, -196)
+  end
 end
 
 function Panel:LayoutSections()
@@ -1709,15 +1793,20 @@ function Panel:Refresh(aura)
   local isText = aura.kind == "text"
   local isIconAura = aura.kind == "icon"
   local isAuraBarList = aura.kind == "aura_bar_list"
-  local usesLayoutSection = isGroup or isAuraBarList
   local trigger = GetSelectedTrigger(aura)
-  local supportsShowAlways = trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura"
+  local isNameplateAura = isIconAura and trigger.type == "aura" and trigger.unit == "nameplate"
+  local usesLayoutSection = isGroup or isAuraBarList or isNameplateAura
+  local supportsShowAlways = not isNameplateAura and (
+    trigger.type == "spell_cooldown" or trigger.type == "item_cooldown"
+      or trigger.type == "trinket_cooldown" or trigger.type == "aura")
   local summaryText = aura.kind:gsub("_", " ")
   summaryText = summaryText:gsub("(%a)([%w']*)", function(first, rest)
     return string.upper(first) .. rest
   end)
   if isAuraBarList then
     summaryText = "Buffs and Debuffs"
+  elseif isNameplateAura then
+    summaryText = "Nameplate Buff"
   end
   self.frame.summary:SetText(summaryText .. " Display")
   if isGroup then
@@ -1726,6 +1815,8 @@ function Panel:Refresh(aura)
     self.frame.hint:SetText("Text-only alert aura. Use the trigger tab for death filters, sounds, and alert duration.")
   elseif isAuraBarList then
     self.frame.hint:SetText("Custom buff and debuff bar lists built from the visible player or target aura APIs rather than Blizzard's tracked-bar viewer.")
+  elseif isNameplateAura then
+    self.frame.hint:SetText("Icons are anchored to each hostile NPC nameplate. Anchor Target is ignored; frame/parent points and X/Y are relative to the nameplate.")
   else
     self.frame.hint:SetText("Placement and appearance for the selected aura.")
   end
@@ -1738,6 +1829,7 @@ function Panel:Refresh(aura)
   RefreshDropdown(self.frame.anchorWrap.dropdown)
   RefreshDropdown(self.frame.framePointWrap.dropdown)
   RefreshDropdown(self.frame.parentPointWrap.dropdown)
+  RefreshDropdown(self.frame.nameplateAnchorWrap.dropdown)
   RefreshDropdown(self.frame.soundFileWrap.dropdown)
   RefreshDropdown(self.frame.trinketTopSoundFileWrap.dropdown)
   RefreshDropdown(self.frame.trinketBottomSoundFileWrap.dropdown)
@@ -1788,9 +1880,14 @@ function Panel:Refresh(aura)
   aura.display.barTexture = NormalizeBarTextureValue(aura.display.barTexture)
   SetDropdown(self.frame.barTextureWrap.dropdown, aura.display.barTexture or "FLAT")
   self.frame.showBackgroundCheck:SetChecked(aura.display.showBackground ~= false)
+  if self.frame.showBackgroundCheck.Text then
+    self.frame.showBackgroundCheck.Text:SetText(
+      isAuraBarList and "Show Timed Background" or "Show Background")
+  end
   SetColorSwatch(self.frame.backgroundColorWrap, aura.display.backgroundColor or { r = 0, g = 0, b = 0, a = 0.45 })
   self.frame.backgroundGammaWrap.input:SetText(tostring(aura.display.backgroundGamma or 1))
   self.frame.permanentAlphaWrap.input:SetText(string.format("%.2f", tonumber(aura.display.permanentAlpha or 0.25) or 0.25))
+  self.frame.auraListSwipeCheck:SetChecked(aura.display.swipe == true)
 
   self.frame.groupSpacingWrap.input:SetText(tostring(aura.display.spacing or GetDefaultLayoutSpacing(aura)))
   self.frame.groupMaintainOrderCheck:SetChecked(aura.display.maintainAuraOrder == true)
@@ -1826,6 +1923,7 @@ function Panel:Refresh(aura)
   SetDropdown(self.frame.anchorWrap.dropdown, aura.position.relativeTo or "UIParent")
   SetDropdown(self.frame.framePointWrap.dropdown, aura.position.point or "CENTER")
   SetDropdown(self.frame.parentPointWrap.dropdown, aura.position.relativePoint or "CENTER")
+  SetDropdown(self.frame.nameplateAnchorWrap.dropdown, Anchors.GetNameplateAnchor(aura.position))
   SetDropdown(self.frame.groupGrowthWrap.dropdown, aura.display.growth or "DOWN")
   SetDropdown(self.frame.iconAnchorWrap.dropdown, aura.display.iconAnchor or "LEFT")
   SetDropdown(self.frame.raidFrameAnchorWrap.dropdown, aura.display.raidFrameAnchor or "BOTTOM")
@@ -1882,19 +1980,22 @@ function Panel:Refresh(aura)
   self.frame.nameSection:SetShown(not isGroup)
   self.frame.timerSection:SetShown(not isGroup and not isText)
   self.frame.stacksSection:SetShown(not isGroup and not isText)
-  self.frame.soundSection:SetShown(not isGroup and not isAuraBarList)
-  self.frame.blizzardSection:SetShown(not isGroup)
-  if isGroup or isAuraBarList then
+  self.frame.soundSection:SetShown(not isGroup and not isAuraBarList and not isNameplateAura)
+  self.frame.blizzardSection:SetShown(not isGroup and not isNameplateAura)
+  if isGroup or isAuraBarList or isNameplateAura then
     HideAllSoundPickers(self.frame)
   end
 
   self.frame.canvasSection.expandedHeight = isGroup
       and self.frame.canvasSection.expandedHeightGroup
-      or self.frame.canvasSection.expandedHeightAura
+      or isNameplateAura
+        and self.frame.canvasSection.expandedHeightNameplate
+        or self.frame.canvasSection.expandedHeightAura
   local dualTrinketSounds = UsesDualTrinketSounds(aura)
   self.frame.soundSection.expandedHeight = dualTrinketSounds and 226 or 164
   self.frame.soundHint:ClearAllPoints()
   self.frame.soundHint:SetPoint("TOPLEFT", 12, dualTrinketSounds and -208 or -146)
+  self:ApplyIconLayout(isNameplateAura)
 
   SetSectionCollapsed(self.frame.canvasSection, self.frame.collapsedSections.canvas)
   SetSectionCollapsed(self.frame.groupSection, self.frame.collapsedSections.group)
@@ -1906,32 +2007,41 @@ function Panel:Refresh(aura)
   SetSectionCollapsed(self.frame.soundSection, self.frame.collapsedSections.sound)
   SetSectionCollapsed(self.frame.blizzardSection, self.frame.collapsedSections.blizzard)
 
-  self.frame.orientationWrap.label:SetShown(not isGroup and not isText)
-  self.frame.orientationWrap.dropdown:SetShown(not isGroup and not isText)
+  self.frame.orientationWrap.label:SetShown(not isGroup and not isText and not isNameplateAura)
+  self.frame.orientationWrap.dropdown:SetShown(not isGroup and not isText and not isNameplateAura)
+  self.frame.anchorWrap.label:SetShown(not isNameplateAura)
+  self.frame.anchorWrap.dropdown:SetShown(not isNameplateAura)
+  self.frame.framePointWrap.label:SetShown(not isNameplateAura)
+  self.frame.framePointWrap.dropdown:SetShown(not isNameplateAura)
+  self.frame.parentPointWrap.label:SetShown(not isNameplateAura)
+  self.frame.parentPointWrap.dropdown:SetShown(not isNameplateAura)
+  self.frame.nameplateAnchorWrap.label:SetShown(isNameplateAura)
+  self.frame.nameplateAnchorWrap.dropdown:SetShown(isNameplateAura)
   self.frame.strataWrap.label:SetShown(true)
   self.frame.strataWrap.dropdown:SetShown(true)
   self.frame.levelWrap.label:SetShown(true)
   self.frame.levelWrap.input:SetShown(true)
-  self.frame.barColorWrap.label:SetShown(not isGroup and not isText)
-  self.frame.barColorWrap.button:SetShown(not isGroup and not isText)
-  self.frame.barColorWrap.valueText:SetShown(not isGroup and not isText)
+  self.frame.barColorWrap.label:SetShown(not isGroup and not isText and not isNameplateAura)
+  self.frame.barColorWrap.button:SetShown(not isGroup and not isText and not isNameplateAura)
+  self.frame.barColorWrap.valueText:SetShown(not isGroup and not isText and not isNameplateAura)
   local showNoStacksColor = trigger.type == "spell_cooldown" and aura.kind == "bar"
   self.frame.noStacksBarColorCheck:SetShown(showNoStacksColor)
   self.frame.noStacksBarColorWrap.label:SetShown(showNoStacksColor)
   self.frame.noStacksBarColorWrap.button:SetShown(showNoStacksColor)
   self.frame.noStacksBarColorWrap.valueText:SetShown(showNoStacksColor)
-  self.frame.readyLookCheck:SetShown(not isGroup and not isText)
+  self.frame.readyLookCheck:SetShown(not isGroup and not isText and not isNameplateAura)
   local showActiveGlowStyle = trigger.type == "spell_cooldown" and aura.kind == "bar"
-  self.frame.glowWhenActiveCheck:SetShown(not isGroup and not isText and not isAuraBarList and not showActiveGlowStyle)
+  self.frame.glowWhenActiveCheck:SetShown(not isGroup and not isText and not isAuraBarList
+    and not isNameplateAura and not showActiveGlowStyle)
   self.frame.activeGlowStyleWrap.label:SetShown(showActiveGlowStyle)
   self.frame.activeGlowStyleWrap.dropdown:SetShown(showActiveGlowStyle)
   self.frame.showAlwaysReadyCheck:SetShown(not isGroup and not isText and supportsShowAlways)
   self.frame.reverseCheck:SetShown(not isGroup and not isText)
-  self.frame.readyColorWrap.label:SetShown(not isGroup and not isText)
-  self.frame.readyColorWrap.button:SetShown(not isGroup and not isText)
-  self.frame.readyColorWrap.valueText:SetShown(not isGroup and not isText)
-  self.frame.barTextureWrap.label:SetShown(not isGroup and not isText)
-  self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText)
+  self.frame.readyColorWrap.label:SetShown(not isGroup and not isText and not isNameplateAura)
+  self.frame.readyColorWrap.button:SetShown(not isGroup and not isText and not isNameplateAura)
+  self.frame.readyColorWrap.valueText:SetShown(not isGroup and not isText and not isNameplateAura)
+  self.frame.barTextureWrap.label:SetShown(not isGroup and not isText and not isNameplateAura)
+  self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText and not isNameplateAura)
   self.frame.showBackgroundCheck:SetShown(true)
   self.frame.backgroundColorWrap.label:SetShown(true)
   self.frame.backgroundColorWrap.button:SetShown(true)
@@ -1940,6 +2050,7 @@ function Panel:Refresh(aura)
   self.frame.backgroundGammaWrap.input:SetShown(isAuraBarList)
   self.frame.permanentAlphaWrap.label:SetShown(isAuraBarList)
   self.frame.permanentAlphaWrap.input:SetShown(isAuraBarList)
+  self.frame.auraListSwipeCheck:SetShown(isAuraBarList)
   self.frame.nameControls.altNameWrap.label:SetShown(not isAuraBarList)
   self.frame.nameControls.altNameWrap.input:SetShown(not isAuraBarList)
   self.frame.iconEdgeCheck:SetShown(isIconAura)
@@ -1948,31 +2059,50 @@ function Panel:Refresh(aura)
   self.frame.iconSwipeColorWrap.button:SetShown(isIconAura)
   self.frame.iconSwipeColorWrap.valueText:SetShown(isIconAura)
   self.frame.iconMatchSizeCheck:SetShown(not isIconAura)
-  self.frame.hideCDMIconCheck:SetShown(not isAuraBarList and not isGroup and not isText)
-  self.frame.altIconIdWrap.label:SetShown(not isAuraBarList and not isGroup and not isText)
-  self.frame.altIconIdWrap.input:SetShown(not isAuraBarList and not isGroup and not isText)
+  self.frame.hideCDMIconCheck:SetShown(not isAuraBarList and not isGroup and not isText and not isNameplateAura)
+  self.frame.altIconIdWrap.label:SetShown(not isAuraBarList and not isGroup and not isText and not isNameplateAura)
+  self.frame.altIconIdWrap.input:SetShown(not isAuraBarList and not isGroup and not isText and not isNameplateAura)
+  self.frame.iconSizeWrap.label:SetShown(not isNameplateAura)
+  self.frame.iconSizeWrap.input:SetShown(not isNameplateAura)
+  self.frame.iconAnchorWrap.label:SetShown(not isNameplateAura)
+  self.frame.iconAnchorWrap.dropdown:SetShown(not isNameplateAura)
+  self.frame.iconXWrap.label:SetShown(not isNameplateAura)
+  self.frame.iconXWrap.input:SetShown(not isNameplateAura)
+  self.frame.iconYWrap.label:SetShown(not isNameplateAura)
+  self.frame.iconYWrap.input:SetShown(not isNameplateAura)
   self.frame.iconHint:SetShown(not isAuraBarList and not isGroup and not isText)
+  if isNameplateAura then
+    self.frame.iconHint:SetText(
+      "The aura icon fills each native nameplate slot. Set its size with Width and Height in Look; the icon anchor and icon offsets do not apply here.")
+  else
+    self.frame.iconHint:SetText(
+      "Alternate icon accepts a spell name, spell ID, or raw texture file ID. Hide CDM Icon only affects mapped tracked-buff icons.")
+  end
   if self.frame.showIconCheck.Text then
     self.frame.showIconCheck.Text:SetText(isIconAura and "Show Aura Icon" or (isAuraBarList and "Show Row Icons" or "Show Icon"))
   end
   local triggerUnit = trigger.unit or "player"
-  local showRaidFramesOption = isIconAura and (triggerUnit == "group" or triggerUnit == "nameplate")
+  local showRaidFramesOption = isIconAura and triggerUnit == "group"
   self.frame.raidFrameSection:SetShown(showRaidFramesOption)
   self.frame.groupShowBackgroundCheck:SetShown(false)
   self.frame.groupBackgroundColorWrap.label:SetShown(false)
   self.frame.groupBackgroundColorWrap.button:SetShown(false)
   self.frame.groupBackgroundColorWrap.valueText:SetShown(false)
   self.frame.groupMaintainOrderCheck:SetShown(isGroup)
-  self.frame.groupSection.title:SetText(isAuraBarList and "List Layout" or "Group Layout")
+  self.frame.groupSection.title:SetText(isAuraBarList and "List Layout"
+    or isNameplateAura and "Nameplate Icon Layout" or "Group Layout")
   if isAuraBarList then
     self.frame.groupHint:SetText("Control the spacing and growth direction for the buff/debuff bar list.")
+  elseif isNameplateAura then
+    self.frame.groupHint:SetText("Control spacing and growth for matching native buff icons on each hostile NPC nameplate.")
   else
     self.frame.groupHint:SetText("Groups control child size, spacing, order, and growth.")
   end
-  self.frame.iconSection.title:SetText(isAuraBarList and "Row Icon" or "Icon")
+  self.frame.iconSection.title:SetText(isAuraBarList and "Row Icon"
+    or isNameplateAura and "Icon Appearance" or "Icon")
   self.frame.blizzardSection.title:SetText("Blizzard UI")
 
-  self:ApplyCanvasLayout(isGroup)
+  self:ApplyCanvasLayout(isGroup, isNameplateAura)
   self:LayoutSections()
   self:UpdateControlStates()
   self.suppressUpdates = false

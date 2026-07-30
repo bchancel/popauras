@@ -23,6 +23,36 @@ helpful auras on assistable units and harmful auras on non-assistable units.
 Unsupported restricted logical configurations remain unavailable rather than
 guessing.
 
+### Hostile nameplate buff groups
+
+Creation and runtime activation require
+`ns.Features.feature_nameplate_buffs` in `Core/Constants.lua`. The switch is
+currently enabled for PTR testing so it can be disabled without discarding
+saved nameplate configurations.
+
+Nameplate buff displays use one Blizzard `AuraGroup` per active PopAuras
+display and visible hostile NPC nameplate. PopAuras listens only for the public
+nameplate added/removed lifecycle; the native container receives `UNIT_AURA`
+and owns matching, ordering, icon, count, duration, and visibility.
+
+The native container is created under `UIParent` and anchored to the public
+nameplate frame. It must not be parented to the nameplate itself: protected or
+forbidden nameplate ownership can taint the template's secure `OnUpdate`
+handler during creation.
+
+These displays accept only Blizzard's non-identity category filters, such as
+stealable, Magic dispel type, boss/role/priority classification, and nameplate
+metadata flags. Categories within one display are AND. Separate displays are
+the supported way to express OR, with the understood possibility that an aura
+matching both displays appears twice. `All Buffs` omits category filters and an
+empty category selection fails closed.
+
+Exact spell IDs are not supported for hostile helpful auras. Blizzard skips
+identity filters for that relationship, including an empty spell-ID allowlist,
+so secure shutdown uses an empty dispel-type allowlist before disabling the
+container. Native buttons are styled only in the group's initialization
+callback and are never inspected or restyled after assignment.
+
 ## Spell cooldown to applied-aura mappings
 
 A spell's cast/spellbook ID often differs from the helpful aura ID it applies

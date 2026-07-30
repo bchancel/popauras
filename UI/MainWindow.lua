@@ -167,6 +167,15 @@ function MainWindow:Create()
   end)
   frame:Hide()
   frame:SetScript("OnHide", function()
+    if GetEditorMode() == "config" and ns.db.ui.activeTab == "trigger" then
+      local triggerPanel = ns.panels and ns.panels.TriggerPanel
+      if triggerPanel and triggerPanel.frame and triggerPanel.ApplyCurrent then
+        -- Commit a focused numeric field before the close refresh. Dropdowns
+        -- already apply immediately, but edit boxes otherwise rely on focus
+        -- event ordering when their parent window disappears.
+        triggerPanel:ApplyCurrent(true)
+      end
+    end
     if ns.runtime and ns.runtime.RefreshAll then
       ns.runtime:RefreshAll()
     end

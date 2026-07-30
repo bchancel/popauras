@@ -138,7 +138,10 @@ local function StyleButton(button, aura)
   ApplyRotation(button.timerText, display.timerRotation)
   ApplyRotation(button.countText, display.stacksRotation)
 
-  button.cooldown:SetShown(display.swipe == true)
+  -- Keep the duration host available even when the radial swipe is disabled.
+  -- Blizzard owns its shown state after SetDurationCooldown binds it, which
+  -- lets the child background exist for timed auras but disappear entirely
+  -- for zero/infinite-duration auras without addon-side duration inspection.
   if button.cooldown.SetDrawSwipe then button.cooldown:SetDrawSwipe(display.swipe == true) end
   if button.cooldown.SetDrawEdge then button.cooldown:SetDrawEdge(display.iconCooldownEdge == true) end
   if button.cooldown.SetDrawBling then button.cooldown:SetDrawBling(display.iconCooldownBling == true) end
@@ -162,14 +165,16 @@ end
 function Region:InitializeNativeButton(button)
   button.bar = CreateFrame("StatusBar", nil, button)
   button.bar:SetAllPoints()
-  button.background = button.bar:CreateTexture(nil, "BACKGROUND")
-  button.background:SetAllPoints()
-  button.background:SetTexture("Interface\\Buttons\\WHITE8x8")
 
   button.icon = button:CreateTexture(nil, "ARTWORK")
   button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
   button.cooldown:SetAllPoints()
   button.cooldown:EnableMouse(false)
+  button.cooldown:SetFrameLevel(button:GetFrameLevel())
+  button.background = button.cooldown:CreateTexture(nil, "BACKGROUND", nil, -8)
+  button.background:SetAllPoints()
+  button.background:SetTexture("Interface\\Buttons\\WHITE8x8")
+  button.bar:SetFrameLevel(button:GetFrameLevel() + 1)
   if button.cooldown.SetHideCountdownNumbers then
     button.cooldown:SetHideCountdownNumbers(true)
   end
@@ -185,8 +190,14 @@ end
 
 local function NativeSignature(options)
   local filters = options.candidateFilters or {}
-  return string.format("%s|%s|mine=%s", tostring(options.unit), tostring(options.filterString),
-    tostring(filters.isFromPlayerOrPlayerPet == true))
+  return string.format("%s|%s|maxDuration=%s",
+    tostring(options.unit),
+    tostring(options.filterString),
+    tostring(filters.maxDuration))
+end
+
+local function PresentationStyleSignature(display)
+  return tostring(display and display.swipe == true)
 end
 
 local function LayoutSignature(display)
@@ -197,16 +208,17 @@ local function LayoutSignature(display)
     tostring(tonumber(display.height or 24) or 24))
 end
 
-local function GetExpirationSort(display)
-  display = display or {}
+local function GetExpirationSort(trigger)
   local methods = AuraContainerSortMethod or {}
   local directions = AuraContainerSortDirection or {}
   local sortMethod = methods.ExpirationOnly or methods.Expiration or 0
-  -- Aura groups lay out their first element at the anchor. Keep the next aura
-  -- to expire at the visual bottom for both downward and upward lists.
-  local sortDirection = display.growth == "UP"
-    and (directions.Normal or 0)
-    or (directions.Reverse or 1)
+  local sortMode = UnitAuraList:GetSortMode(trigger)
+  -- Both modes are Blizzard-owned. Normal retains the earliest timed auras
+  -- before maxFrameCount is applied; Reverse restores permanent/longest-first
+  -- ordering for player-buff lists.
+  local sortDirection = sortMode == "longest_first"
+    and (directions.Reverse or 1)
+    or (directions.Normal or 0)
   return sortMethod, sortDirection
 end
 
@@ -227,14 +239,19 @@ function Region:CreateNativeContainer(aura, options)
   self.currentAura = aura
 
   local display = aura.display or {}
-  local sortMethod, sortDirection = GetExpirationSort(display)
+  local sortMethod, sortDirection = GetExpirationSort(GetTrigger(aura))
   local groupOptions = {
-    maxFrameCount = tonumber(display.maxAuras or 40) or 40,
+    maxFrameCount = tonumber(options.maxFrameCount or display.maxAuras or 40) or 40,
     initializeFrame = function(button) self:InitializeNativeButton(button) end,
     candidateFilters = options.candidateFilters,
     sortMethod = sortMethod,
     sortDirection = sortDirection,
     layout = {
+      -- 12.1.0 RC renamed the axis-specific spacing fields to primary-axis
+      -- spacing. Supplying both generations is safe; each client validates
+      -- and consumes the fields it understands.
+      elementSpacing = tonumber(display.spacing or 0) or 0,
+      lineSpacing = tonumber(display.spacing or 0) or 0,
       elementSpacingX = tonumber(display.spacing or 0) or 0,
       elementSpacingY = tonumber(display.spacing or 0) or 0,
       elementWidth = tonumber(display.width or 220) or 220,
@@ -250,16 +267,24 @@ function Region:CreateNativeContainer(aura, options)
   end
   self:ApplyContainerLayout(aura)
   container:SetUnit(options.unit)
+  self.nativeUnit = options.unit
+  self.nativeFilterString = options.filterString
   self.containerSignature = NativeSignature(options)
   self.nativeCandidateSignature = self.containerSignature
   self.nativeMaxFrameCount = groupOptions.maxFrameCount
   self.sortSignature = string.format("%s|%s", tostring(sortMethod), tostring(sortDirection))
+  self.presentationStyleSignature = PresentationStyleSignature(display)
   return container
 end
 
 local function GetFlowDirection(name, fallback)
   local directions = AnchorUtil and AnchorUtil.FlowDirection or nil
   return directions and directions[name] or fallback
+end
+
+local function GetFlowLayoutAxis(name, fallback)
+  local axes = AnchorUtil and AnchorUtil.FlowLayoutAxis or nil
+  return axes and axes[name] or fallback
 end
 
 function Region:ApplyContainerLayout(aura)
@@ -278,15 +303,45 @@ function Region:ApplyContainerLayout(aura)
   local anchor = growth == "LEFT" and "TOPRIGHT" or growth == "UP" and "BOTTOMLEFT" or "TOPLEFT"
   container:ClearAllPoints()
   container:SetPoint(anchor, self.frame, anchor)
-  container:SetAuraLayoutAnchorPoint(anchor)
-  container:SetAuraLayoutGrowthDirection(horizontal, vertical)
-  container:SetAuraLayoutRowWidth((growth == "UP" or growth == "DOWN") and width or math.huge)
-  container:SetAuraGroupLayout("popauras", {
-    elementSpacingX = spacing,
-    elementSpacingY = spacing,
-    elementWidth = width,
-    elementHeight = tonumber(display.height or 24) or 24,
-  })
+
+  local isVertical = growth == "UP" or growth == "DOWN"
+  if type(container.SetFlowLayoutAxis) == "function" then
+    -- Build 68914 made the primary axis explicit and renamed the container
+    -- layout API. An unlimited vertical line is the requested single column.
+    container:SetFlowLayoutAxis(GetFlowLayoutAxis(isVertical and "Vertical" or "Horizontal",
+      isVertical and 1 or 0))
+    if type(container.SetFlowLayoutAnchorPoint) == "function" then
+      container:SetFlowLayoutAnchorPoint(anchor)
+    end
+    if type(container.SetFlowLayoutGrowthDirection) == "function" then
+      container:SetFlowLayoutGrowthDirection(horizontal, vertical)
+    end
+    if type(container.SetFlowLayoutMaximumLineSize) == "function" then
+      container:SetFlowLayoutMaximumLineSize(nil)
+    end
+  else
+    -- PTR builds before 68914 used a horizontal primary axis. Restricting the
+    -- row to one bar width makes Up/Down wrap into a single column.
+    if type(container.SetAuraLayoutAnchorPoint) == "function" then
+      container:SetAuraLayoutAnchorPoint(anchor)
+    end
+    if type(container.SetAuraLayoutGrowthDirection) == "function" then
+      container:SetAuraLayoutGrowthDirection(horizontal, vertical)
+    end
+    if type(container.SetAuraLayoutRowWidth) == "function" then
+      container:SetAuraLayoutRowWidth(isVertical and width or math.huge)
+    end
+  end
+  if type(container.SetAuraGroupLayout) == "function" then
+    container:SetAuraGroupLayout("popauras", {
+      elementSpacing = spacing,
+      lineSpacing = spacing,
+      elementSpacingX = spacing,
+      elementSpacingY = spacing,
+      elementWidth = width,
+      elementHeight = tonumber(display.height or 24) or 24,
+    })
+  end
   self.layoutSignature = LayoutSignature(display)
 end
 
@@ -375,6 +430,29 @@ function Region:SetNativeSuppressed(suppressed, options)
   self:SetNativeEnabled(true)
 end
 
+function Region:RetireNativeContainer()
+  local container = self.container
+  if not container then return end
+
+  -- AuraButtons are initialized only once and may be forbidden after Blizzard
+  -- assigns them. Clear the secure group before retiring its container rather
+  -- than trying to restyle those buttons when a presentation option changes.
+  self:SetNativeSuppressed(true)
+  self.retiredContainers = self.retiredContainers or {}
+  self.retiredContainers[#self.retiredContainers + 1] = container
+  self.container = nil
+  self.nativeEnabled = false
+  self.nativeSuppressed = false
+  self.nativeUnit = nil
+  self.nativeFilterString = nil
+  self.containerSignature = nil
+  self.nativeCandidateSignature = nil
+  self.nativeMaxFrameCount = nil
+  self.sortSignature = nil
+  self.layoutSignature = nil
+  self.presentationStyleSignature = nil
+end
+
 function Region:New(aura)
   local instance = setmetatable({}, { __index = self })
   instance.frame = BaseRegion:CreateFrame(aura)
@@ -391,9 +469,10 @@ function Region:Update(aura, state)
   BaseRegion:ApplyFrameLayer(aura, self.frame)
   self.frame:EnableMouse(BaseRegion:CanMove(aura))
   self.frame:SetAlpha((aura.display and aura.display.alpha) or 1)
-  self.layoutVisible = true
 
   if state and state.source == "preview" then
+    self.loadMatched = true
+    self.layoutVisible = true
     self:SetNativeSuppressed(true)
     self.errorText:Hide()
     self:ShowPreview(aura)
@@ -401,26 +480,56 @@ function Region:Update(aura, state)
   end
   self:HidePreview()
 
+  self.loadMatched = state and state.loadMatched == true
+  if not self.loadMatched then
+    -- RuntimeStore still renders an explicit hidden state when load conditions
+    -- fail. Native AuraContainers are presentation authorities, so they must
+    -- be securely cleared and disabled instead of ignoring that state.
+    self.layoutVisible = false
+    self.errorText:Hide()
+    self:SetNativeSuppressed(true)
+    return
+  end
+  self.layoutVisible = true
+
   local options = UnitAuraList:GetNativeOptions(GetTrigger(aura))
   local signature = NativeSignature(options)
-  if not self.container or self.containerSignature ~= signature then
-    self:SetNativeSuppressed(true)
+  local inCombat = InCombatLockdown and InCombatLockdown() == true
+  local buttonStyleSignature = PresentationStyleSignature(aura.display)
+  if self.container and not inCombat
+      and self.presentationStyleSignature ~= buttonStyleSignature then
+    self:RetireNativeContainer()
+  end
+  if not self.container then
     local _, reason = self:CreateNativeContainer(aura, options)
     if not self.container then
       self.errorText:SetText("Native aura display unavailable: " .. tostring(reason or "unknown error"))
       self.errorText:Show()
       return
     end
+  elseif self.containerSignature ~= signature then
+    -- Reconfigure Blizzard's existing group instead of abandoning a container
+    -- whose assigned AuraButtons may already be forbidden. Clear candidates
+    -- first, then change the supported native inputs and restore the group.
+    self:SetNativeSuppressed(true)
+    if self.nativeFilterString ~= options.filterString then
+      self.container:SetAuraGroupFilterString("popauras", options.filterString)
+      self.nativeFilterString = options.filterString
+    end
+    if self.nativeUnit ~= options.unit then
+      self.container:SetUnit(options.unit)
+      self.nativeUnit = options.unit
+    end
+    self.containerSignature = signature
   end
 
   self.errorText:Hide()
-  local inCombat = InCombatLockdown and InCombatLockdown() == true
-  local maxFrameCount = tonumber(aura.display.maxAuras or 40) or 40
+  local maxFrameCount = tonumber(options.maxFrameCount or aura.display.maxAuras or 40) or 40
   if not inCombat and self.nativeMaxFrameCount ~= maxFrameCount then
     self.container:SetAuraGroupMaxFrameCount("popauras", maxFrameCount)
     self.nativeMaxFrameCount = maxFrameCount
   end
-  local sortMethod, sortDirection = GetExpirationSort(aura.display)
+  local sortMethod, sortDirection = GetExpirationSort(GetTrigger(aura))
   local sortSignature = string.format("%s|%s", tostring(sortMethod), tostring(sortDirection))
   if not inCombat and self.sortSignature ~= sortSignature and self.container.SetAuraGroupSortMethod then
     self.container:SetAuraGroupSortMethod("popauras", sortMethod, sortDirection)
@@ -432,7 +541,29 @@ function Region:Update(aura, state)
   self:SetNativeSuppressed(false, options)
 end
 
+function Region:RefreshNativeUnit(unit)
+  if self.loadMatched ~= true then return false end
+  local trigger = GetTrigger(self.currentAura)
+  if not trigger or (trigger.unit or "player") ~= unit then
+    return false
+  end
+  if not self.container or self.nativeEnabled ~= true or self.nativeSuppressed == true then
+    return false
+  end
+
+  -- "target" is a stable unit token even when it starts referring to a new
+  -- GUID, so SetUnit("target") would be a no-op. Blizzard exposes this rebuild
+  -- specifically for external identity changes while the container continues
+  -- to own normal UNIT_AURA updates.
+  if self.container.UpdateAllAuras then
+    self.container:UpdateAllAuras()
+    return true
+  end
+  return false
+end
+
 function Region:Release()
+  self.loadMatched = false
   self.layoutVisible = false
   self:SetNativeSuppressed(true)
   self:HidePreview()

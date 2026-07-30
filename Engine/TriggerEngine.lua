@@ -199,9 +199,16 @@ local function AuraUsesMultiStateRegion(aura)
   return ns.TriggerBase:AnyTriggerMatches(aura, "trinket_cooldown") == true
 end
 
+local function NameplateBuffsEnabled()
+  return ns.Features and ns.Features:IsEnabled("feature_nameplate_buffs") == true
+end
+
 function ns.Render:CreateRegion(aura, wantsMultiState)
   if wantsMultiState and ns.renderers.MultiStateRegion then
     return ns.renderers.MultiStateRegion:New(aura)
+  elseif NameplateBuffsEnabled()
+      and ns.renderers.NameplateAuraRegion and ns.renderers.NameplateAuraRegion:CanHandle(aura) then
+    return ns.renderers.NameplateAuraRegion:New(aura)
   elseif ns.renderers.NativeAuraRegion and ns.renderers.NativeAuraRegion:CanHandle(aura) then
     return ns.renderers.NativeAuraRegion:New(aura)
   elseif aura.kind == "icon" then
@@ -225,9 +232,12 @@ function ns.Render:RenderAura(aura, state)
   local renderProfile = ProfileStart(renderBucket)
   local region = ns.runtime:GetRegionByAuraId(aura.id)
   local wantsMultiState = AuraUsesMultiStateRegion(aura)
-  local wantsNativeAura = not wantsMultiState
+  local wantsNameplateAura = NameplateBuffsEnabled() and not wantsMultiState
+    and ns.renderers.NameplateAuraRegion and ns.renderers.NameplateAuraRegion:CanHandle(aura) or false
+  local wantsNativeAura = not wantsMultiState and not wantsNameplateAura
     and ns.renderers.NativeAuraRegion and ns.renderers.NativeAuraRegion:CanHandle(aura) or false
   if region and ((region.isNativeAuraRegion == true) ~= wantsNativeAura
+    or (region.isNameplateAuraRegion == true) ~= wantsNameplateAura
     or (region.isMultiStateRegion == true) ~= wantsMultiState) then
     if region.Release then region:Release() elseif region.frame then region.frame:Hide() end
     region = nil

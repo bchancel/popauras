@@ -1,6 +1,8 @@
 local _, ns = ...
 
 local Tables = ns.util.Tables
+local Anchors = ns.util.Anchors
+local UnitAuraList = ns.util.UnitAuraList
 
 local Defaults = {}
 ns.Defaults = Defaults
@@ -226,6 +228,44 @@ local function ApplyTriggerTypeDefaults(trigger)
       trigger.ignoreNPCs = false
     end
     trigger.spellId = tonumber(trigger.spellId or 0) or 0
+    if trigger.unit == "nameplate" then
+      -- Nameplate auras are presentation-only helpful-aura groups owned by
+      -- Blizzard's AuraContainer. Exact spell identity is intentionally not
+      -- used for hostile buffs because the native API does not permit that
+      -- filter combination.
+      trigger.auraType = "buff"
+      trigger.auraFilter = "present"
+      trigger.castByMe = false
+      trigger.nameplateAllBuffs = trigger.nameplateAllBuffs == true
+      local hadConfiguredCategory = trigger.nameplateStealable ~= nil
+        or trigger.nameplateMagic ~= nil
+        or trigger.nameplateBossAura ~= nil
+        or trigger.nameplatePriorityAura ~= nil
+        or trigger.nameplateRoleAura ~= nil
+        or trigger.nameplateShowAll ~= nil
+        or trigger.nameplateShowPersonal ~= nil
+      if not hadConfiguredCategory then
+        trigger.nameplateStealable = true
+      end
+      trigger.nameplateStealable = trigger.nameplateStealable == true
+      trigger.nameplateMagic = trigger.nameplateMagic == true
+      trigger.nameplateBossAura = trigger.nameplateBossAura == true
+      trigger.nameplatePriorityAura = trigger.nameplatePriorityAura == true
+      -- Retired PTR-only flags are intentionally cleared. If an older aura
+      -- selected only one of them, its remaining categories stay empty and
+      -- therefore fail closed instead of broadening to unrelated buffs.
+      trigger.nameplateRoleAura = nil
+      trigger.nameplateShowAll = nil
+      trigger.nameplateShowPersonal = nil
+      if trigger.nameplateAllBuffs then
+        trigger.nameplateStealable = false
+        trigger.nameplateMagic = false
+        trigger.nameplateBossAura = false
+        trigger.nameplatePriorityAura = false
+      end
+      local maxAuras = math.floor(tonumber(trigger.nameplateMaxAuras or 3) or 3)
+      trigger.nameplateMaxAuras = math.max(1, math.min(maxAuras, 8))
+    end
   elseif triggerType == "spell_cooldown" then
     trigger.spellId = tonumber(trigger.spellId or 0) or 0
     trigger.cooldownMatch = trigger.cooldownMatch or "cooldown"
@@ -300,12 +340,23 @@ local function ApplyTriggerTypeDefaults(trigger)
   elseif triggerType == "aura_list" then
     trigger.unit = trigger.unit or "player"
     trigger.auraType = trigger.auraType or "buff"
-    local targetDebuffFilterMode = tostring(trigger.targetDebuffFilterMode or "")
-    if targetDebuffFilterMode ~= "mine_only" and targetDebuffFilterMode ~= "mine_or_unowned" then
-      targetDebuffFilterMode = trigger.targetMineOrUnownedOnly == true and "mine_or_unowned" or "all"
+    if UnitAuraList then
+      UnitAuraList:RetireCasterFilter(trigger)
+      UnitAuraList:ApplySortMode(trigger, UnitAuraList:GetSortMode(trigger))
+      UnitAuraList:ApplyMaxDuration(trigger, UnitAuraList:GetMaxDuration(trigger))
+      UnitAuraList:ApplyMaxRows(trigger, UnitAuraList:GetMaxRows(trigger))
+    else
+      trigger.auraListFilterMode = nil
+      trigger.targetDebuffFilterMode = nil
+      trigger.targetMineOrUnownedOnly = nil
+      local isPlayerBuff = trigger.unit == "player" and trigger.auraType ~= "debuff"
+      if trigger.auraListSortMode ~= "shortest_first" and trigger.auraListSortMode ~= "longest_first" then
+        trigger.auraListSortMode = isPlayerBuff and "longest_first" or "shortest_first"
+      end
+      trigger.auraListMaxDuration = math.max(0, tonumber(trigger.auraListMaxDuration or 0) or 0)
+      local maxRows = math.floor(tonumber(trigger.auraListMaxRows or 0) or 0)
+      trigger.auraListMaxRows = math.max(0, math.min(maxRows, 100))
     end
-    trigger.targetDebuffFilterMode = targetDebuffFilterMode
-    trigger.targetMineOrUnownedOnly = targetDebuffFilterMode == "mine_or_unowned"
     trigger.hideBlizzardBuffs = trigger.hideBlizzardBuffs == true
     trigger.hideBlizzardDebuffs = trigger.hideBlizzardDebuffs == true
   end
@@ -446,8 +497,17 @@ function Defaults:ApplyAuraDefaults(aura)
       and (aura.triggers[1].type == nil or aura.triggers[1].type == "simple") then
     aura.triggers[1].type = "aura_list"
   end
+  local hasNameplateAuraTrigger = false
   for _, trigger in ipairs(aura.triggers) do
     self:ApplyTriggerDefaults(trigger)
+    hasNameplateAuraTrigger = hasNameplateAuraTrigger
+      or (trigger.type == "aura" and trigger.unit == "nameplate")
+  end
+  if hasNameplateAuraTrigger then
+    Anchors.ApplyNameplateAnchor(
+      aura.position,
+      Anchors.GetNameplateAnchor(aura.position)
+    )
   end
   if aura.triggerOp ~= "AND" and aura.triggerOp ~= "OR" then
     aura.triggerOp = "AND"
@@ -566,8 +626,9 @@ function Defaults:NewAura(kind, triggerType)
     elseif triggerType == "aura_list" then
       aura.triggers[1].unit = "player"
       aura.triggers[1].auraType = "buff"
-      aura.triggers[1].targetDebuffFilterMode = "all"
-      aura.triggers[1].targetMineOrUnownedOnly = false
+      aura.triggers[1].auraListSortMode = "longest_first"
+      aura.triggers[1].auraListMaxDuration = 0
+      aura.triggers[1].auraListMaxRows = 0
       aura.triggers[1].hideBlizzardBuffs = false
       aura.triggers[1].hideBlizzardDebuffs = false
     end
@@ -633,8 +694,9 @@ function Defaults:NewAura(kind, triggerType)
     aura.triggers[1].type = "aura_list"
     aura.triggers[1].unit = "player"
     aura.triggers[1].auraType = "buff"
-    aura.triggers[1].targetDebuffFilterMode = "all"
-    aura.triggers[1].targetMineOrUnownedOnly = false
+    aura.triggers[1].auraListSortMode = "longest_first"
+    aura.triggers[1].auraListMaxDuration = 0
+    aura.triggers[1].auraListMaxRows = 0
     aura.triggers[1].hideBlizzardBuffs = false
     aura.triggers[1].hideBlizzardDebuffs = false
   elseif kind == "bar" then

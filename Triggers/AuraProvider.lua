@@ -216,8 +216,21 @@ local function BuildAbsent(trigger, auraConfig, helpful, spellID, missingMatched
 end
 
 function provider:Evaluate(trigger, auraConfig)
-  local spellIDs = GetSpellIDs(trigger)
   local helpful = trigger.auraType ~= "debuff"
+  if trigger.unit == "nameplate" then
+    return ns.Schema.NormalizeRuntimeState({
+      show = false,
+      matched = false,
+      active = false,
+      availability = "unavailable",
+      unit = "nameplate",
+      name = auraConfig and auraConfig.name or "Nameplate Buffs",
+      source = "nameplate_aura",
+      statusText = "Native Nameplate Display",
+      debugExtra = "Blizzard owns nameplate aura presence and presentation.",
+    })
+  end
+  local spellIDs = GetSpellIDs(trigger)
   if #spellIDs == 0 then
     return BuildUnavailable(trigger, auraConfig, helpful, nil)
   end
@@ -271,6 +284,8 @@ function provider:RebuildIndex()
     for _, trigger in ns.TriggerBase:IterateTriggers(aura, "aura") do
       self.allAuraIDs[#self.allAuraIDs + 1] = auraID
 
+      local nameplateManaged = ns.renderers and ns.renderers.NameplateAuraRegion
+        and ns.renderers.NameplateAuraRegion:CanHandle(aura) or false
       local nativeManaged = ns.renderers and ns.renderers.NativeAuraRegion
         and ns.renderers.NativeAuraRegion:CanHandle(aura) or false
       local needsLogicalRefresh = not nativeManaged
@@ -278,6 +293,13 @@ function provider:RebuildIndex()
         or (type(aura.conditions) == "table" and next(aura.conditions) ~= nil)
         or (aura.display and (aura.display.showOnRaidFrames == true or aura.display.soundEnabled == true))
         or trigger.debug == true
+
+      -- Hostile nameplate buffs are deliberately presentation-only. Even if
+      -- an unsupported logical consumer is configured, never add an addon-side
+      -- UNIT_AURA scan path for them.
+      if nameplateManaged then
+        needsLogicalRefresh = false
+      end
 
       -- Blizzard's native AuraContainer receives UNIT_AURA directly. Avoid a
       -- second PopAuras evaluation/render pass unless another feature consumes
@@ -300,6 +322,9 @@ function provider:HandleEvent(event, ...)
   local unit
   if event == "UNIT_AURA" then
     unit = Safe:String((...))
+    if unit and unit:find("^nameplate%d+$") then
+      return
+    end
     if unit and ns.runtime and ns.runtime.RefreshNativeAuraSources then
       ns.runtime:RefreshNativeAuraSources(unit)
     end

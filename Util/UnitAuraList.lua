@@ -5,7 +5,9 @@ local _, ns = ...
 local UnitAuraList = {}
 ns.util.UnitAuraList = UnitAuraList
 
-local TARGET_MODES = { all = true, mine_only = true, mine_or_unowned = true }
+local SORT_MODES = { shortest_first = true, longest_first = true }
+local DEFAULT_MAX_ROWS = 0
+local MAX_MAX_ROWS = 100
 
 function UnitAuraList:GetTriggerConfig(trigger)
   local unit = trigger and trigger.unit or "player"
@@ -19,18 +21,57 @@ function UnitAuraList:GetSourceValue(trigger)
   return helpful and "player_buff" or "player_debuff"
 end
 
-function UnitAuraList:GetTargetDebuffFilterMode(trigger)
-  local mode = tostring(trigger and trigger.targetDebuffFilterMode or "")
-  if TARGET_MODES[mode] then return mode end
-  return trigger and trigger.targetMineOrUnownedOnly == true and "mine_or_unowned" or "all"
+function UnitAuraList:GetDefaultSortModeForSourceValue(sourceValue)
+  return sourceValue == "player_buff" and "longest_first" or "shortest_first"
 end
 
-function UnitAuraList:ApplyTargetDebuffFilterMode(trigger, value)
+function UnitAuraList:GetSortMode(trigger)
+  local mode = tostring(trigger and trigger.auraListSortMode or "")
+  if SORT_MODES[mode] then return mode end
+  return self:GetDefaultSortModeForSourceValue(self:GetSourceValue(trigger))
+end
+
+function UnitAuraList:ApplySortMode(trigger, value)
   trigger = trigger or {}
-  local mode = tostring(value or "all")
-  if not TARGET_MODES[mode] then mode = "all" end
-  trigger.targetDebuffFilterMode = mode
-  trigger.targetMineOrUnownedOnly = mode == "mine_or_unowned"
+  local mode = tostring(value or "")
+  if not SORT_MODES[mode] then
+    mode = self:GetDefaultSortModeForSourceValue(self:GetSourceValue(trigger))
+  end
+  trigger.auraListSortMode = mode
+  return trigger
+end
+
+function UnitAuraList:RetireCasterFilter(trigger)
+  trigger = trigger or {}
+  trigger.auraListFilterMode = nil
+  trigger.targetDebuffFilterMode = nil
+  trigger.targetMineOrUnownedOnly = nil
+  return trigger
+end
+
+function UnitAuraList:GetMaxDuration(trigger)
+  local value = tonumber(trigger and trigger.auraListMaxDuration or 0)
+  if not value or value ~= value or value == math.huge or value == -math.huge then
+    return 0
+  end
+  return math.max(0, value)
+end
+
+function UnitAuraList:ApplyMaxDuration(trigger, value)
+  trigger = trigger or {}
+  trigger.auraListMaxDuration = self:GetMaxDuration({ auraListMaxDuration = value })
+  return trigger
+end
+
+function UnitAuraList:GetMaxRows(trigger)
+  local value = math.floor(tonumber(trigger and trigger.auraListMaxRows or DEFAULT_MAX_ROWS)
+    or DEFAULT_MAX_ROWS)
+  return math.max(0, math.min(value, MAX_MAX_ROWS))
+end
+
+function UnitAuraList:ApplyMaxRows(trigger, value)
+  trigger = trigger or {}
+  trigger.auraListMaxRows = self:GetMaxRows({ auraListMaxRows = value })
   return trigger
 end
 
@@ -46,21 +87,23 @@ function UnitAuraList:ApplySourceValue(trigger, value)
   else
     trigger.unit, trigger.auraType = "player", "buff"
   end
-  if trigger.unit ~= "target" or trigger.auraType ~= "debuff" then
-    self:ApplyTargetDebuffFilterMode(trigger, "all")
-  end
   return trigger
 end
 
 function UnitAuraList:GetNativeOptions(trigger)
   local unit, helpful = self:GetTriggerConfig(trigger)
   local filters = {}
-  if unit == "target" and not helpful and self:GetTargetDebuffFilterMode(trigger) == "mine_only" then
-    filters.isFromPlayerOrPlayerPet = true
+  local maxDuration = self:GetMaxDuration(trigger)
+  if maxDuration > 0 then
+    filters.maxDuration = maxDuration
   end
+  local maxRows = self:GetMaxRows(trigger)
   return {
     unit = unit,
     filterString = helpful and "HELPFUL" or "HARMFUL",
     candidateFilters = filters,
+    -- Blizzard represents an unlimited group with infinity. Keep the saved
+    -- and user-facing value convenient by treating zero as unlimited.
+    maxFrameCount = maxRows > 0 and maxRows or math.huge,
   }
 end

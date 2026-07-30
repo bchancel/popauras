@@ -121,6 +121,26 @@ local SAVED_LOADOUT_MODE_OPTIONS = {
   { value = "except", label = "Except Selected Layouts" },
 }
 
+local FEATURE_DISABLED_NOTICES = {
+  feature_nameplate_buffs = "Nameplate Buffs is temporarily disabled in this build. "
+    .. "This aura remains saved, but it cannot load until the feature is enabled again.",
+}
+
+local function GetFeatureDisabledNotice(aura)
+  if not (ns.LoadEvaluator and ns.LoadEvaluator.GetDisabledFeature) then
+    return nil
+  end
+
+  local featureName = ns.LoadEvaluator:GetDisabledFeature(aura)
+  if not featureName then
+    return nil
+  end
+
+  return FEATURE_DISABLED_NOTICES[featureName]
+    or string.format("This aura cannot load because the %s feature is disabled.",
+      tostring(featureName):gsub("^feature_", ""):gsub("_", " "))
+end
+
 local function IsVisibilityEnabled(visibility, key)
   if type(visibility) ~= "table" then
     return true
@@ -1571,7 +1591,9 @@ function Panel:RefreshTalentSection(aura, topAnchor)
   end
   local classHeight = classCollapsed and 0 or (math.ceil(#CLASS_ORDER / 2) * 24)
   local specHeight = classCollapsed and 0 or (selectedSpecCount * 24)
-  self.frame.content:SetHeight(math.max(980, 640 + classHeight + specHeight + talentContentHeight + savedLoadoutContentHeight))
+  local featureNoticeHeight = self.frame.featureDisabledNotice:IsShown() and 72 or 0
+  self.frame.content:SetHeight(math.max(980 + featureNoticeHeight,
+    640 + classHeight + specHeight + talentContentHeight + savedLoadoutContentHeight + featureNoticeHeight))
 end
 
 function Panel:ShowTalentPicker(aura, groups)
@@ -1684,6 +1706,24 @@ function Panel:Create(parent)
   frame.content = CreateFrame("Frame", nil, frame.scroll)
   frame.content:SetSize(760, 900)
   frame.scroll:SetScrollChild(frame.content)
+
+  frame.featureDisabledNotice = CreateFrame("Frame", nil, frame.content, "BackdropTemplate")
+  frame.featureDisabledNotice:SetPoint("TOPLEFT", 16, -16)
+  frame.featureDisabledNotice:SetSize(700, 58)
+  frame.featureDisabledNotice:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+  })
+  frame.featureDisabledNotice:SetBackdropColor(0.22, 0.12, 0.03, 0.96)
+  frame.featureDisabledNotice:SetBackdropBorderColor(0.95, 0.58, 0.12, 1)
+  frame.featureDisabledNotice.text = Frames.CreateLabel(
+    frame.featureDisabledNotice, "", "GameFontHighlightSmall")
+  frame.featureDisabledNotice.text:SetPoint("TOPLEFT", 12, -9)
+  frame.featureDisabledNotice.text:SetPoint("BOTTOMRIGHT", -12, 9)
+  frame.featureDisabledNotice.text:SetJustifyH("LEFT")
+  frame.featureDisabledNotice.text:SetJustifyV("MIDDLE")
+  frame.featureDisabledNotice:Hide()
 
   frame.alwaysHeader = Frames.CreateLabel(frame.content, "Always / Never", "GameFontNormal")
   frame.alwaysHeader:SetPoint("TOPLEFT", 16, -20)
@@ -2017,6 +2057,17 @@ end
 
 function Panel:Refresh(aura)
   self.suppressUpdates = true
+  local featureDisabledNotice = GetFeatureDisabledNotice(aura)
+  self.frame.featureDisabledNotice:SetShown(featureDisabledNotice ~= nil)
+  self.frame.featureDisabledNotice.text:SetText(featureDisabledNotice
+    and ("|cffffcc44Feature disabled|r\n" .. featureDisabledNotice) or "")
+  self.frame.alwaysHeader:ClearAllPoints()
+  if featureDisabledNotice then
+    self.frame.alwaysHeader:SetPoint(
+      "TOPLEFT", self.frame.featureDisabledNotice, "BOTTOMLEFT", 0, -16)
+  else
+    self.frame.alwaysHeader:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", 16, -20)
+  end
   aura.load.classes = EnsureMap(aura.load.classes)
   aura.load.specs = EnsureMap(aura.load.specs)
   aura.load.talents = EnsureMap(aura.load.talents)
