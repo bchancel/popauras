@@ -4,6 +4,7 @@ local Frames = ns.util.Frames
 local Items = ns.util.Items
 local SoundPicker = ns.util.SoundPicker
 local Tables = ns.util.Tables
+local Theme = ns.util.Theme
 local UnitAuraList = ns.util.UnitAuraList
 
 local triggerTypes = {
@@ -37,8 +38,57 @@ local auraUnitValues = {
   { value = "player", label = "Player" },
   { value = "target", label = "Target" },
   { value = "group", label = "Party / Raid" },
-  { value = "nameplate", label = "Nameplate" },
 }
+if ns.Features and ns.Features:IsEnabled("feature_nameplate_buffs") then
+  auraUnitValues[#auraUnitValues + 1] = { value = "nameplate", label = "Nameplate" }
+end
+
+local nameplateCategoryFields = {
+  {
+    field = "nameplateStealable",
+    control = "nameplateStealableCheck",
+    descriptionControl = "nameplateStealableDescription",
+    label = "Stealable",
+    description = "Blizzard says the buff can be stolen.",
+  },
+  {
+    field = "nameplateMagic",
+    control = "nameplateMagicCheck",
+    descriptionControl = "nameplateMagicDescription",
+    label = "Magic effect",
+    description = "The buff's dispel type is Magic.",
+  },
+  {
+    field = "nameplateBossAura",
+    control = "nameplateBossAuraCheck",
+    descriptionControl = "nameplateBossAuraDescription",
+    label = "Boss / encounter flag",
+    description = "Blizzard marks it as a boss or encounter aura.",
+  },
+  {
+    field = "nameplatePriorityAura",
+    control = "nameplatePriorityAuraCheck",
+    descriptionControl = "nameplatePriorityAuraDescription",
+    label = "Priority flag",
+    description = "Blizzard marks it as important for UI display.",
+  },
+}
+
+local function SetCheckboxEnabled(check, enabled)
+  if not check then return end
+  if check.SetEnabled then check:SetEnabled(enabled) end
+  if check.EnableMouse then check:EnableMouse(enabled) end
+  check:SetAlpha(enabled and 1 or 0.45)
+  if check.Text then check.Text:SetAlpha(enabled and 1 or 0.55) end
+end
+
+local function SetNameplateCategoryEnabled(frame, entry, enabled)
+  SetCheckboxEnabled(frame and frame[entry.control], enabled)
+  local description = frame and frame[entry.descriptionControl]
+  if description then
+    description:SetAlpha(enabled and 0.85 or 0.40)
+  end
+end
 
 local auraGroupRangeValues = {
   { value = "any", label = "Any Range" },
@@ -52,10 +102,9 @@ local auraListSourceValues = {
   { value = "target_debuff", label = "Target Debuffs" },
 }
 
-local auraListTargetDebuffModeValues = {
-  { value = "all", label = "All Target Debuffs" },
-  { value = "mine_only", label = "Only Mine" },
-  { value = "mine_or_unowned", label = "Mine + Non-Player" },
+local auraListSortModeValues = {
+  { value = "shortest_first", label = "Soonest Expiring First" },
+  { value = "longest_first", label = "Longest / Permanent First" },
 }
 
 local simpleModeValues = {
@@ -796,6 +845,33 @@ function Panel:ApplyCurrent()
   trigger.castByMe = frame.auraCastByMeCheck:GetChecked() == true
   trigger.aliveOnly = frame.auraAliveOnlyCheck:GetChecked() == true
   trigger.ignoreNPCs = frame.auraIgnoreNPCsCheck:GetChecked() == true
+  if trigger.type == "aura" and trigger.unit == "nameplate" then
+    local hasNameplateConfig = trigger.nameplateAllBuffs ~= nil
+    for _, entry in ipairs(nameplateCategoryFields) do
+      hasNameplateConfig = hasNameplateConfig or trigger[entry.field] ~= nil
+    end
+    trigger.auraType = "buff"
+    trigger.auraFilter = "present"
+    trigger.castByMe = false
+    trigger.aliveOnly = true
+    trigger.ignoreNPCs = false
+    if hasNameplateConfig then
+      trigger.nameplateAllBuffs = frame.nameplateAllBuffsCheck:GetChecked() == true
+      for _, entry in ipairs(nameplateCategoryFields) do
+        trigger[entry.field] = trigger.nameplateAllBuffs ~= true
+          and frame[entry.control]:GetChecked() == true or false
+      end
+    else
+      trigger.nameplateAllBuffs = false
+      for _, entry in ipairs(nameplateCategoryFields) do
+        trigger[entry.field] = entry.field == "nameplateStealable"
+      end
+    end
+    local maxAuras = math.floor(
+      tonumber(frame.nameplateMaxAurasInput:GetText()) or trigger.nameplateMaxAuras or 3)
+    trigger.nameplateMaxAuras = math.max(1, math.min(maxAuras, 8))
+    frame.nameplateMaxAurasInput:SetText(tostring(trigger.nameplateMaxAuras))
+  end
   if trigger.type == "aura" and trigger.unit == "player" then
     trigger.castByMe = false
   end
@@ -818,13 +894,17 @@ function Panel:ApplyCurrent()
       trigger,
       UIDropDownMenu_GetSelectedValue(frame.auraListSourceDropDown) or UnitAuraList:GetSourceValue(trigger)
     )
-    if UnitAuraList.ApplyTargetDebuffFilterMode then
-      UnitAuraList:ApplyTargetDebuffFilterMode(
+    if UnitAuraList.ApplySortMode then
+      UnitAuraList:ApplySortMode(
         trigger,
-        UIDropDownMenu_GetSelectedValue(frame.auraListTargetDebuffModeDropDown)
-          or UnitAuraList:GetTargetDebuffFilterMode(trigger)
+        UIDropDownMenu_GetSelectedValue(frame.auraListSortModeDropDown)
+          or UnitAuraList:GetSortMode(trigger)
       )
     end
+    UnitAuraList:ApplyMaxDuration(
+      trigger, frame.auraListMaxDurationInput:GetText())
+    UnitAuraList:ApplyMaxRows(
+      trigger, frame.auraListMaxRowsInput:GetText())
   end
   trigger.hideBlizzardBuffs = frame.auraListHideBlizzardBuffsCheck:GetChecked() == true
   trigger.hideBlizzardDebuffs = frame.auraListHideBlizzardDebuffsCheck:GetChecked() == true
@@ -871,7 +951,15 @@ function Panel:ApplyCurrent()
       frame.resolvedLabel:SetText(resolved)
     end
   elseif trigger.type == "aura" then
-    if input == "" then
+    if trigger.unit == "nameplate" then
+      trigger.spellIDs = nil
+      trigger.spellNames = nil
+      trigger.spellId = nil
+      trigger.itemId = nil
+      trigger.itemName = nil
+      frame.resolvedLabel:SetText(
+        "|cff88ff88Native hostile NPC buff display.|r Filters selected below are combined with AND.")
+    elseif input == "" then
       trigger.spellIDs = nil
       trigger.spellNames = nil
       trigger.spellId = nil
@@ -994,6 +1082,7 @@ function Panel:ApplyCurrent()
     trigger.unit = "player"
   end
 
+  ns.Defaults:ApplyTriggerDefaults(trigger)
   triggers[triggerIndex] = trigger
   aura.triggerOp = UIDropDownMenu_GetSelectedValue(frame.opDropDown) or "AND"
   if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
@@ -1019,8 +1108,11 @@ function Panel:WireLiveInput(input)
 end
 
 function Panel:Create(parent)
-  local frame = CreateFrame("Frame", nil, parent)
-  frame:SetAllPoints()
+  local host, scroll, frame = Frames.CreateScrollPanel(parent, {
+    contentHeight = 1040,
+    minimumContentWidth = 700,
+    fillHeight = true,
+  })
 
   frame.triggerSelectLabel = Frames.CreateLabel(frame, "Trigger", "GameFontNormal")
   frame.triggerSelectLabel:SetPoint("TOPLEFT", 16, -20)
@@ -1232,18 +1324,84 @@ function Panel:Create(parent)
   end)
   frame.modeDropDown:SetPoint("TOPLEFT", frame.modeLabel, "BOTTOMLEFT", -14, -4)
 
-  frame.auraListSourceLabel = Frames.CreateLabel(frame, "Aura Source", "GameFontNormal")
-  frame.auraListSourceLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
-  frame.auraListSourceDropDown = Frames.CreateDropdown(frame, 190)
-  frame.auraListSourceDropDown:SetPoint("TOPLEFT", frame.auraListSourceLabel, "BOTTOMLEFT", -14, -4)
-  frame.auraListTargetDebuffModeLabel = Frames.CreateLabel(frame, "Target Debuff Filter", "GameFontNormal")
-  frame.auraListTargetDebuffModeLabel:SetPoint("TOPLEFT", frame.auraListSourceDropDown, "BOTTOMLEFT", 14, -10)
-  frame.auraListTargetDebuffModeDropDown = Frames.CreateDropdown(frame, 210)
-  frame.auraListTargetDebuffModeDropDown:SetPoint("TOPLEFT", frame.auraListTargetDebuffModeLabel, "BOTTOMLEFT", -14, -4)
-  frame.auraListHideBlizzardBuffsCheck = Frames.CreateCheckbox(frame, "Hide Blizzard Buffs")
-  frame.auraListHideBlizzardBuffsCheck:SetPoint("TOPLEFT", frame.auraListSourceDropDown, "BOTTOMLEFT", 14, -10)
-  frame.auraListHideBlizzardDebuffsCheck = Frames.CreateCheckbox(frame, "Hide Blizzard Debuffs")
-  frame.auraListHideBlizzardDebuffsCheck:SetPoint("TOPLEFT", frame.auraListSourceDropDown, "BOTTOMLEFT", 14, -10)
+  frame.auraListSettingsBox = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+  frame.auraListSettingsBox:SetPoint("TOPLEFT", 16, -20)
+  frame.auraListSettingsBox:SetSize(710, 300)
+  Theme.StyleSurface(frame.auraListSettingsBox, "surface", "borderStrong")
+
+  frame.auraListSettingsTitle = Frames.CreateLabel(
+    frame.auraListSettingsBox, "Buffs and Debuffs", "GameFontNormalLarge")
+  frame.auraListSettingsTitle:SetPoint("TOPLEFT", 14, -12)
+  Theme.SetText(frame.auraListSettingsTitle, "text")
+
+  frame.auraListSettingsIntro = Frames.CreateLabel(
+    frame.auraListSettingsBox,
+    "Blizzard owns aura filtering and ordering. These controls configure the native list without scanning restricted aura data.",
+    "GameFontHighlightSmall")
+  frame.auraListSettingsIntro:SetPoint(
+    "TOPLEFT", frame.auraListSettingsTitle, "BOTTOMLEFT", 0, -4)
+  frame.auraListSettingsIntro:SetWidth(676)
+  frame.auraListSettingsIntro:SetJustifyH("LEFT")
+  Theme.SetText(frame.auraListSettingsIntro, "textSecondary")
+
+  frame.auraListSourceLabel = Frames.CreateLabel(
+    frame.auraListSettingsBox, "Aura Source", "GameFontNormal")
+  frame.auraListSourceLabel:SetPoint("TOPLEFT", 14, -72)
+  frame.auraListSourceDropDown = Frames.CreateDropdown(
+    frame.auraListSettingsBox, 240)
+  frame.auraListSourceDropDown:SetPoint(
+    "TOPLEFT", frame.auraListSourceLabel, "BOTTOMLEFT", -14, -4)
+
+  frame.auraListSortModeLabel = Frames.CreateLabel(
+    frame.auraListSettingsBox, "Sort Order", "GameFontNormal")
+  frame.auraListSortModeLabel:SetPoint("TOPLEFT", 360, -72)
+  frame.auraListSortModeDropDown = Frames.CreateDropdown(
+    frame.auraListSettingsBox, 280)
+  frame.auraListSortModeDropDown:SetPoint(
+    "TOPLEFT", frame.auraListSortModeLabel, "BOTTOMLEFT", -14, -4)
+
+  frame.auraListMaxDurationLabel = Frames.CreateLabel(
+    frame.auraListSettingsBox, "Maximum Original Duration", "GameFontNormal")
+  frame.auraListMaxDurationLabel:SetPoint("TOPLEFT", 14, -140)
+  frame.auraListMaxDurationInput = Frames.CreateInput(
+    frame.auraListSettingsBox, 120, 24)
+  frame.auraListMaxDurationInput:SetPoint(
+    "TOPLEFT", frame.auraListMaxDurationLabel, "BOTTOMLEFT", 0, -6)
+  frame.auraListMaxDurationSuffix = Frames.CreateLabel(
+    frame.auraListSettingsBox, "seconds · 0 = unlimited", "GameFontDisableSmall")
+  frame.auraListMaxDurationSuffix:SetPoint(
+    "LEFT", frame.auraListMaxDurationInput, "RIGHT", 10, 0)
+  Theme.SetText(frame.auraListMaxDurationSuffix, "textMuted")
+
+  frame.auraListMaxRowsLabel = Frames.CreateLabel(
+    frame.auraListSettingsBox, "Maximum Displayed Rows", "GameFontNormal")
+  frame.auraListMaxRowsLabel:SetPoint("TOPLEFT", 360, -140)
+  frame.auraListMaxRowsInput = Frames.CreateInput(
+    frame.auraListSettingsBox, 120, 24)
+  frame.auraListMaxRowsInput:SetPoint(
+    "TOPLEFT", frame.auraListMaxRowsLabel, "BOTTOMLEFT", 0, -6)
+  frame.auraListMaxRowsSuffix = Frames.CreateLabel(
+    frame.auraListSettingsBox, "0 = unlimited", "GameFontDisableSmall")
+  frame.auraListMaxRowsSuffix:SetPoint(
+    "LEFT", frame.auraListMaxRowsInput, "RIGHT", 10, 0)
+  Theme.SetText(frame.auraListMaxRowsSuffix, "textMuted")
+
+  frame.auraListFilterHint = Frames.CreateLabel(
+    frame.auraListSettingsBox,
+    "The duration cap excludes permanent auras when nonzero. Row limits are applied after Blizzard sorts the candidates.",
+    "GameFontDisableSmall")
+  frame.auraListFilterHint:SetPoint("TOPLEFT", 14, -210)
+  frame.auraListFilterHint:SetWidth(676)
+  frame.auraListFilterHint:SetJustifyH("LEFT")
+  Theme.SetText(frame.auraListFilterHint, "textMuted")
+
+  frame.auraListHideBlizzardBuffsCheck = Frames.CreateCheckbox(
+    frame.auraListSettingsBox, "Hide Blizzard Buffs")
+  frame.auraListHideBlizzardBuffsCheck:SetPoint("TOPLEFT", 14, -258)
+  frame.auraListHideBlizzardDebuffsCheck = Frames.CreateCheckbox(
+    frame.auraListSettingsBox, "Hide Blizzard Debuffs")
+  frame.auraListHideBlizzardDebuffsCheck:SetPoint("TOPLEFT", 14, -258)
+  frame.auraListSettingsBox:Hide()
 
   frame.auraTypeLabel = Frames.CreateLabel(frame, "Aura Type", "GameFontNormal")
   frame.auraTypeLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
@@ -1318,6 +1476,78 @@ function Panel:Create(parent)
   frame.auraIgnoreNPCsCheck = Frames.CreateCheckbox(frame, "Ignore NPCs")
   frame.auraIgnoreNPCsCheck:SetPoint("TOPLEFT", frame.auraAliveOnlyCheck, "BOTTOMLEFT", 0, -6)
 
+  frame.nameplateFilterBox = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+  frame.nameplateFilterBox:SetPoint("TOPLEFT", 16, -20)
+  frame.nameplateFilterBox:SetSize(710, 330)
+  Theme.StyleSurface(frame.nameplateFilterBox, "surface", "borderStrong")
+
+  frame.nameplateFiltersLabel = Frames.CreateLabel(
+    frame.nameplateFilterBox, "Nameplate Buff Filters", "GameFontNormalLarge")
+  frame.nameplateFiltersLabel:SetPoint("TOPLEFT", 14, -12)
+  Theme.SetText(frame.nameplateFiltersLabel, "text")
+  frame.nameplateFilterIntro = Frames.CreateLabel(
+    frame.nameplateFilterBox,
+    "Blizzard owns aura detection and presentation. These controls use only its supported native classifications.",
+    "GameFontHighlightSmall"
+  )
+  frame.nameplateFilterIntro:SetPoint("TOPLEFT", frame.nameplateFiltersLabel, "BOTTOMLEFT", 0, -4)
+  frame.nameplateFilterIntro:SetWidth(676)
+  frame.nameplateFilterIntro:SetJustifyH("LEFT")
+  Theme.SetText(frame.nameplateFilterIntro, "textSecondary")
+
+  frame.nameplateAllBuffsCheck = Frames.CreateCheckbox(frame.nameplateFilterBox, "All buffs")
+  frame.nameplateAllBuffsCheck:SetPoint("TOPLEFT", 14, -66)
+  frame.nameplateAllBuffsDescription = Frames.CreateLabel(
+    frame.nameplateFilterBox,
+    "Show every helpful aura Blizzard exposes for hostile NPC nameplates.",
+    "GameFontDisableSmall"
+  )
+  frame.nameplateAllBuffsDescription:SetPoint(
+    "TOPLEFT", frame.nameplateAllBuffsCheck, "BOTTOMLEFT", 26, -1)
+  frame.nameplateAllBuffsDescription:SetWidth(650)
+  frame.nameplateAllBuffsDescription:SetJustifyH("LEFT")
+  Theme.SetText(frame.nameplateAllBuffsDescription, "textMuted")
+
+  local categoryPositions = {
+    { x = 14, y = -126 },
+    { x = 360, y = -126 },
+    { x = 14, y = -184 },
+    { x = 360, y = -184 },
+  }
+  for index, entry in ipairs(nameplateCategoryFields) do
+    local position = categoryPositions[index]
+    local check = Frames.CreateCheckbox(frame.nameplateFilterBox, entry.label)
+    check:SetPoint("TOPLEFT", position.x, position.y)
+    frame[entry.control] = check
+
+    local description = Frames.CreateLabel(
+      frame.nameplateFilterBox, entry.description, "GameFontDisableSmall")
+    description:SetPoint("TOPLEFT", check, "BOTTOMLEFT", 26, -1)
+    description:SetWidth(310)
+    description:SetJustifyH("LEFT")
+    Theme.SetText(description, "textMuted")
+    frame[entry.descriptionControl] = description
+  end
+
+  frame.nameplateMaxAurasLabel = Frames.CreateLabel(
+    frame.nameplateFilterBox, "Maximum icons per nameplate (1-8)", "GameFontNormal")
+  frame.nameplateMaxAurasLabel:SetPoint("TOPLEFT", 360, -242)
+  Theme.SetText(frame.nameplateMaxAurasLabel, "text")
+  frame.nameplateMaxAurasInput = Frames.CreateInput(frame.nameplateFilterBox, 80, 24)
+  frame.nameplateMaxAurasInput:SetPoint(
+    "TOPLEFT", frame.nameplateMaxAurasLabel, "BOTTOMLEFT", 0, -6)
+
+  frame.nameplateHint = Frames.CreateLabel(
+    frame.nameplateFilterBox,
+    "Checked categories are combined with AND. For Stealable OR Boss, create two displays. With nothing selected, no icons are shown.",
+    "GameFontDisableSmall"
+  )
+  frame.nameplateHint:SetPoint("TOPLEFT", 14, -242)
+  frame.nameplateHint:SetWidth(310)
+  frame.nameplateHint:SetJustifyH("LEFT")
+  Theme.SetText(frame.nameplateHint, "textMuted")
+  frame.nameplateFilterBox:Hide()
+
   frame.cooldownMatchLabel = Frames.CreateLabel(frame, "Match When", "GameFontNormal")
   frame.cooldownMatchLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
   frame.cooldownMatchDropDown = Frames.CreateDropdown(frame, 170)
@@ -1381,8 +1611,11 @@ function Panel:Create(parent)
     Panel:ApplyCurrent()
   end)
   frame.saveButton:SetPoint("TOPLEFT", frame.debugCheck, "BOTTOMLEFT", 0, -14)
+  Frames.StylePrimaryButton(frame.saveButton)
   frame.saveButton:Hide()
 
+  self.host = host
+  self.scroll = scroll
   self.frame = frame
 
   UIDropDownMenu_Initialize(frame.typeDropDown, function(self, level)
@@ -1512,13 +1745,20 @@ function Panel:Create(parent)
       info.func = function()
         UIDropDownMenu_SetSelectedValue(frame.auraListSourceDropDown, option.value)
         UIDropDownMenu_SetText(frame.auraListSourceDropDown, option.label)
+        if UnitAuraList and UnitAuraList.GetDefaultSortModeForSourceValue then
+          SetDropdownValue(
+            frame.auraListSortModeDropDown,
+            UnitAuraList:GetDefaultSortModeForSourceValue(option.value),
+            function() return auraListSortModeValues end
+          )
+        end
         Panel:ApplyCurrent()
       end
       UIDropDownMenu_AddButton(info, level)
     end
   end)
-  InitDropdownValues(frame.auraListTargetDebuffModeDropDown, function()
-    return auraListTargetDebuffModeValues
+  InitDropdownValues(frame.auraListSortModeDropDown, function()
+    return auraListSortModeValues
   end, function()
     Panel:ApplyCurrent()
   end)
@@ -1580,6 +1820,9 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.argInput)
   self:WireLiveInput(frame.trinketIgnoreInput)
   self:WireLiveInput(frame.manualCooldownInput)
+  self:WireLiveInput(frame.nameplateMaxAurasInput)
+  self:WireLiveInput(frame.auraListMaxDurationInput)
+  self:WireLiveInput(frame.auraListMaxRowsInput)
   self:WireLiveInput(frame.chatSourceInput)
   self:WireLiveInput(frame.chatDurationInput)
   self:WireLiveInput(frame.deathDurationInput)
@@ -1592,6 +1835,10 @@ function Panel:Create(parent)
   frame.auraCastByMeCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraAliveOnlyCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraIgnoreNPCsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  frame.nameplateAllBuffsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  for _, entry in ipairs(nameplateCategoryFields) do
+    frame[entry.control]:SetScript("OnClick", function() Panel:ApplyCurrent() end)
+  end
   frame.auraListHideBlizzardBuffsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraListHideBlizzardDebuffsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.chargeCooldownCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
@@ -1601,18 +1848,34 @@ function Panel:Create(parent)
   frame.deathDPSCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.debugCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
 
-  return frame
+  return host
 end
 
 function Panel:Refresh(aura)
   self.suppressUpdates = true
   local triggers = EnsureAuraTriggers(aura)
   local trigger, triggerIndex = self:GetSelectedTrigger(aura)
+  local isNameplateAura = aura.kind == "icon"
+    and #triggers == 1
+    and trigger.type == "aura"
+    and (trigger.unit or "player") == "nameplate"
+  local isAuraListEditor = aura.kind == "aura_bar_list"
+    and #triggers == 1
+    and trigger.type == "aura_list"
+  local usesDedicatedTriggerEditor = isNameplateAura or isAuraListEditor
   UpdatePrimaryTriggerLayout(self.frame, aura)
   SetDropdownValue(self.frame.triggerSelectDropDown, triggerIndex, function()
     return GetTriggerDropdownValues(aura)
   end)
-  self.frame.removeTriggerButton:SetShown(#triggers > 1)
+  self.frame.triggerSelectLabel:SetShown(not usesDedicatedTriggerEditor)
+  self.frame.triggerSelectDropDown:SetShown(not usesDedicatedTriggerEditor)
+  self.frame.addTriggerButton:SetShown(not usesDedicatedTriggerEditor)
+  self.frame.removeTriggerButton:SetShown(
+    #triggers > 1 and not usesDedicatedTriggerEditor)
+  self.frame.typeLabel:SetShown(not usesDedicatedTriggerEditor)
+  self.frame.typeDropDown:SetShown(not usesDedicatedTriggerEditor)
+  self.frame.opLabel:SetShown(#triggers > 1 and not usesDedicatedTriggerEditor)
+  self.frame.opDropDown:SetShown(#triggers > 1 and not usesDedicatedTriggerEditor)
   UIDropDownMenu_SetSelectedValue(self.frame.typeDropDown, trigger.type or "simple")
   UIDropDownMenu_SetText(self.frame.typeDropDown, triggerTypes[trigger.type or "simple"] or "Simple")
   UIDropDownMenu_SetSelectedValue(self.frame.opDropDown, aura.triggerOp or "AND")
@@ -1622,14 +1885,22 @@ function Panel:Refresh(aura)
     return simpleModeValues
   end))
   if trigger.type == "aura" then
-    self.frame.argLabel:SetText("Aura Name or Spell IDs")
-    local inputTokens = BuildAuraInputTokens(trigger)
-    local resolvedTokens = BuildAuraResolvedTokens(trigger)
-    self.frame.argInput:SetText(table.concat(inputTokens, ", "))
-    if #resolvedTokens > 0 then
-      self.frame.resolvedLabel:SetText(string.format("|cff88ff88Resolved:|r %s", table.concat(resolvedTokens, ", ")))
+    if isNameplateAura then
+      self.frame.argLabel:SetText("Native Buff Categories")
+      self.frame.argInput:SetText("")
+      self.frame.resolvedLabel:SetText(
+        "|cff88ff88Native hostile NPC buff display.|r Filters selected below are combined with AND.")
     else
-      self.frame.resolvedLabel:SetText("|cffaaaaaaEnter aura names or spell IDs separated by commas.|r")
+      self.frame.argLabel:SetText("Aura Name or Spell IDs")
+      local inputTokens = BuildAuraInputTokens(trigger)
+      local resolvedTokens = BuildAuraResolvedTokens(trigger)
+      self.frame.argInput:SetText(table.concat(inputTokens, ", "))
+      if #resolvedTokens > 0 then
+        self.frame.resolvedLabel:SetText(string.format(
+          "|cff88ff88Resolved:|r %s", table.concat(resolvedTokens, ", ")))
+      else
+        self.frame.resolvedLabel:SetText("|cffaaaaaaEnter aura names or spell IDs separated by commas.|r")
+      end
     end
   elseif trigger.type == "spell_cooldown" or trigger.type == "cast" or trigger.type == "spell_cast_event" then
     self.frame.argLabel:SetText(trigger.type == "cast" and "Spell Name or IDs (optional)" or "Spell Name or IDs")
@@ -1704,33 +1975,45 @@ function Panel:Refresh(aura)
   local isAuraList = trigger.type == "aura_list"
   local showTrinketGrowth = isTrinketCooldown and trigger.trinketTop ~= false and trigger.trinketBottom ~= false
   local auraListSourceValue = UnitAuraList and UnitAuraList.GetSourceValue and UnitAuraList:GetSourceValue(trigger) or "player_buff"
-  local auraListTargetDebuffMode = UnitAuraList and UnitAuraList.GetTargetDebuffFilterMode
-    and UnitAuraList:GetTargetDebuffFilterMode(trigger)
-    or (trigger.targetMineOrUnownedOnly == true and "mine_or_unowned" or "all")
-  local showTargetDebuffFilter = isAuraList and auraListSourceValue == "target_debuff"
+  local auraListSortMode = UnitAuraList and UnitAuraList.GetSortMode
+    and UnitAuraList:GetSortMode(trigger)
+    or "longest_first"
   local showHideBlizzardBuffs = isAuraList and auraListSourceValue == "player_buff"
   local showHideBlizzardDebuffs = isAuraList and auraListSourceValue == "player_debuff"
   self.frame.modeLabel:SetShown(isSimple)
   self.frame.modeDropDown:SetShown(isSimple)
   self.frame.auraListSourceLabel:SetShown(isAuraList)
   self.frame.auraListSourceDropDown:SetShown(isAuraList)
-  self.frame.auraListTargetDebuffModeLabel:SetShown(showTargetDebuffFilter)
-  self.frame.auraListTargetDebuffModeDropDown:SetShown(showTargetDebuffFilter)
+  self.frame.auraListSortModeLabel:SetShown(isAuraList)
+  self.frame.auraListSortModeDropDown:SetShown(isAuraList)
+  self.frame.auraListMaxDurationLabel:SetShown(isAuraList)
+  self.frame.auraListMaxDurationInput:SetShown(isAuraList)
+  self.frame.auraListMaxDurationSuffix:SetShown(isAuraList)
+  self.frame.auraListMaxRowsLabel:SetShown(isAuraList)
+  self.frame.auraListMaxRowsInput:SetShown(isAuraList)
+  self.frame.auraListMaxRowsSuffix:SetShown(isAuraList)
+  self.frame.auraListFilterHint:SetShown(isAuraList)
   self.frame.auraListHideBlizzardBuffsCheck:SetShown(showHideBlizzardBuffs)
   self.frame.auraListHideBlizzardDebuffsCheck:SetShown(showHideBlizzardDebuffs)
-  self.frame.auraTypeLabel:SetShown(isAura)
-  self.frame.auraTypeDropDown:SetShown(isAura)
-  self.frame.auraFilterLabel:SetShown(isAura)
-  self.frame.auraFilterDropDown:SetShown(isAura)
-  self.frame.auraUnitLabel:SetShown(isAura)
-  self.frame.auraUnitDropDown:SetShown(isAura)
+  self.frame.auraTypeLabel:SetShown(isAura and not isNameplateAura)
+  self.frame.auraTypeDropDown:SetShown(isAura and not isNameplateAura)
+  self.frame.auraFilterLabel:SetShown(isAura and not isNameplateAura)
+  self.frame.auraFilterDropDown:SetShown(isAura and not isNameplateAura)
+  self.frame.auraUnitLabel:SetShown(isAura and not isNameplateAura)
+  self.frame.auraUnitDropDown:SetShown(isAura and not isNameplateAura)
   self.frame.auraRangeLabel:SetShown(isAura and (trigger.unit or "player") == "group")
   self.frame.auraRangeDropDown:SetShown(isAura and (trigger.unit or "player") == "group")
-  self.frame.auraCastByMeCheck:SetShown(isAura and (trigger.unit or "player") ~= "player")
-  self.frame.auraAliveOnlyCheck:SetShown(isAura)
+  self.frame.auraCastByMeCheck:SetShown(isAura and not isNameplateAura
+    and (trigger.unit or "player") ~= "player")
+  self.frame.auraAliveOnlyCheck:SetShown(isAura and not isNameplateAura)
   self.frame.auraIgnoreNPCsCheck:SetShown(isAura and (trigger.unit or "player") == "group")
-  self.frame.argLabel:SetShown(not isDeathAlert and not isAuraList and not isTrinketCooldown)
-  self.frame.argInput:SetShown(not isDeathAlert and not isAuraList and not isTrinketCooldown)
+  self.frame.argLabel:SetShown(not isDeathAlert and not isAuraList and not isTrinketCooldown
+    and not isNameplateAura)
+  self.frame.argInput:SetShown(not isDeathAlert and not isAuraList and not isTrinketCooldown
+    and not isNameplateAura)
+  self.frame.resolvedLabel:SetShown(not isNameplateAura and not isAuraList)
+  self.frame.nameplateFilterBox:SetShown(isNameplateAura)
+  self.frame.auraListSettingsBox:SetShown(isAuraList)
   self.frame.trinketSlotsLabel:SetShown(isTrinketCooldown)
   self.frame.trinketTopCheck:SetShown(isTrinketCooldown)
   self.frame.trinketBottomCheck:SetShown(isTrinketCooldown)
@@ -1786,17 +2069,29 @@ function Panel:Refresh(aura)
     end
   )
   SetDropdownValue(
-    self.frame.auraListTargetDebuffModeDropDown,
-    auraListTargetDebuffMode,
+    self.frame.auraListSortModeDropDown,
+    auraListSortMode,
     function()
-      return auraListTargetDebuffModeValues
+      return auraListSortModeValues
     end
   )
+  self.frame.auraListMaxDurationInput:SetText(
+    isAuraList and tostring(UnitAuraList:GetMaxDuration(trigger)) or "")
+  self.frame.auraListMaxRowsInput:SetText(
+    isAuraList and tostring(UnitAuraList:GetMaxRows(trigger)) or "")
   self.frame.auraListHideBlizzardBuffsCheck:SetChecked(trigger.hideBlizzardBuffs == true)
   self.frame.auraListHideBlizzardDebuffsCheck:SetChecked(trigger.hideBlizzardDebuffs == true)
   self.frame.auraAliveOnlyCheck:SetChecked(trigger.aliveOnly == true)
   self.frame.auraCastByMeCheck:SetChecked(trigger.castByMe == true)
   self.frame.auraIgnoreNPCsCheck:SetChecked(trigger.ignoreNPCs == true)
+  self.frame.nameplateAllBuffsCheck:SetChecked(trigger.nameplateAllBuffs == true)
+  for _, entry in ipairs(nameplateCategoryFields) do
+    local check = self.frame[entry.control]
+    check:SetChecked(trigger[entry.field] == true)
+    SetNameplateCategoryEnabled(self.frame, entry, trigger.nameplateAllBuffs ~= true)
+  end
+  self.frame.nameplateMaxAurasInput:SetText(
+    isNameplateAura and tostring(trigger.nameplateMaxAuras or 3) or "")
   self.frame.manualCooldownLabel:SetShown(isSpellCooldown)
   self.frame.manualCooldownInput:SetShown(isSpellCooldown)
   self.frame.manualCooldownHint:SetShown(isSpellCooldown)

@@ -6,8 +6,11 @@ local Panel = {}
 ns.panels.GroupPanel = Panel
 
 function Panel:Create(parent)
-  local frame = CreateFrame("Frame", nil, parent)
-  frame:SetAllPoints()
+  local host, scroll, frame = Frames.CreateScrollPanel(parent, {
+    contentHeight = 480,
+    minimumContentWidth = 560,
+    fillHeight = true,
+  })
 
   frame.info = Frames.CreateLabel(frame, "Static and dynamic groups preserve manual child order in V1.", "GameFontHighlight")
   frame.info:SetPoint("TOPLEFT", 16, -20)
@@ -40,8 +43,10 @@ function Panel:Create(parent)
   end)
   frame.downButton:SetPoint("LEFT", frame.upButton, "RIGHT", 8, 0)
 
+  self.host = host
+  self.scroll = scroll
   self.frame = frame
-  return frame
+  return host
 end
 
 function Panel:Refresh(aura)

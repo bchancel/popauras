@@ -1,5 +1,14 @@
 local _, ns = ...
 
+ns.Features = {
+  -- Native nameplate auras remain reversible while they are exercised on PTR.
+  feature_nameplate_buffs = true,
+}
+
+function ns.Features:IsEnabled(featureName)
+  return self[featureName] == true
+end
+
 ns.Constants = {
   DB_VERSION = 5,
   EXPORT_VERSION = 1,

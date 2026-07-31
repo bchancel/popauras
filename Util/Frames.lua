@@ -4,6 +4,7 @@ local Frames = {}
 ns.util.Frames = Frames
 
 local Fonts = ns.util.Fonts
+local Theme = ns.util.Theme
 
 function Frames.SetExplicitBounds(region, owner, width, height)
   if not region or not owner then return end
@@ -73,24 +74,26 @@ function Frames.MakeMovable(frame, onStop)
 end
 
 function Frames.CreateLabel(parent, text, template)
-  local label = parent:CreateFontString(nil, "OVERLAY", template or "GameFontNormal")
+  template = template or "GameFontNormal"
+  local label = parent:CreateFontString(nil, "OVERLAY", template)
   label:SetJustifyH("LEFT")
   label:SetText(text or "")
+  if template:find("Disable", 1, true) then
+    Theme.SetText(label, "textMuted")
+  elseif template:find("Highlight", 1, true) then
+    Theme.SetText(label, "textSecondary")
+  else
+    Theme.SetText(label, "text")
+  end
   return label
 end
 
 function Frames.CreateButton(parent, text, width, height, onClick)
   local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
   button:SetSize(width or 120, height or 22)
-  button:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
   button.Text = button:CreateFontString(nil, "OVERLAY")
   button.Text:SetPoint("CENTER")
-  Fonts.Apply(button.Text, 12, "OUTLINE")
-  button.Text:SetTextColor(1, 0.88, 0.15)
+  Fonts.Apply(button.Text, 12, "")
   button.Text:SetJustifyH("CENTER")
   button.Text:SetJustifyV("MIDDLE")
   function button:SetText(value)
@@ -103,6 +106,7 @@ function Frames.CreateButton(parent, text, width, height, onClick)
   if onClick then
     button:SetScript("OnClick", onClick)
   end
+  Theme.StyleButton(button, "secondary")
   return button
 end
 
@@ -110,18 +114,11 @@ function Frames.StyleSecondaryButton(button)
   if not button then
     return
   end
-  button:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  button:SetBackdropColor(0.10, 0.13, 0.18, 0.95)
-  button:SetBackdropBorderColor(0.24, 0.30, 0.40, 1)
+  Theme.StyleButton(button, "secondary")
   if button.GetFontString then
     local fontString = button:GetFontString()
     if fontString then
-      Fonts.Apply(fontString, 12, "OUTLINE")
-      fontString:SetTextColor(1, 0.88, 0.15)
+      Fonts.Apply(fontString, 12, "")
     end
   end
 end
@@ -130,18 +127,11 @@ function Frames.StylePrimaryButton(button)
   if not button then
     return
   end
-  button:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  button:SetBackdropColor(0.06, 0.38, 0.75, 0.95)
-  button:SetBackdropBorderColor(0.20, 0.60, 1.0, 1)
+  Theme.StyleButton(button, "primary")
   if button.GetFontString then
     local fontString = button:GetFontString()
     if fontString then
-      Fonts.Apply(fontString, 16, "OUTLINE")
-      fontString:SetTextColor(1, 1, 1)
+      Fonts.Apply(fontString, 16, "")
     end
   end
 end
@@ -150,18 +140,11 @@ function Frames.StyleSuccessButton(button)
   if not button then
     return
   end
-  button:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  button:SetBackdropColor(0.07, 0.38, 0.16, 0.98)
-  button:SetBackdropBorderColor(0.18, 0.72, 0.34, 1)
+  Theme.StyleButton(button, "success")
   if button.GetFontString then
     local fontString = button:GetFontString()
     if fontString then
-      Fonts.Apply(fontString, 14, "OUTLINE")
-      fontString:SetTextColor(1, 1, 1)
+      Fonts.Apply(fontString, 14, "")
     end
   end
 end
@@ -170,18 +153,11 @@ function Frames.StyleDangerButton(button)
   if not button then
     return
   end
-  button:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  button:SetBackdropColor(0.48, 0.07, 0.09, 0.98)
-  button:SetBackdropBorderColor(0.86, 0.18, 0.22, 1)
+  Theme.StyleButton(button, "danger")
   if button.GetFontString then
     local fontString = button:GetFontString()
     if fontString then
-      Fonts.Apply(fontString, 14, "OUTLINE")
-      fontString:SetTextColor(1, 1, 1)
+      Fonts.Apply(fontString, 14, "")
     end
   end
 end
@@ -218,20 +194,18 @@ function Frames.GetConfirmationDialog()
   local dialog = CreateFrame("Frame", nil, overlay, "BackdropTemplate")
   dialog:SetSize(470, 220)
   dialog:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
-  dialog:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  dialog:SetBackdropColor(0.07, 0.09, 0.14, 0.99)
-  dialog:SetBackdropBorderColor(0.30, 0.38, 0.50, 1)
+  Theme.StyleSurface(dialog, "canvasAlt", "borderStrong")
   dialog:SetFrameLevel(overlay:GetFrameLevel() + 10)
+
+  dialog.accent = Theme.CreateAccentLine(dialog, 2, "accent")
+  dialog.accent:SetPoint("TOPLEFT", 1, -1)
+  dialog.accent:SetPoint("TOPRIGHT", -1, -1)
 
   dialog.title = Frames.CreateLabel(dialog, "Confirm", "GameFontNormalLarge")
   dialog.title:SetPoint("TOPLEFT", 20, -20)
   dialog.title:SetPoint("TOPRIGHT", -20, -20)
   dialog.title:SetJustifyH("CENTER")
-  dialog.title:SetTextColor(0.94, 0.96, 1)
+  Theme.SetText(dialog.title, "text")
 
   dialog.message = Frames.CreateLabel(dialog, "", "GameFontHighlight")
   dialog.message:SetPoint("TOPLEFT", 24, -62)
@@ -240,7 +214,7 @@ function Frames.GetConfirmationDialog()
   dialog.message:SetJustifyH("CENTER")
   dialog.message:SetJustifyV("MIDDLE")
   dialog.message:SetWordWrap(true)
-  dialog.message:SetTextColor(0.86, 0.90, 0.96)
+  Theme.SetText(dialog.message, "textSecondary")
 
   dialog.cancelButton = Frames.CreateButton(dialog, "No", 132, 30, function()
     overlay:Hide()
@@ -299,6 +273,7 @@ function Frames.CreateInput(parent, width, height)
   input:SetAutoFocus(false)
   input:SetSize(width or 120, height or 20)
   input:SetTextInsets(6, 6, 0, 0)
+  Theme.StyleEditBox(input)
   return input
 end
 
@@ -313,12 +288,25 @@ function Frames.CreateCheckbox(parent, labelText)
   end
   if text then
     text:SetText(labelText or "")
+    check.Text = text
   else
     text = check:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     text:SetPoint("LEFT", check, "RIGHT", 2, 1)
     text:SetText(labelText or "")
     check.Text = text
   end
+  Theme.StyleCheckbox(check)
+  return check
+end
+
+function Frames.CreateToggle(parent)
+  local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+  check:SetSize(42, 22)
+  if check.Text then
+    check.Text:SetText("")
+    check.Text:Hide()
+  end
+  Theme.StyleToggle(check)
   return check
 end
 
@@ -326,39 +314,64 @@ function Frames.CreateDropdown(parent, width, initializer)
   local frame = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
   UIDropDownMenu_SetWidth(frame, width or 140)
   UIDropDownMenu_Initialize(frame, initializer)
+  Theme.StyleDropdown(frame)
   return frame
+end
+
+function Frames.CreateScrollPanel(parent, options)
+  options = type(options) == "table" and options or {}
+
+  local host = CreateFrame("Frame", nil, parent)
+  host:SetAllPoints()
+
+  local scroll = CreateFrame("ScrollFrame", nil, host, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", options.leftInset or 0, -(options.topInset or 0))
+  scroll:SetPoint("BOTTOMRIGHT", -(options.rightInset or 26), options.bottomInset or 0)
+  scroll:EnableMouseWheel(true)
+  scroll:SetScript("OnMouseWheel", function(selfScroll, delta)
+    local current = selfScroll:GetVerticalScroll() or 0
+    local maximum = selfScroll:GetVerticalScrollRange() or 0
+    selfScroll:SetVerticalScroll(math.max(0, math.min(maximum, current - (delta * (options.wheelStep or 42)))))
+  end)
+  Theme.StyleScrollFrame(scroll)
+
+  local content = CreateFrame("Frame", nil, scroll)
+  content:SetSize(options.contentWidth or 720, options.contentHeight or 720)
+  scroll:SetScrollChild(content)
+
+  local function UpdateContentSize(_, width, height)
+    width = tonumber(width) or host:GetWidth() or 0
+    height = tonumber(height) or host:GetHeight() or 0
+    local availableWidth = math.max(options.minimumContentWidth or 1, width - (options.rightInset or 26))
+    content:SetWidth(availableWidth)
+    if options.fillHeight then
+      content:SetHeight(math.max(options.contentHeight or 1, height))
+    end
+  end
+  host:SetScript("OnSizeChanged", UpdateContentSize)
+  UpdateContentSize(host, host:GetWidth(), host:GetHeight())
+
+  host.scroll = scroll
+  host.content = content
+  return host, scroll, content
 end
 
 function Frames.CreateSelectorButton(parent, width, height)
   local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
   button:SetSize(width or 180, height or 24)
-  button:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  button:SetBackdropColor(0.08, 0.10, 0.15, 0.98)
-  button:SetBackdropBorderColor(0.24, 0.30, 0.40, 1)
 
   button.Text = button:CreateFontString(nil, "OVERLAY")
   Fonts.Apply(button.Text, 12, "OUTLINE")
   button.Text:SetPoint("LEFT", 10, 0)
   button.Text:SetPoint("RIGHT", -24, 0)
   button.Text:SetJustifyH("LEFT")
-  button.Text:SetTextColor(0.95, 0.96, 1)
+  Theme.SetText(button.Text, "text")
 
   button.Arrow = button:CreateTexture(nil, "ARTWORK")
   button.Arrow:SetSize(12, 12)
   button.Arrow:SetPoint("RIGHT", -7, 0)
   button.Arrow:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
-  button.Arrow:SetVertexColor(1, 0.88, 0.15)
-
-  button:SetScript("OnEnter", function(self)
-    self:SetBackdropColor(0.10, 0.13, 0.18, 0.98)
-  end)
-  button:SetScript("OnLeave", function(self)
-    self:SetBackdropColor(0.08, 0.10, 0.15, 0.98)
-  end)
+  Theme.SetTexture(button.Arrow, "textAccent")
 
   function button:SetText(value)
     self.Text:SetText(value or "")
@@ -368,6 +381,7 @@ function Frames.CreateSelectorButton(parent, width, height)
     return self.Text
   end
 
+  Theme.StyleButton(button, "secondary")
   return button
 end
 
@@ -377,5 +391,5 @@ function Frames.SetDropdownValue(dropdown, value, label)
 end
 
 function Frames.ApplyTitle(fontString)
-  Fonts.Apply(fontString, 18, "OUTLINE")
+  Fonts.Apply(fontString, 18, "")
 end

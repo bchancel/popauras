@@ -23,6 +23,44 @@ helpful auras on assistable units and harmful auras on non-assistable units.
 Unsupported restricted logical configurations remain unavailable rather than
 guessing.
 
+### Buffs and Debuffs lists
+
+Buffs and Debuffs regions configure Blizzard's native `AuraContainer` with a
+source, expiration sort direction, maximum original duration, and maximum row
+count. Blizzard performs all matching, ordering, truncation, duration, and
+visibility work; PopAuras never enumerates the unit's aura records.
+
+The renderer keeps visual growth separate from semantic sort order. Player
+Buffs default to longest/permanent first, while Player Debuffs and target lists
+default to soonest-expiring first. A row limit is applied by Blizzard only
+after that ordering. Zero duration and row limits mean unlimited.
+
+Changing native filters first clears assigned rows through an empty candidate
+set and then reconfigures the existing container. Presentation changes that
+cannot be applied to already assigned native buttons securely retire and retain
+the old container before creating a replacement. Load failures likewise clear
+and disable the native group. Target identity transitions call Blizzard's
+bounded `UpdateAllAuras` entry point because the stable `target` token alone
+does not communicate that its GUID changed.
+
+### Hostile nameplate buffs
+
+Nameplate Buff auras are gated by `feature_nameplate_buffs`. Their presence,
+ordering, duration, stack count, and display text remain entirely owned by a
+Blizzard `AuraContainer` hosted on `UIParent` and anchored to the public
+nameplate frame. PopAuras reacts only to bounded `NAME_PLATE_UNIT_ADDED` and
+`NAME_PLATE_UNIT_REMOVED` lifecycle events; it does not query raw nameplate
+aura records or subscribe these regions to `UNIT_AURA`.
+
+The Trigger editor exposes only Blizzard-native helpful-aura categories such
+as stealable, Magic, boss, and priority. Exact spell filters are intentionally
+unsupported for hostile helpful auras. An empty category selection fails
+closed, and retiring a slot first applies that empty native filter while the
+container is enabled so Blizzard can securely clear its assigned button before
+the container is disabled. Native children are styled only from the
+initialization callback and are never enumerated, hidden, reparented, or used
+for addon control flow.
+
 ## Spell cooldown to applied-aura mappings
 
 A spell's cast/spellbook ID often differs from the helpful aura ID it applies

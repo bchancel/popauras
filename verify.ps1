@@ -22,8 +22,8 @@ $tocText = Get-Content -LiteralPath $toc -Raw
 if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
     throw "PopAuras.toc is not targeting PTR interface 120100"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.1\s*$') {
-    throw "PopAuras.toc version is not aligned to release 12.1.1"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.3\s*$') {
+    throw "PopAuras.toc version is not aligned to release 12.1.3"
 }
 
 $forbiddenPatterns = @(
@@ -36,6 +36,12 @@ $forbiddenPatterns = @(
     'CombatLogGetCurrentEventInfo'
 )
 $runtimeFiles = Get-ChildItem -LiteralPath $root -Recurse -Filter *.lua
+foreach ($runtimeFile in $runtimeFiles) {
+    $firstLine = Get-Content -LiteralPath $runtimeFile.FullName -TotalCount 1
+    if ($firstLine -match '^(Exit code:|Wall time:|Output:|Script (completed|failed))') {
+        throw "Tool transcript text was prepended to Lua source at $($runtimeFile.FullName):1"
+    }
+}
 foreach ($pattern in $forbiddenPatterns) {
     $match = $runtimeFiles | Select-String -Pattern $pattern | Select-Object -First 1
     if ($match) {
@@ -291,6 +297,8 @@ if ($nativeAuraRegionText -notmatch 'nativeCandidateSignature' -or $nativeAuraRe
 }
 
 $auraBarListRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\AuraBarListRegion.lua") -Raw
+$unitAuraListText = Get-Content -LiteralPath (Join-Path $root "Util\UnitAuraList.lua") -Raw
+$auraListDefaultsText = Get-Content -LiteralPath (Join-Path $root "Data\Defaults.lua") -Raw
 if ($auraBarListRegionText -notmatch 'SetExplicitBounds\(button\.bar') {
     throw "Aura-list duration bars do not use explicit non-secret bounds"
 }
@@ -309,8 +317,19 @@ if ($auraBarListRegionText -notmatch 'presentation:CreateFontString') {
 if ($auraBarListRegionText -match 'BaseRegion:ApplyCommonAppearance' -or $auraBarListRegionText -match 'container:Hide\(\)') {
     throw "Aura-list rendering still hides forbidden AuraButtons or their ancestors"
 }
-if ($auraBarListRegionText -notmatch 'ExpirationOnly' -or $auraBarListRegionText -notmatch 'SetAuraGroupSortMethod') {
-    throw "Aura-list rendering does not enforce visual expiration ordering"
+if ($auraBarListRegionText -notmatch 'ExpirationOnly' -or
+    $auraBarListRegionText -notmatch 'UnitAuraList:GetSortMode\(trigger\)' -or
+    $auraBarListRegionText -notmatch 'sortMode\s*==\s*"longest_first"[\s\S]*?directions\.Reverse[\s\S]*?directions\.Normal' -or
+    $auraBarListRegionText -notmatch 'SetAuraGroupSortMethod') {
+    throw "Aura-list rendering does not delegate configurable expiration ordering to Blizzard"
+}
+if ($auraBarListRegionText -notmatch 'SetFlowLayoutAnchorPoint' -or
+    $auraBarListRegionText -notmatch 'SetFlowLayoutGrowthDirection' -or
+    $auraBarListRegionText -notmatch 'SetFlowLayoutMaximumLineSize' -or
+    $auraBarListRegionText -match 'SetAuraLayout(AnchorPoint|GrowthDirection|RowWidth)' -or
+    $auraBarListRegionText -notmatch 'elementSpacing\s*=\s*spacing' -or
+    $auraBarListRegionText -notmatch 'lineSpacing\s*=\s*spacing') {
+    throw "Aura-list rendering is not using the Retail 12.1 flow-layout API"
 }
 if ($auraBarListRegionText -match 'nativeButtons' -or
     $auraBarListRegionText -match 'function Region:Update\(aura, state\)[\s\S]*?StyleButton\(button, aura\)[\s\S]*?function Region:Release') {
@@ -320,6 +339,122 @@ if ($auraBarListRegionText -notmatch 'initializeFrame\s*=\s*function\(button\) s
     $auraBarListRegionText -notmatch 'SetAuraGroupCandidateFilters\("popauras", EMPTY_CANDIDATE_FILTERS\)' -or
     $auraBarListRegionText -notmatch 'local inCombat\s*=\s*InCombatLockdown') {
     throw "Aura-list buttons are not initialized and suppressed through the combat-safe native container path"
+}
+if ($auraBarListRegionText -notmatch 'button\.background\s*=\s*button\.cooldown:CreateTexture' -or
+    $auraBarListRegionText -match 'button\.cooldown:SetShown\(display\.swipe' -or
+    $auraBarListRegionText -notmatch 'SetDrawSwipe\(display\.swipe\s*==\s*true\)') {
+    throw "Aura-list backgrounds are not gated by Blizzard's native duration presentation"
+}
+if ($auraBarListRegionText -notmatch 'PresentationStyleSignature' -or
+    $auraBarListRegionText -notmatch 'function Region:RetireNativeContainer[\s\S]*?self:SetNativeSuppressed\(true\)' -or
+    $auraBarListRegionText -notmatch 'presentationStyleSignature\s*~=\s*buttonStyleSignature[\s\S]*?self:RetireNativeContainer\(\)') {
+    throw "Aura-list swipe changes do not safely replace their one-time native presentation"
+}
+if ($auraBarListRegionText -notmatch 'function Region:RefreshNativeUnit' -or
+    $auraBarListRegionText -notmatch 'function Region:RefreshNativeUnit[\s\S]*?self\.container:UpdateAllAuras\(\)') {
+    throw "Native target aura lists are not explicitly rebuilt when their unit token changes identity"
+}
+if ($unitAuraListText -notmatch 'filters\.maxDuration\s*=\s*maxDuration' -or
+    $unitAuraListText -notmatch 'maxFrameCount\s*=\s*maxRows\s*>\s*0\s*and\s*maxRows\s*or\s*math\.huge') {
+    throw "Aura-list native duration or row-limit filters are incomplete"
+}
+if ($unitAuraListText -notmatch 'GetDefaultSortModeForSourceValue' -or
+    $unitAuraListText -notmatch 'sourceValue\s*==\s*"player_buff"\s*and\s*"longest_first"\s*or\s*"shortest_first"' -or
+    $unitAuraListText -notmatch 'function UnitAuraList:RetireCasterFilter') {
+    throw "Aura-list source defaults or retired caster-filter normalization are incomplete"
+}
+if ($unitAuraListText -notmatch 'DEFAULT_MAX_ROWS\s*=\s*0' -or
+    $unitAuraListText -notmatch 'math\.max\(0,\s*math\.min\(value,\s*MAX_MAX_ROWS\)\)' -or
+    $auraListDefaultsText -notmatch 'auraListMaxRows\s*=\s*0') {
+    throw "Aura-list zero-row configuration is not normalized as native unlimited"
+}
+if ($auraBarListRegionText -notmatch 'elseif self\.containerSignature ~= signature then[\s\S]*?self:SetNativeSuppressed\(true\)[\s\S]*?SetAuraGroupFilterString\("popauras", options\.filterString\)[\s\S]*?SetUnit\(options\.unit\)' -or
+    $auraBarListRegionText -match 'if not self\.container or self\.containerSignature ~= signature then' -or
+    $auraBarListRegionText -notmatch 'local maxFrameCount\s*=\s*tonumber\(options\.maxFrameCount') {
+    throw "Aura-list edits do not safely reconfigure the existing native container"
+}
+if ($auraBarListRegionText -notmatch 'self\.loadMatched\s*=\s*state\s*and\s*state\.loadMatched\s*==\s*true' -or
+    $auraBarListRegionText -notmatch 'if not self\.loadMatched then[\s\S]*?self\.layoutVisible\s*=\s*false[\s\S]*?self:SetNativeSuppressed\(true\)[\s\S]*?return') {
+    throw "Aura-list native containers are not suppressed when load conditions fail"
+}
+
+$nameplateAuraRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\NameplateAuraRegion.lua") -Raw
+$nameplateConstantsText = Get-Content -LiteralPath (Join-Path $root "Core\Constants.lua") -Raw
+$nameplateTriggerEngineText = Get-Content -LiteralPath (Join-Path $root "Engine\TriggerEngine.lua") -Raw
+$nameplateProviderText = Get-Content -LiteralPath (Join-Path $root "Triggers\AuraProvider.lua") -Raw
+$nameplateLoadPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\LoadPanel.lua") -Raw
+$nameplateNewAuraPanelText = Get-Content -LiteralPath (Join-Path $root "UI\NewAuraPanel.lua") -Raw
+$nameplateCreateDialogText = Get-Content -LiteralPath (Join-Path $root "UI\CreateAuraDialog.lua") -Raw
+$nameplateTriggerPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\TriggerPanel.lua") -Raw
+$nameplateDisplayPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\DisplayPanel.lua") -Raw
+$nameplateAnchorsText = Get-Content -LiteralPath (Join-Path $root "Util\Anchors.lua") -Raw
+if ($tocText.IndexOf('Renderers\NameplateAuraRegion.lua') -lt 0 -or
+    $nameplateConstantsText -notmatch 'feature_nameplate_buffs\s*=\s*true' -or
+    $loadEvaluatorText -notmatch 'function LoadEvaluator:GetDisabledFeature\(aura\)' -or
+    $loadEvaluatorText -notmatch 'trigger\.type\s*==\s*"aura"\s*and\s*trigger\.unit\s*==\s*"nameplate"' -or
+    $nameplateLoadPanelText -notmatch 'GetDisabledFeature\(aura\)' -or
+    $nameplateTriggerEngineText -notmatch 'NameplateBuffsEnabled\(\)\s*and\s*not wantsMultiState' -or
+    $nameplateAuraRegionText -notmatch 'if not self:IsFeatureEnabled\(\) then\s*self:Release\(\)' -or
+    $nameplateNewAuraPanelText -notmatch 'feature\s*=\s*"feature_nameplate_buffs"' -or
+    $nameplateCreateDialogText -notmatch 'IsPresetEnabled\(preset\)' -or
+    $nameplateTriggerPanelText -notmatch 'IsEnabled\("feature_nameplate_buffs"\)[\s\S]*?auraUnitValues\[#auraUnitValues \+ 1\]') {
+    throw "Nameplate buff creation or runtime activation is not fully gated by its feature flag"
+}
+if ($nameplateAnchorsText -notmatch 'function Anchors\.GetNameplateAnchorList\(\)' -or
+    $nameplateAnchorsText -notmatch 'function Anchors\.ResolveNameplatePoints\(position\)' -or
+    $nameplateAnchorsText -notmatch 'TOP\s*=\s*\{\s*point\s*=\s*"BOTTOM",\s*relativePoint\s*=\s*"TOP"\s*\}' -or
+    $nameplateDisplayPanelText -notmatch '"Nameplate Anchor"[\s\S]*?Anchors\.GetNameplateAnchorList' -or
+    $nameplateDisplayPanelText -notmatch 'Anchors\.ApplyNameplateAnchor' -or
+    $nameplateAuraRegionText -notmatch 'Anchors\.ResolveNameplatePoints\(position\)') {
+    throw "Nameplate display placement is not using the dedicated anchor mapping"
+}
+if ($nameplateTriggerPanelText -notmatch 'Blizzard owns aura detection and presentation' -or
+    $nameplateTriggerPanelText -notmatch 'Checked categories are combined with AND' -or
+    $nameplateTriggerPanelText -notmatch 'nameplateFilterBox:SetShown\(isNameplateAura\)' -or
+    $nameplateTriggerPanelText -notmatch 'triggerSelectLabel:SetShown\(not usesDedicatedTriggerEditor\)' -or
+    $nameplateTriggerPanelText -match 'field\s*=\s*"nameplateRoleAura"' -or
+    $nameplateTriggerPanelText -match 'field\s*=\s*"nameplateShowAll"' -or
+    $nameplateTriggerPanelText -match 'field\s*=\s*"nameplateShowPersonal"' -or
+    $nameplateAuraRegionText -match 'nameplateRoleAura|nameplateShowAll|nameplateShowPersonal') {
+    throw "Nameplate category filters are missing their dedicated explained editor"
+}
+if ($nameplateAuraRegionText -notmatch 'NAME_PLATE_UNIT_ADDED' -or
+    $nameplateAuraRegionText -notmatch 'NAME_PLATE_UNIT_REMOVED' -or
+    $nameplateAuraRegionText -notmatch 'C_NamePlate\.GetNamePlateForUnit' -or
+    $nameplateAuraRegionText -match 'UNIT_AURA|GetAuraDataBy|GetBuffDataBy|GetDebuffDataBy|GetChildren\(') {
+    throw "Nameplate aura rendering does not use the bounded public nameplate lifecycle"
+}
+if ($nameplateAuraRegionText -notmatch 'SetFlowLayoutAnchorPoint' -or
+    $nameplateAuraRegionText -notmatch 'SetFlowLayoutGrowthDirection' -or
+    $nameplateAuraRegionText -notmatch 'SetFlowLayoutMaximumLineSize' -or
+    $nameplateAuraRegionText -notmatch 'SetAuraGroupLayout' -or
+    $nameplateAuraRegionText -match 'SetAuraLayout(AnchorPoint|GrowthDirection|RowWidth)' -or
+    $nameplateAuraRegionText -notmatch 'elementSpacing\s*=\s*spacing') {
+    throw "Nameplate aura rendering is not using the Retail 12.1 flow-layout API"
+}
+if ($nameplateAuraRegionText -notmatch 'CreateContainer\(UIParent\)' -or
+    $nameplateAuraRegionText -match 'CreateContainer\(plate\)' -or
+    $nameplateAuraRegionText -match 'container:Hide\(\)') {
+    throw "Native nameplate containers inherit or hide a protected nameplate frame"
+}
+if ($nameplateAuraRegionText -notmatch 'initializeFrame\s*=\s*function\(button\) self:InitializeNativeButton\(button\) end' -or
+    $nameplateAuraRegionText -notmatch 'SetDurationCooldown' -or
+    $nameplateAuraRegionText -notmatch 'SetDurationText' -or
+    $nameplateAuraRegionText -notmatch 'SetApplicationCount') {
+    throw "Nameplate AuraButtons are not initialized through Blizzard presentation bindings"
+}
+if ($nameplateAuraRegionText -notmatch 'SetAuraGroupCandidateFilters\(GROUP_KEY, EMPTY_CANDIDATE_FILTERS\)[\s\S]*?SetEntryEnabled\(entry, false\)' -or
+    $nameplateAuraRegionText -notmatch 'EMPTY_CANDIDATE_FILTERS\s*=\s*\{\s*includeDispelTypes\s*=\s*\{\s*\}\s*\}' -or
+    $nameplateAuraRegionText -match 'includeSpellIDs') {
+    throw "Nameplate native groups do not fail closed through supported non-identity filters"
+}
+if ($nameplateAuraRegionText -notmatch 'filters\.isStealable' -or
+    $nameplateAuraRegionText -notmatch 'filters\.isBossAura' -or
+    $nameplateAuraRegionText -notmatch 'filters\.isPriorityAura' -or
+    $nameplateAuraRegionText -notmatch 'includeDispelTypes' -or
+    $nameplateProviderText -notmatch 'source\s*=\s*"nameplate_aura"' -or
+    $nameplateProviderText -notmatch 'unit:find\("\^nameplate%d\+\$"\)') {
+    throw "Nameplate native filters or provider isolation are incomplete"
 }
 
 $layoutsText = Get-Content -LiteralPath (Join-Path $root "Renderers\Layouts.lua") -Raw
@@ -416,6 +551,25 @@ foreach ($label in @('Trinket 1 (Top)', 'Trinket 2 (Bottom)')) {
         throw "Dual trinket sound UI is missing '$label'"
     }
 }
+if ($displayPanelText -notmatch 'function Panel:SetActiveSection' -or
+    $displayPanelText -notmatch 'frame\.sectionTabs' -or
+    $displayPanelText -notmatch 'Theme\.StyleTab') {
+    throw "Display configuration does not use the contained secondary tab menu"
+}
+if ($displayPanelText -notmatch 'frame\.summary:Hide\(\)' -or
+    $displayPanelText -notmatch 'frame\.hint:Hide\(\)' -or
+    $displayPanelText -notmatch 'box\.header:Hide\(\)' -or
+    $displayPanelText -notmatch 'box\.bodyTop:Hide\(\)') {
+    throw "Display configuration still exposes redundant summary or section chrome"
+}
+if ($displayPanelText -notmatch 'trigger\.type\s*~=\s*"death_alert"') {
+    throw "Death Alert auras still expose the redundant Display sound category"
+}
+if ($displayPanelText -notmatch 'auraListSwipeCheck' -or
+    $displayPanelText -notmatch '"Show Cooldown Swipe"' -or
+    $displayPanelText -notmatch 'aura\.display\.swipe\s*=\s*frame\.auraListSwipeCheck:GetChecked\(\)\s*==\s*true') {
+    throw "Buffs and Debuffs does not expose its safe native cooldown-swipe option"
+}
 $defaultsText = Get-Content -LiteralPath (Join-Path $root "Data\Defaults.lua") -Raw
 $schemaText = Get-Content -LiteralPath (Join-Path $root "Data\Schema.lua") -Raw
 $triggerEngineText = Get-Content -LiteralPath (Join-Path $root "Engine\TriggerEngine.lua") -Raw
@@ -439,6 +593,18 @@ if ($spellCooldownText -notmatch 'noCharges\s*=\s*chargeStateKnown and outOfChar
 }
 
 $triggerPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\TriggerPanel.lua") -Raw
+if ($triggerPanelText -notmatch 'Frames\.CreateScrollPanel' -or
+    $triggerPanelText -notmatch 'contentHeight\s*=\s*1040') {
+    throw "Long trigger forms are not hosted in the shared scroll panel"
+}
+if ($triggerPanelText -notmatch '\{\s*value\s*=\s*"shortest_first",\s*label\s*=\s*"Soonest Expiring First"\s*\}' -or
+    $triggerPanelText -notmatch '\{\s*value\s*=\s*"longest_first",\s*label\s*=\s*"Longest / Permanent First"\s*\}' -or
+    $triggerPanelText -notmatch '"Maximum Original Duration"' -or
+    $triggerPanelText -notmatch '"Maximum Displayed Rows"' -or
+    $triggerPanelText -notmatch 'Theme\.StyleSurface\(frame\.auraListSettingsBox' -or
+    $triggerPanelText -match 'Target Debuff Filter|Only Mine|Mine \+ Non-Player') {
+    throw "Buffs and Debuffs is missing its modern native sort/filter editor or still exposes retired caster filters"
+}
 foreach ($label in @('Trinket Cooldown', 'Top Trinket Slot', 'Bottom Trinket Slot', 'Grow Direction', 'Glow While Active', 'Ignored Trinkets')) {
     if ($triggerPanelText -notmatch [regex]::Escape($label)) {
         throw "Trinket trigger UI is missing '$label'"
@@ -469,7 +635,8 @@ if ($constantsText -notmatch 'DB_VERSION\s*=\s*5' -or
 }
 
 $mainWindowText = Get-Content -LiteralPath (Join-Path $root "UI\MainWindow.lua") -Raw
-if ($mainWindowText -notmatch 'GetAddOnMetadata' -or $mainWindowText -notmatch 'PopAuras.*version') {
+if ($mainWindowText -notmatch 'GetAddOnMetadata' -or
+    $mainWindowText -notmatch 'sidebarBuild:SetText\(version') {
     throw "Main window title does not include addon version metadata"
 }
 if ($mainWindowText -notmatch 'OnHide' -or $mainWindowText -notmatch 'runtime:RefreshAll\(\)') {
@@ -492,6 +659,63 @@ if ($framesText -notmatch 'function Frames\.ShowConfirmation' -or
     $framesText -notmatch 'StyleDangerButton') {
     throw "Shared confirmation modal or its success/danger button styles are missing"
 }
+if ($tocText.IndexOf('Util\Theme.lua') -lt 0 -or
+    $tocText.IndexOf('Util\Theme.lua') -gt $tocText.IndexOf('Util\Frames.lua')) {
+    throw "Shared UI theme is not loaded before the frame helpers"
+}
+$themeText = Get-Content -LiteralPath (Join-Path $root "Util\Theme.lua") -Raw
+if ($themeText -match 'Set(?:Normal|Pushed|Disabled|Highlight)Texture\(nil\)' -or
+    $themeText -notmatch 'HideButtonStateTexture') {
+    throw "Dropdown styling must hide template textures without passing nil texture assets"
+}
+if ($themeText -notmatch 'function Theme\.StyleVisibleDropdownMenus' -or
+    $themeText -notmatch 'DropDownList' -or
+    $themeText -notmatch 'InstallDropdownMenuSkin') {
+    throw "Expanded dropdown menus are not using the shared PopAuras popup skin"
+}
+if ($framesText -notmatch 'function Frames\.CreateScrollPanel' -or
+    $framesText -notmatch 'Theme\.StyleScrollFrame') {
+    throw "Shared scroll-panel creation or scrollbar styling is missing"
+}
+if ($mainWindowText -notmatch 'SetResizable\(true\)' -or
+    $mainWindowText -notmatch 'SetResizeBounds\(1100,\s*640,\s*1700,\s*1050\)' -or
+    $mainWindowText -notmatch 'ns\.db\.ui\.window\.width' -or
+    $mainWindowText -notmatch 'ns\.db\.ui\.window\.height') {
+    throw "Main window resizing is missing bounds or persistent dimensions"
+}
+if ($mainWindowText -notmatch 'removeFromGroupButton' -or
+    $mainWindowText -notmatch 'Registry:RemoveFromGroup\(aura\.id\)') {
+    throw "Grouped aura removal is not exposed as an editor-header action"
+}
+if ($mainWindowText -notmatch 'addToGroupDropdown' -or
+    $mainWindowText -notmatch 'Loaded Groups' -or
+    $mainWindowText -notmatch 'Registry:AssignToGroup\(aura\.id,\s*groupId\)' -or
+    $mainWindowText -notmatch 'Theme\.StyleDropdown\(frame\.addToGroupDropdown,\s*"success"\)') {
+    throw "Standalone auras do not expose a loaded-first Add to Group header menu"
+}
+$toolbarText = Get-Content -LiteralPath (Join-Path $root "UI\Toolbar.lua") -Raw
+$exportWindowText = Get-Content -LiteralPath (Join-Path $root "UI\ExportWindow.lua") -Raw
+if ($toolbarText -notmatch 'OpenGlobalImport\(\)' -or
+    $toolbarText -notmatch 'ExportWindow:ShowAll\(\)' -or
+    $toolbarText -notmatch 'CreateTransferIcon\(frame\.importButton,\s*"down"\)' -or
+    $toolbarText -notmatch 'CreateTransferIcon\(frame\.exportButton,\s*"up"\)') {
+    throw "Global New Aura, Import, and Export actions are not using the compact one-row toolbar flow"
+}
+if ($mainWindowText -notmatch 'function MainWindow:OpenGlobalImport' -or
+    $mainWindowText -notmatch 'editorMode\s*=\s*"global_import"' -or
+    $mainWindowText -notmatch 'selectedAuraId\s*=\s*nil') {
+    throw "Global Import is still tied to the selected aura"
+}
+if ($exportWindowText -match 'CopyToClipboard' -or
+    $exportWindowText -notmatch 'function ExportWindow:ShowAll' -or
+    $exportWindowText -notmatch 'ns\.Export:Encode\(\)' -or
+    $exportWindowText -notmatch 'HighlightText\(\)') {
+    throw "Export All does not use the standalone restriction-safe copy window"
+}
+if ($tocText.IndexOf('UI\ExportWindow.lua') -lt 0 -or
+    $tocText.IndexOf('UI\ExportWindow.lua') -gt $tocText.IndexOf('UI\Toolbar.lua')) {
+    throw "Standalone Export All window is not loaded before the toolbar"
+}
 
 $importText = Get-Content -LiteralPath (Join-Path $root "Data\Import.lua") -Raw
 $importPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\ImportExportPanel.lua") -Raw
@@ -508,6 +732,36 @@ if ($registryText -notmatch 'function Registry:CountDescendants' -or
     $auraTreeText -notmatch 'CountDescendants' -or
     $auraTreeText -notmatch 'Deleting the group will permanently delete') {
     throw "Aura deletion does not confirm or warn about nested group descendants"
+}
+if ($auraTreeText -notmatch '"Loaded Auras"' -or
+    $auraTreeText -notmatch '"Not Loaded"' -or
+    $auraTreeText -notmatch 'contentAlpha\s*=\s*isLoaded and 1 or 0\.52' -or
+    $auraTreeText -notmatch 'topDottedLine:SetShown\(not isLoaded\)') {
+    throw "Aura library no longer preserves the distinct loaded and unloaded treatments"
+}
+if ($auraTreeText -notmatch 'CreateActionIcon\(row\.duplicateButton,\s*"copy"\)' -or
+    $auraTreeText -notmatch 'CreateActionIcon\(row\.deleteButton,\s*"trash"\)' -or
+    $auraTreeText -notmatch 'and "\+" or "-"') {
+    throw "Aura row actions are missing the modern copy, delete, or expand/collapse icon treatment"
+}
+if ($auraTreeText -match 'ungroupButton') {
+    throw "Aura rows still expose the legacy inline remove-from-group control"
+}
+if ($auraTreeText -notmatch 'function BuildSortedRootAuraIds' -or
+    $auraTreeText -notmatch 'loadedGroups' -or
+    $auraTreeText -notmatch 'loadedStandalone' -or
+    $auraTreeText -notmatch 'table\.sort\(bucket,\s*CompareAuraNames\)') {
+    throw "Top-level aura rows are not sorted by load state, group status, and name"
+}
+if ($auraTreeText -notmatch 'row\.groupIndicator' -or
+    $auraTreeText -notmatch '"groupAccent"') {
+    throw "Group rows are missing the persistent vertical accent"
+}
+if ($auraTreeText -notmatch 'row:SetPoint\("TOPLEFT",\s*indent,\s*-yOffset\)' -or
+    $auraTreeText -notmatch 'row:SetWidth\(rowWidth\)' -or
+    $auraTreeText -notmatch 'row:SetSize\(272,\s*40\)' -or
+    $auraTreeText -notmatch 'yOffset\s*=\s*yOffset\s*\+\s*46') {
+    throw "Aura cards are missing full-row child indentation or compact vertical spacing"
 }
 
 & (Join-Path $root "deploy.ps1") -WhatIf

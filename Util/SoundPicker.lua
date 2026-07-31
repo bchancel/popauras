@@ -1,6 +1,7 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
+local Theme = ns.util.Theme
 
 local SoundPicker = {}
 ns.util.SoundPicker = SoundPicker
@@ -73,22 +74,16 @@ function SoundPicker:EnsureFrame()
   frame:SetClampedToScreen(true)
   frame:EnableMouse(true)
   frame:Hide()
-  frame:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  frame:SetBackdropColor(0.05, 0.07, 0.10, 0.98)
-  frame:SetBackdropBorderColor(0.24, 0.30, 0.40, 1)
+  Theme.StyleSurface(frame, "canvasAlt", "borderStrong")
   frame.rows = {}
 
   frame.title = Frames.CreateLabel(frame, "Select Sound", "GameFontNormal")
   frame.title:SetPoint("TOPLEFT", 12, -10)
-  frame.title:SetTextColor(0.92, 0.95, 1)
+  Theme.SetText(frame.title, "text")
 
   frame.subtitle = Frames.CreateLabel(frame, "Click a sound to select it. Click the speaker to preview it.", "GameFontDisableSmall")
   frame.subtitle:SetPoint("TOPLEFT", frame.title, "BOTTOMLEFT", 0, -4)
-  frame.subtitle:SetTextColor(0.70, 0.76, 0.84)
+  Theme.SetText(frame.subtitle, "textMuted")
 
   frame.closeButton = Frames.CreateButton(frame, "X", 22, 20, function()
     frame:Hide()
@@ -99,6 +94,7 @@ function SoundPicker:EnsureFrame()
   frame.scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
   frame.scroll:SetPoint("TOPLEFT", 12, -52)
   frame.scroll:SetPoint("BOTTOMRIGHT", -30, 12)
+  Theme.StyleScrollFrame(frame.scroll)
   frame.scroll:EnableMouseWheel(true)
   frame.scroll:SetScript("OnMouseWheel", function(selfScroll, delta)
     local current = selfScroll:GetVerticalScroll() or 0
@@ -129,19 +125,21 @@ end
 
 function SoundPicker:ApplyRowVisual(row)
   if row.isSelected then
-    row:SetBackdropColor(0.09, 0.28, 0.48, 0.98)
-    row:SetBackdropBorderColor(0.24, 0.60, 0.96, 1)
-    row.accent:SetVertexColor(0.98, 0.84, 0.26, 1)
+    Theme.StyleSurface(row, "accentSoft", "borderFocus")
+    Theme.SetTexture(row.accent, "accentBright")
     row.accent:Show()
     return
   end
 
-  row:SetBackdropBorderColor(0.19, 0.24, 0.33, 1)
+  local border = Theme.GetColor("border")
+  row:SetBackdropBorderColor(border[1], border[2], border[3], border[4])
   row.accent:Hide()
   if row.isHovered then
-    row:SetBackdropColor(0.10, 0.13, 0.18, 0.98)
+    local hover = Theme.GetColor("surfaceHover")
+    row:SetBackdropColor(hover[1], hover[2], hover[3], hover[4])
   else
-    row:SetBackdropColor(0.07, 0.09, 0.12, 0.94)
+    local surface = Theme.GetColor("surface")
+    row:SetBackdropColor(surface[1], surface[2], surface[3], surface[4])
   end
 end
 

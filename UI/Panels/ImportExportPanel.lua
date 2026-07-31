@@ -1,23 +1,27 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
+local Theme = ns.util.Theme
 
 local Panel = {}
 ns.panels.ImportExportPanel = Panel
 
 function Panel:Create(parent)
-  local frame = CreateFrame("Frame", nil, parent)
-  frame:SetAllPoints()
+  local host, scroll, frame = Frames.CreateScrollPanel(parent, {
+    contentHeight = 560,
+    minimumContentWidth = 650,
+    fillHeight = true,
+  })
   if frame.SetClipsChildren then
     frame:SetClipsChildren(true)
   end
 
   local function StylePanelButton(button, accent)
-    Frames.StyleSecondaryButton(button)
     if accent then
-      button:SetBackdropColor(0.09, 0.28, 0.48, 0.96)
-      button:SetBackdropBorderColor(0.20, 0.52, 0.82, 1)
+      Frames.StylePrimaryButton(button)
+      return
     end
+    Frames.StyleSecondaryButton(button)
   end
 
   frame.desc = Frames.CreateLabel(frame, "Paste a PopAuras import string here. Export actions use the copy window or Send Aura. Exporting a selected group includes its child auras.", "GameFontHighlight")
@@ -29,17 +33,12 @@ function Panel:Create(parent)
   if frame.boxHolder.SetClipsChildren then
     frame.boxHolder:SetClipsChildren(true)
   end
-  frame.boxHolder:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  frame.boxHolder:SetBackdropColor(0.05, 0.07, 0.10, 0.92)
-  frame.boxHolder:SetBackdropBorderColor(0.25, 0.33, 0.45, 1)
+  Theme.StyleSurface(frame.boxHolder, "canvas", "border")
 
   frame.scroll = CreateFrame("ScrollFrame", nil, frame.boxHolder, "UIPanelScrollFrameTemplate")
   frame.scroll:SetPoint("TOPLEFT", 8, -8)
   frame.scroll:SetPoint("BOTTOMRIGHT", -30, 8)
+  Theme.StyleScrollFrame(frame.scroll)
 
   frame.box = CreateFrame("EditBox", nil, frame.scroll)
   frame.box:SetMultiLine(true)
@@ -141,6 +140,8 @@ function Panel:Create(parent)
   frame.importButton:SetPoint("LEFT", frame.createLinkButton, "RIGHT", 16, 0)
   Frames.StyleSuccessButton(frame.importButton)
 
+  self.host = host
+  self.scroll = scroll
   self.frame = frame
 
   frame.sendTargetInput:SetScript("OnEnterPressed", function(selfInput)
@@ -152,7 +153,7 @@ function Panel:Create(parent)
   frame.sendTargetInput:SetScript("OnEscapePressed", function(selfInput)
     selfInput:ClearFocus()
   end)
-  return frame
+  return host
 end
 
 function Panel:SetImportText(text, selectAll)
@@ -171,4 +172,18 @@ function Panel:SetImportText(text, selectAll)
 end
 
 function Panel:Refresh(aura)
+  local hasSelection = aura ~= nil
+  self.frame.desc:SetText(hasSelection
+    and "Paste a PopAuras import string here. Exporting the selected group includes its child auras."
+    or "Paste a PopAuras export string here, review the package name, then confirm the import.")
+  self.frame.exportClipboardButton:SetShown(hasSelection)
+  self.frame.sendTargetInput:SetShown(hasSelection)
+  self.frame.sendTargetLabel:SetShown(hasSelection)
+  self.frame.createLinkButton:SetShown(hasSelection)
+  self.frame.importButton:ClearAllPoints()
+  if hasSelection then
+    self.frame.importButton:SetPoint("LEFT", self.frame.createLinkButton, "RIGHT", 16, 0)
+  else
+    self.frame.importButton:SetPoint("TOPLEFT", self.frame.boxHolder, "BOTTOMLEFT", 0, -12)
+  end
 end

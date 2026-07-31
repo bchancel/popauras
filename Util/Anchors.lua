@@ -20,6 +20,28 @@ Anchors.pointEntries = {
   { key = "BOTTOMRIGHT", label = "Bottom Right" },
 }
 
+Anchors.nameplateAnchorEntries = {
+  { key = "LEFT", label = "Left" },
+  { key = "RIGHT", label = "Right" },
+  { key = "TOPRIGHT", label = "Top Right" },
+  { key = "TOP", label = "Top Center" },
+  { key = "TOPLEFT", label = "Top Left" },
+  { key = "BOTTOMRIGHT", label = "Bottom Right" },
+  { key = "BOTTOM", label = "Bottom Center" },
+  { key = "BOTTOMLEFT", label = "Bottom Left" },
+}
+
+local nameplateAnchorPoints = {
+  LEFT = { point = "RIGHT", relativePoint = "LEFT" },
+  RIGHT = { point = "LEFT", relativePoint = "RIGHT" },
+  TOPRIGHT = { point = "BOTTOMRIGHT", relativePoint = "TOPRIGHT" },
+  TOP = { point = "BOTTOM", relativePoint = "TOP" },
+  TOPLEFT = { point = "BOTTOMLEFT", relativePoint = "TOPLEFT" },
+  BOTTOMRIGHT = { point = "TOPRIGHT", relativePoint = "BOTTOMRIGHT" },
+  BOTTOM = { point = "TOP", relativePoint = "BOTTOM" },
+  BOTTOMLEFT = { point = "TOPLEFT", relativePoint = "BOTTOMLEFT" },
+}
+
 Anchors.targets = {
   { key = "UIParent", label = "Screen", resolver = function() return UIParent end },
   { key = "PlayerFrame", label = "Player Frame", resolver = function() return _G.PlayerFrame end },
@@ -77,4 +99,40 @@ function Anchors.GetPointList()
     items[#items + 1] = entry
   end
   return items
+end
+
+function Anchors.GetNameplateAnchorList()
+  local items = {}
+  for _, entry in ipairs(Anchors.nameplateAnchorEntries) do
+    items[#items + 1] = entry
+  end
+  return items
+end
+
+function Anchors.GetNameplateAnchor(position)
+  position = type(position) == "table" and position or {}
+  if nameplateAnchorPoints[position.nameplateAnchor] then
+    return position.nameplateAnchor
+  end
+  if nameplateAnchorPoints[position.relativePoint] then
+    return position.relativePoint
+  end
+  return "TOP"
+end
+
+function Anchors.ResolveNameplatePoints(position)
+  local key = Anchors.GetNameplateAnchor(position)
+  local mapping = nameplateAnchorPoints[key] or nameplateAnchorPoints.TOP
+  return mapping.point, mapping.relativePoint, key
+end
+
+function Anchors.ApplyNameplateAnchor(position, key)
+  if type(position) ~= "table" then
+    return
+  end
+  local mapping = nameplateAnchorPoints[key] or nameplateAnchorPoints.TOP
+  position.nameplateAnchor = nameplateAnchorPoints[key] and key or "TOP"
+  position.point = mapping.point
+  position.relativePoint = mapping.relativePoint
+  position.relativeTo = "UIParent"
 end

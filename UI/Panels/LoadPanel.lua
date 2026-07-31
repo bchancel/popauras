@@ -2,6 +2,7 @@ local _, ns = ...
 
 local Frames = ns.util.Frames
 local Items = ns.util.Items
+local Theme = ns.util.Theme
 
 local Panel = {}
 ns.panels.LoadPanel = Panel
@@ -120,6 +121,24 @@ local SAVED_LOADOUT_MODE_OPTIONS = {
   { value = "only", label = "Only Selected Layouts" },
   { value = "except", label = "Except Selected Layouts" },
 }
+
+local FEATURE_DISABLED_NOTICES = {
+  feature_nameplate_buffs = "Nameplate Buffs is disabled in this build. "
+    .. "The aura remains saved and editable, but it cannot load until the feature is enabled.",
+}
+
+local function GetFeatureDisabledNotice(aura)
+  if not (ns.LoadEvaluator and ns.LoadEvaluator.GetDisabledFeature) then
+    return nil
+  end
+  local featureName = ns.LoadEvaluator:GetDisabledFeature(aura)
+  if not featureName then
+    return nil
+  end
+  return FEATURE_DISABLED_NOTICES[featureName]
+    or string.format("This aura cannot load because %s is disabled.",
+      tostring(featureName):gsub("^feature_", ""):gsub("_", " "))
+end
 
 local function IsVisibilityEnabled(visibility, key)
   if type(visibility) ~= "table" then
@@ -1571,7 +1590,11 @@ function Panel:RefreshTalentSection(aura, topAnchor)
   end
   local classHeight = classCollapsed and 0 or (math.ceil(#CLASS_ORDER / 2) * 24)
   local specHeight = classCollapsed and 0 or (selectedSpecCount * 24)
-  self.frame.content:SetHeight(math.max(980, 640 + classHeight + specHeight + talentContentHeight + savedLoadoutContentHeight))
+  local featureNoticeHeight = self.frame.featureDisabledNotice:IsShown() and 72 or 0
+  self.frame.content:SetHeight(math.max(
+    980 + featureNoticeHeight,
+    640 + classHeight + specHeight + talentContentHeight + savedLoadoutContentHeight + featureNoticeHeight
+  ))
 end
 
 function Panel:ShowTalentPicker(aura, groups)
@@ -1681,9 +1704,23 @@ function Panel:Create(parent)
   frame.scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
   frame.scroll:SetPoint("TOPLEFT", 0, 0)
   frame.scroll:SetPoint("BOTTOMRIGHT", -28, 0)
+  Theme.StyleScrollFrame(frame.scroll)
   frame.content = CreateFrame("Frame", nil, frame.scroll)
   frame.content:SetSize(760, 900)
   frame.scroll:SetScrollChild(frame.content)
+
+  frame.featureDisabledNotice = CreateFrame("Frame", nil, frame.content, "BackdropTemplate")
+  frame.featureDisabledNotice:SetPoint("TOPLEFT", 16, -16)
+  frame.featureDisabledNotice:SetSize(700, 58)
+  Theme.StyleSurface(frame.featureDisabledNotice, "surfaceRaised", "dangerBorder")
+  frame.featureDisabledNotice.text = Frames.CreateLabel(
+    frame.featureDisabledNotice, "", "GameFontHighlightSmall")
+  frame.featureDisabledNotice.text:SetPoint("TOPLEFT", 12, -9)
+  frame.featureDisabledNotice.text:SetPoint("BOTTOMRIGHT", -12, 9)
+  frame.featureDisabledNotice.text:SetJustifyH("LEFT")
+  frame.featureDisabledNotice.text:SetJustifyV("MIDDLE")
+  Theme.SetText(frame.featureDisabledNotice.text, "text")
+  frame.featureDisabledNotice:Hide()
 
   frame.alwaysHeader = Frames.CreateLabel(frame.content, "Always / Never", "GameFontNormal")
   frame.alwaysHeader:SetPoint("TOPLEFT", 16, -20)
@@ -1786,13 +1823,7 @@ function Panel:Create(parent)
   frame.talentModal:SetPoint("CENTER")
   frame.talentModal:SetFrameStrata("FULLSCREEN_DIALOG")
   frame.talentModal:SetFrameLevel(120)
-  frame.talentModal:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  frame.talentModal:SetBackdropColor(0.08, 0.10, 0.15, 0.98)
-  frame.talentModal:SetBackdropBorderColor(0.24, 0.31, 0.40, 1)
+  Theme.StyleSurface(frame.talentModal, "canvasAlt", "borderStrong")
   frame.talentModal:Hide()
 
   frame.talentModal.title = Frames.CreateLabel(frame.talentModal, "Talent Picker", "GameFontNormalLarge")
@@ -1814,6 +1845,7 @@ function Panel:Create(parent)
   frame.talentModal.scroll = CreateFrame("ScrollFrame", nil, frame.talentModal, "UIPanelScrollFrameTemplate")
   frame.talentModal.scroll:SetPoint("TOPLEFT", frame.talentModal.searchInput, "BOTTOMLEFT", 0, -16)
   frame.talentModal.scroll:SetPoint("BOTTOMRIGHT", -32, 16)
+  Theme.StyleScrollFrame(frame.talentModal.scroll)
   frame.talentModal.content = CreateFrame("Frame", nil, frame.talentModal.scroll)
   frame.talentModal.content:SetSize(700, 420)
   frame.talentModal.scroll:SetScrollChild(frame.talentModal.content)
@@ -1829,13 +1861,7 @@ function Panel:Create(parent)
   frame.savedLoadoutModal:SetPoint("CENTER")
   frame.savedLoadoutModal:SetFrameStrata("FULLSCREEN_DIALOG")
   frame.savedLoadoutModal:SetFrameLevel(121)
-  frame.savedLoadoutModal:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  frame.savedLoadoutModal:SetBackdropColor(0.08, 0.10, 0.15, 0.98)
-  frame.savedLoadoutModal:SetBackdropBorderColor(0.24, 0.31, 0.40, 1)
+  Theme.StyleSurface(frame.savedLoadoutModal, "canvasAlt", "borderStrong")
   frame.savedLoadoutModal:Hide()
 
   frame.savedLoadoutModal.title = Frames.CreateLabel(frame.savedLoadoutModal, "Layout Picker", "GameFontNormalLarge")
@@ -1857,6 +1883,7 @@ function Panel:Create(parent)
   frame.savedLoadoutModal.scroll = CreateFrame("ScrollFrame", nil, frame.savedLoadoutModal, "UIPanelScrollFrameTemplate")
   frame.savedLoadoutModal.scroll:SetPoint("TOPLEFT", frame.savedLoadoutModal.searchInput, "BOTTOMLEFT", 0, -16)
   frame.savedLoadoutModal.scroll:SetPoint("BOTTOMRIGHT", -32, 16)
+  Theme.StyleScrollFrame(frame.savedLoadoutModal.scroll)
   frame.savedLoadoutModal.content = CreateFrame("Frame", nil, frame.savedLoadoutModal.scroll)
   frame.savedLoadoutModal.content:SetSize(700, 420)
   frame.savedLoadoutModal.scroll:SetScrollChild(frame.savedLoadoutModal.content)
@@ -1905,6 +1932,7 @@ function Panel:Create(parent)
     Panel:ApplyCurrent()
   end)
   frame.saveButton:SetPoint("TOPLEFT", frame.equippedItemResolved, "BOTTOMLEFT", 0, -18)
+  Frames.StylePrimaryButton(frame.saveButton)
   frame.saveButton:Hide()
 
   self.frame = frame
@@ -2017,6 +2045,17 @@ end
 
 function Panel:Refresh(aura)
   self.suppressUpdates = true
+  local featureDisabledNotice = GetFeatureDisabledNotice(aura)
+  self.frame.featureDisabledNotice:SetShown(featureDisabledNotice ~= nil)
+  self.frame.featureDisabledNotice.text:SetText(
+    featureDisabledNotice and ("|cffff6b78Feature disabled|r\n" .. featureDisabledNotice) or "")
+  self.frame.alwaysHeader:ClearAllPoints()
+  if featureDisabledNotice then
+    self.frame.alwaysHeader:SetPoint(
+      "TOPLEFT", self.frame.featureDisabledNotice, "BOTTOMLEFT", 0, -16)
+  else
+    self.frame.alwaysHeader:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", 16, -20)
+  end
   aura.load.classes = EnsureMap(aura.load.classes)
   aura.load.specs = EnsureMap(aura.load.specs)
   aura.load.talents = EnsureMap(aura.load.talents)

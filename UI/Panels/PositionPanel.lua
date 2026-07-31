@@ -7,8 +7,11 @@ local Panel = {}
 ns.panels.PositionPanel = Panel
 
 function Panel:Create(parent)
-  local frame = CreateFrame("Frame", nil, parent)
-  frame:SetAllPoints()
+  local host, scroll, frame = Frames.CreateScrollPanel(parent, {
+    contentHeight = 480,
+    minimumContentWidth = 560,
+    fillHeight = true,
+  })
 
   frame.xLabel = Frames.CreateLabel(frame, "X", "GameFontNormal")
   frame.xLabel:SetPoint("TOPLEFT", 16, -20)
@@ -45,9 +48,12 @@ function Panel:Create(parent)
     ns.runtime:RefreshAura(aura.id)
   end)
   frame.saveButton:SetPoint("TOPLEFT", frame.anchorDropDown, "BOTTOMLEFT", 14, -18)
+  Frames.StylePrimaryButton(frame.saveButton)
 
+  self.host = host
+  self.scroll = scroll
   self.frame = frame
-  return frame
+  return host
 end
 
 function Panel:Refresh(aura)

@@ -6,8 +6,11 @@ local Panel = {}
 ns.panels.ConditionsPanel = Panel
 
 function Panel:Create(parent)
-  local frame = CreateFrame("Frame", nil, parent)
-  frame:SetAllPoints()
+  local host, scroll, frame = Frames.CreateScrollPanel(parent, {
+    contentHeight = 480,
+    minimumContentWidth = 560,
+    fillHeight = true,
+  })
 
   frame.info = Frames.CreateLabel(frame, "Single threshold condition editor for V1.", "GameFontHighlight")
   frame.info:SetPoint("TOPLEFT", 16, -20)
@@ -52,9 +55,12 @@ function Panel:Create(parent)
     ns.runtime:RefreshAura(aura.id)
   end)
   frame.saveButton:SetPoint("TOPLEFT", frame.scaleInput, "BOTTOMLEFT", 0, -18)
+  Frames.StylePrimaryButton(frame.saveButton)
 
+  self.host = host
+  self.scroll = scroll
   self.frame = frame
-  return frame
+  return host
 end
 
 function Panel:Refresh(aura)

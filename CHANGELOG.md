@@ -1,3 +1,11 @@
+# v12.1.3
+- Reskinned the configuration UI for a cleaner, more fluid experience
+- Added resizable windows and standardized scrollable panels
+- Added the Nameplate Aura type
+- Improved aura grouping, organization, and navigation
+- Improved Player and Target buff/debuff tracking
+- Streamlined Import and Export workflows
+
 # v12.1.1
 - Added a player-only successful spell-cast event trigger for instant abilities such as Darkness
 - Changed Glow When Active on Spell Cooldown bars into selectable None, Inner Glow, Outer Glow, and Active Duration effects; Active Duration uses a bright yellow buff timer before returning to the cooldown

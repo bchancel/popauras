@@ -2,6 +2,7 @@ local _, ns = ...
 
 local Frames = ns.util.Frames
 local Fonts = ns.util.Fonts
+local Theme = ns.util.Theme
 
 local NewAuraPanel = {}
 ns.ui.NewAuraPanel = NewAuraPanel
@@ -74,31 +75,28 @@ local auraOptions = {
     accent = { 0.22, 0.78, 0.66 },
     art = "aura_bars",
   },
+  {
+    kind = "icon",
+    preset = "nameplate_buffs",
+    feature = "feature_nameplate_buffs",
+    title = "Nameplate Buffs",
+    description = "Show Blizzard-owned, category-filtered buff icons above hostile NPC nameplates.",
+    accent = { 0.24, 0.72, 0.96 },
+    art = "nameplate",
+  },
 }
 
 local function CreateArtHost(parent)
   local host = CreateFrame("Frame", nil, parent, "BackdropTemplate")
   host:SetSize(104, 70)
-  host:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  host:SetBackdropColor(0.07, 0.09, 0.13, 0.94)
-  host:SetBackdropBorderColor(0.20, 0.26, 0.36, 1)
+  Theme.StyleSurface(host, "canvas", "border")
   return host
 end
 
 local function CreatePlaceholderTile(parent)
   local tile = CreateFrame("Frame", nil, parent, "BackdropTemplate")
   tile:SetSize(TILE_WIDTH, TILE_HEIGHT)
-  tile:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  tile:SetBackdropColor(0.05, 0.07, 0.10, 0.78)
-  tile:SetBackdropBorderColor(0.18, 0.22, 0.28, 0.92)
+  Theme.StyleSurface(tile, "canvas", "border")
 
   tile.accentLine = tile:CreateTexture(nil, "ARTWORK")
   tile.accentLine:SetTexture("Interface\\Buttons\\WHITE8x8")
@@ -115,7 +113,7 @@ local function CreatePlaceholderTile(parent)
   Fonts.Apply(plus, 32, "OUTLINE")
   plus:SetPoint("CENTER", 0, 2)
   plus:SetText("+")
-  plus:SetTextColor(0.62, 0.68, 0.78)
+  Theme.SetText(plus, "textMuted")
 
   tile.title = tile:CreateFontString(nil, "OVERLAY")
   Fonts.Apply(tile.title, 14, "OUTLINE")
@@ -123,7 +121,7 @@ local function CreatePlaceholderTile(parent)
   tile.title:SetPoint("TOPRIGHT", -12, -96)
   tile.title:SetJustifyH("CENTER")
   tile.title:SetText("Coming Soon")
-  tile.title:SetTextColor(0.82, 0.87, 0.94)
+  Theme.SetText(tile.title, "textSecondary")
 
   tile.desc = tile:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   tile.desc:SetPoint("TOPLEFT", tile.title, "BOTTOMLEFT", 0, -10)
@@ -131,7 +129,7 @@ local function CreatePlaceholderTile(parent)
   tile.desc:SetJustifyH("CENTER")
   tile.desc:SetJustifyV("TOP")
   tile.desc:SetText("Reserved for future aura types as the catalog grows.")
-  tile.desc:SetTextColor(0.60, 0.68, 0.78)
+  Theme.SetText(tile.desc, "textMuted")
 
   return tile
 end
@@ -349,9 +347,42 @@ local function BuildAuraBarsArt(host)
   end
 end
 
+local function BuildNameplateArt(host)
+  local bar = CreateFrame("Frame", nil, host, "BackdropTemplate")
+  bar:SetSize(82, 12)
+  bar:SetPoint("BOTTOM", 0, 12)
+  Theme.StyleSurface(bar, "control", "border")
+
+  local health = bar:CreateTexture(nil, "ARTWORK")
+  health:SetTexture("Interface\\Buttons\\WHITE8x8")
+  health:SetPoint("TOPLEFT", 2, -2)
+  health:SetPoint("BOTTOMLEFT", 2, 2)
+  health:SetWidth(58)
+  health:SetVertexColor(0.18, 0.68, 0.38, 1)
+
+  local iconColors = {
+    { 0.18, 0.72, 0.98 },
+    { 0.62, 0.36, 0.94 },
+    { 0.96, 0.58, 0.18 },
+  }
+  for index, color in ipairs(iconColors) do
+    local icon = CreateFrame("Frame", nil, host, "BackdropTemplate")
+    icon:SetSize(18, 18)
+    icon:SetPoint("BOTTOM", bar, "TOP", (index - 2) * 21, 4)
+    Theme.StyleSurface(icon, "surfaceRaised", "borderStrong")
+    local fill = icon:CreateTexture(nil, "ARTWORK")
+    fill:SetTexture("Interface\\Buttons\\WHITE8x8")
+    fill:SetPoint("TOPLEFT", 3, -3)
+    fill:SetPoint("BOTTOMRIGHT", -3, 3)
+    fill:SetVertexColor(color[1], color[2], color[3], 1)
+  end
+end
+
 local function BuildArt(host, art)
   if art == "aura_bars" then
     BuildAuraBarsArt(host)
+  elseif art == "nameplate" then
+    BuildNameplateArt(host)
   elseif art == "icon" then
     BuildIconArt(host)
   elseif art == "bar" then
@@ -372,13 +403,13 @@ end
 local function StyleTile(tile, hovered)
   local accent = tile.accent or { 0.18, 0.52, 0.88 }
   if hovered then
-    tile:SetBackdropColor(0.10, 0.14, 0.22, 0.98)
+    local hover = Theme.GetColor("surfaceHover")
+    tile:SetBackdropColor(hover[1], hover[2], hover[3], hover[4])
     tile:SetBackdropBorderColor(accent[1], accent[2], accent[3], 1)
-    tile.title:SetTextColor(1, 0.92, 0.30)
+    Theme.SetText(tile.title, "text")
   else
-    tile:SetBackdropColor(0.07, 0.09, 0.13, 0.96)
-    tile:SetBackdropBorderColor(0.22, 0.28, 0.36, 1)
-    tile.title:SetTextColor(0.95, 0.97, 1)
+    Theme.SetBackdrop(tile, "surface", "border")
+    Theme.SetText(tile.title, "text")
   end
 end
 
@@ -426,7 +457,7 @@ local function CreateTile(parent, option)
   tile.desc:SetJustifyH("CENTER")
   tile.desc:SetJustifyV("TOP")
   tile.desc:SetText(option.description)
-  tile.desc:SetTextColor(0.76, 0.82, 0.92)
+  Theme.SetText(tile.desc, "textSecondary")
 
   StyleTile(tile, false)
   return tile
@@ -439,6 +470,7 @@ function NewAuraPanel:Create(parent)
   frame.scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
   frame.scroll:SetPoint("TOPLEFT", 0, 0)
   frame.scroll:SetPoint("BOTTOMRIGHT", -28, 0)
+  Theme.StyleScrollFrame(frame.scroll)
 
   frame.content = CreateFrame("Frame", nil, frame.scroll)
   frame.scroll:SetScrollChild(frame.content)
@@ -450,21 +482,27 @@ function NewAuraPanel:Create(parent)
   frame.summary = Frames.CreateLabel(frame.content, "Choose an aura type to start building.", "GameFontNormalLarge")
   frame.summary:SetPoint("TOPLEFT", 18, -20)
   Fonts.Apply(frame.summary, 18, "OUTLINE")
-  frame.summary:SetTextColor(0.92, 0.95, 1)
+  Theme.SetText(frame.summary, "text")
 
   frame.hint = Frames.CreateLabel(frame.content, "Pick a base layout first, then give it a name in the create dialog.", "GameFontHighlight")
   frame.hint:SetPoint("TOPLEFT", frame.summary, "BOTTOMLEFT", 0, -6)
-  frame.hint:SetTextColor(0.76, 0.82, 0.92)
+  Theme.SetText(frame.hint, "textSecondary")
 
   frame.tiles = {}
-  for index, option in ipairs(auraOptions) do
-    local tile = CreateTile(frame.content, option)
-    tile:SetPoint(GetTilePoint(index))
-    frame.tiles[index] = tile
+  local visibleOptionCount = 0
+  for _, option in ipairs(auraOptions) do
+    local enabled = not option.feature
+      or (ns.Features and ns.Features:IsEnabled(option.feature) == true)
+    if enabled then
+      visibleOptionCount = visibleOptionCount + 1
+      local tile = CreateTile(frame.content, option)
+      tile:SetPoint(GetTilePoint(visibleOptionCount))
+      frame.tiles[visibleOptionCount] = tile
+    end
   end
 
   frame.placeholders = {}
-  for index = #auraOptions + 1, (GRID_COLUMNS * GRID_ROWS) do
+  for index = visibleOptionCount + 1, (GRID_COLUMNS * GRID_ROWS) do
     local tile = CreatePlaceholderTile(frame.content)
     tile:SetPoint(GetTilePoint(index))
     frame.placeholders[#frame.placeholders + 1] = tile

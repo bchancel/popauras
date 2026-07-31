@@ -325,8 +325,9 @@ local function ShowImportString(encoded, owner)
     return
   end
 
-  ns.db.ui.editorMode = "config"
+  ns.db.ui.editorMode = "global_import"
   ns.db.ui.activeTab = "import_export"
+  ns.db.ui.selectedAuraId = nil
 
   if ns.ui.MainWindow then
     if not ns.ui.MainWindow.frame then

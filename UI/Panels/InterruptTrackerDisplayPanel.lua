@@ -4,6 +4,7 @@ local Frames = ns.util.Frames
 local Fonts = ns.util.Fonts
 local Anchors = ns.util.Anchors
 local Colors = ns.util.Colors
+local Theme = ns.util.Theme
 
 local Panel = {}
 ns.panels.InterruptTrackerDisplayPanel = Panel
@@ -62,13 +63,7 @@ end
 
 local function CreateSection(parent, title, y, height)
   local section = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-  section:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  section:SetBackdropColor(0.08, 0.10, 0.15, 0.96)
-  section:SetBackdropBorderColor(0.22, 0.28, 0.36, 1)
+  Theme.StyleSurface(section, "surface", "border")
   section:SetPoint("TOPLEFT", 16, y)
   section:SetSize(840, height)
 
@@ -76,17 +71,11 @@ local function CreateSection(parent, title, y, height)
   section.header:SetPoint("TOPLEFT", 1, -1)
   section.header:SetPoint("TOPRIGHT", -1, -1)
   section.header:SetHeight(28)
-  section.header:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  section.header:SetBackdropColor(0.13, 0.16, 0.22, 1)
-  section.header:SetBackdropBorderColor(0.22, 0.28, 0.36, 1)
+  Theme.StyleSurface(section.header, "surfaceRaised", "border")
 
   section.title = Frames.CreateLabel(section.header, title, "GameFontNormal")
   section.title:SetPoint("LEFT", 10, 0)
-  section.title:SetTextColor(0.92, 0.95, 1)
+  Theme.SetText(section.title, "text")
   return section
 end
 
@@ -118,7 +107,7 @@ local function CreateColorSwatch(parent, label, x, y)
     edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
     edgeSize = 12,
   })
-  widget.button:SetBackdropColor(0.05, 0.06, 0.08, 0.95)
+  Theme.SetBackdrop(widget.button, "control", "border")
 
   widget.swatch = widget.button:CreateTexture(nil, "ARTWORK")
   widget.swatch:SetPoint("TOPLEFT", 4, -4)
@@ -461,6 +450,7 @@ function Panel:Create(parent)
   frame.scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
   frame.scroll:SetPoint("TOPLEFT", 0, 0)
   frame.scroll:SetPoint("BOTTOMRIGHT", -28, 0)
+  Theme.StyleScrollFrame(frame.scroll)
 
   frame.content = CreateFrame("Frame", nil, frame.scroll)
   frame.content:SetSize(880, 1900)

@@ -86,8 +86,11 @@ function Panel:WireLiveInput(input)
 end
 
 function Panel:Create(parent)
-  local frame = CreateFrame("Frame", nil, parent)
-  frame:SetAllPoints()
+  local host, scroll, frame = Frames.CreateScrollPanel(parent, {
+    contentHeight = 560,
+    minimumContentWidth = 620,
+    fillHeight = true,
+  })
 
   frame.actionSelectLabel = Frames.CreateLabel(frame, "Action", "GameFontNormal")
   frame.actionSelectLabel:SetPoint("TOPLEFT", 16, -20)
@@ -183,8 +186,10 @@ function Panel:Create(parent)
   frame.noActionsLabel = Frames.CreateLabel(frame, "|cffaaaaaaNo actions configured. Click \"Add Action\" to create one.|r", "GameFontHighlight")
   frame.noActionsLabel:SetPoint("TOPLEFT", frame.actionSelectDropDown, "BOTTOMLEFT", 14, -20)
 
+  self.host = host
+  self.scroll = scroll
   self.frame = frame
-  return frame
+  return host
 end
 
 function Panel:Refresh(aura)

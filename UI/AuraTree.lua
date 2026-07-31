@@ -2,6 +2,7 @@ local _, ns = ...
 
 local Frames = ns.util.Frames
 local Fonts = ns.util.Fonts
+local Theme = ns.util.Theme
 
 local AuraTree = {}
 ns.ui.AuraTree = AuraTree
@@ -26,6 +27,64 @@ local function ShowTooltip(owner, title, body)
     GameTooltip:AddLine(body, 0.8, 0.8, 0.8, true)
   end
   GameTooltip:Show()
+end
+
+local function AddIconLine(icon, width, height, point, x, y, rotation)
+  local line = icon:CreateTexture(nil, "OVERLAY")
+  line:SetTexture("Interface\\Buttons\\WHITE8x8")
+  line:SetSize(width, height)
+  line:SetPoint(point or "CENTER", icon, point or "CENTER", x or 0, y or 0)
+  if rotation and line.SetRotation then
+    line:SetRotation(rotation)
+  end
+  icon.lines[#icon.lines + 1] = line
+  return line
+end
+
+local function AddOutlineSquare(icon, x, y, size)
+  AddIconLine(icon, size, 1, "TOPLEFT", x, y)
+  AddIconLine(icon, size, 1, "TOPLEFT", x, y - size + 1)
+  AddIconLine(icon, 1, size, "TOPLEFT", x, y)
+  AddIconLine(icon, 1, size, "TOPLEFT", x + size - 1, y)
+end
+
+local function CreateActionIcon(button, kind)
+  local icon = CreateFrame("Frame", nil, button)
+  icon:SetSize(16, 16)
+  icon:SetPoint("CENTER")
+  icon.lines = {}
+  icon.kind = kind
+
+  if kind == "copy" then
+    AddOutlineSquare(icon, 2, -2, 8)
+    AddOutlineSquare(icon, 6, -6, 8)
+  elseif kind == "trash" then
+    AddIconLine(icon, 8, 1, "TOPLEFT", 4, -4)
+    AddIconLine(icon, 4, 1, "TOPLEFT", 6, -2)
+    AddIconLine(icon, 1, 8, "TOPLEFT", 5, -6)
+    AddIconLine(icon, 1, 8, "TOPLEFT", 11, -6)
+    AddIconLine(icon, 7, 1, "TOPLEFT", 5, -13)
+    AddIconLine(icon, 1, 5, "TOPLEFT", 7, -7)
+    AddIconLine(icon, 1, 5, "TOPLEFT", 9, -7)
+  elseif kind == "up" or kind == "down" then
+    local direction = kind == "up" and 1 or -1
+    AddIconLine(icon, 1, 8, "CENTER", 0, -direction)
+    AddIconLine(icon, 1, 6, "CENTER", -2, direction * 3, -math.rad(45) * direction)
+    AddIconLine(icon, 1, 6, "CENTER", 2, direction * 3, math.rad(45) * direction)
+  end
+
+  button._popAurasActionIcon = icon
+  return icon
+end
+
+local function SetActionIconColor(button, color)
+  local icon = button and button._popAurasActionIcon
+  if not icon then
+    return
+  end
+  for _, line in ipairs(icon.lines or {}) do
+    Theme.SetTexture(line, color)
+  end
 end
 
 local function IsGroupAura(aura)
@@ -92,6 +151,12 @@ local function NormalizeSearchQuery(value)
   return value:lower()
 end
 
+local function GetAuraKindLabel(aura)
+  local kind = aura and tostring(aura.kind or "") or ""
+  kind = kind:gsub("_", " ")
+  return kind
+end
+
 local function AuraMatchesQuery(aura, query)
   if not aura or not query or query == "" then
     return true
@@ -127,16 +192,58 @@ local function CollectTreeNodesForRoot(auraId, collapsedGroups, depth, results)
   end
 end
 
-local function BuildOrderedTreeNodes(collapsedGroups)
-  local loadedRoots = {}
-  local unloadedRoots = {}
+local function CompareAuraNames(leftId, rightId)
+  local left = ns.Registry:GetAura(leftId)
+  local right = ns.Registry:GetAura(rightId)
+  local leftName = tostring(left and left.name or ""):lower()
+  local rightName = tostring(right and right.name or ""):lower()
+  if leftName ~= rightName then
+    return leftName < rightName
+  end
+  return tostring(leftId or "") < tostring(rightId or "")
+end
+
+local function BuildSortedRootAuraIds()
+  local buckets = {
+    loadedGroups = {},
+    loadedStandalone = {},
+    unloadedGroups = {},
+    unloadedStandalone = {},
+  }
 
   for _, auraId in ipairs(ns.Registry:GetOrder()) do
     local aura = ns.Registry:GetAura(auraId)
     if aura then
-      local bucket = IsAuraLoadedForList(aura) and loadedRoots or unloadedRoots
-      CollectTreeNodesForRoot(auraId, collapsedGroups, 0, bucket)
+      local loadedPrefix = IsAuraLoadedForList(aura) and "loaded" or "unloaded"
+      local kindSuffix = IsGroupAura(aura) and "Groups" or "Standalone"
+      local bucket = buckets[loadedPrefix .. kindSuffix]
+      bucket[#bucket + 1] = auraId
     end
+  end
+
+  for _, bucket in pairs(buckets) do
+    table.sort(bucket, CompareAuraNames)
+  end
+
+  local loaded = {}
+  local unloaded = {}
+  for _, auraId in ipairs(buckets.loadedGroups) do loaded[#loaded + 1] = auraId end
+  for _, auraId in ipairs(buckets.loadedStandalone) do loaded[#loaded + 1] = auraId end
+  for _, auraId in ipairs(buckets.unloadedGroups) do unloaded[#unloaded + 1] = auraId end
+  for _, auraId in ipairs(buckets.unloadedStandalone) do unloaded[#unloaded + 1] = auraId end
+  return loaded, unloaded
+end
+
+local function BuildOrderedTreeNodes(collapsedGroups)
+  local loadedRoots = {}
+  local unloadedRoots = {}
+  local loadedRootIds, unloadedRootIds = BuildSortedRootAuraIds()
+
+  for _, auraId in ipairs(loadedRootIds) do
+    CollectTreeNodesForRoot(auraId, collapsedGroups, 0, loadedRoots)
+  end
+  for _, auraId in ipairs(unloadedRootIds) do
+    CollectTreeNodesForRoot(auraId, collapsedGroups, 0, unloadedRoots)
   end
 
   return loadedRoots, unloadedRoots
@@ -180,13 +287,13 @@ end
 local function BuildFilteredTreeNodes(query)
   local loadedRoots = {}
   local unloadedRoots = {}
+  local loadedRootIds, unloadedRootIds = BuildSortedRootAuraIds()
 
-  for _, auraId in ipairs(ns.Registry:GetOrder()) do
-    local aura = ns.Registry:GetAura(auraId)
-    if aura then
-      local bucket = IsAuraLoadedForList(aura) and loadedRoots or unloadedRoots
-      CollectFilteredTreeNodesForRoot(auraId, query, 0, bucket)
-    end
+  for _, auraId in ipairs(loadedRootIds) do
+    CollectFilteredTreeNodesForRoot(auraId, query, 0, loadedRoots)
+  end
+  for _, auraId in ipairs(unloadedRootIds) do
+    CollectFilteredTreeNodesForRoot(auraId, query, 0, unloadedRoots)
   end
 
   return loadedRoots, unloadedRoots
@@ -316,6 +423,10 @@ function AuraTree:CompleteReorder(targetAuraId, insertAfter)
   end
 
   local newParentId = targetAura.parentId
+  if not newParentId then
+    self:Refresh()
+    return
+  end
   if newParentId and ns.Registry:IsDescendant(newParentId, draggedAuraId) then
     self:Refresh()
     return
@@ -461,7 +572,7 @@ function AuraTree:UpdateDragSession()
     local rowHeight = row:GetHeight() or 28
     local zoneOffset = rowHeight * 0.22
     local targetParentId = hoveredAura and hoveredAura.parentId or nil
-    local canReorder = hoveredAura and (not targetParentId or not ns.Registry:IsDescendant(targetParentId, self.draggingAuraId))
+    local canReorder = hoveredAura and targetParentId and not ns.Registry:IsDescendant(targetParentId, self.draggingAuraId)
 
     if rowCenterY and hoveredAura and IsGroupAura(hoveredAura) and math.abs(cursorY - rowCenterY) <= zoneOffset and not ns.Registry:IsDescendant(hoveredAuraId, self.draggingAuraId) then
       newDropTarget = hoveredAuraId
@@ -492,13 +603,7 @@ end
 
 function AuraTree:Create(parent)
   local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-  frame:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  frame:SetBackdropColor(0.09, 0.11, 0.16, 0.97)
-  frame:SetBackdropBorderColor(0.20, 0.26, 0.34, 1)
+  Theme.StyleSurface(frame, "transparent", "transparent")
   frame:SetFrameStrata("DIALOG")
   frame:SetFrameLevel(parent:GetFrameLevel() + 30)
   frame:EnableMouse(true)
@@ -506,28 +611,18 @@ function AuraTree:Create(parent)
   frame.titleBar = CreateFrame("Frame", nil, frame, "BackdropTemplate")
   frame.titleBar:SetPoint("TOPLEFT", 1, -1)
   frame.titleBar:SetPoint("TOPRIGHT", -1, -1)
-  frame.titleBar:SetHeight(32)
-  frame.titleBar:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  frame.titleBar:SetBackdropColor(0.13, 0.16, 0.22, 1)
-  frame.titleBar:SetBackdropBorderColor(0.22, 0.28, 0.36, 1)
+  frame.titleBar:SetHeight(42)
+  Theme.StyleSurface(frame.titleBar, "transparent", "transparent")
 
-  frame.title = Frames.CreateLabel(frame.titleBar, "Auras", "GameFontNormalLarge")
-  frame.title:SetPoint("LEFT", 10, 0)
-  Fonts.Apply(frame.title, 16, "OUTLINE")
-  frame.title:SetTextColor(0.93, 0.95, 1)
-  frame.title:SetShadowOffset(1, -1)
+  frame.searchLabel = Frames.CreateLabel(frame.titleBar, "FILTER", "GameFontNormalSmall")
+  Fonts.Apply(frame.searchLabel, 9, "OUTLINE")
+  frame.searchLabel:SetPoint("LEFT", 2, 0)
+  Theme.SetText(frame.searchLabel, "textMuted")
 
-  frame.searchLabel = Frames.CreateLabel(frame.titleBar, "Search", "GameFontNormalSmall")
-  frame.searchLabel:SetPoint("RIGHT", -154, 0)
-  frame.searchLabel:SetTextColor(0.78, 0.82, 0.90)
-
-  frame.searchInput = Frames.CreateInput(frame.titleBar, 130, 20)
-  frame.searchInput:SetPoint("LEFT", frame.searchLabel, "RIGHT", 6, 0)
-  frame.searchInput:SetTextInsets(4, 4, 0, 0)
+  frame.searchInput = Frames.CreateInput(frame.titleBar, 184, 28)
+  frame.searchInput:SetPoint("LEFT", frame.searchLabel, "RIGHT", 8, 0)
+  frame.searchInput:SetPoint("RIGHT", -2, 0)
+  frame.searchInput:SetTextInsets(6, 6, 0, 0)
   frame.searchInput:SetScript("OnTextChanged", function()
     AuraTree:Refresh()
   end)
@@ -537,9 +632,10 @@ function AuraTree:Create(parent)
   end)
 
   frame.scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-  frame.scroll:SetPoint("TOPLEFT", 8, -38)
-  frame.scroll:SetPoint("BOTTOMRIGHT", -28, 8)
+  frame.scroll:SetPoint("TOPLEFT", 0, -50)
+  frame.scroll:SetPoint("BOTTOMRIGHT", -24, 44)
   frame.scroll:EnableMouse(true)
+  Theme.StyleScrollFrame(frame.scroll)
 
   frame.content = CreateFrame("Frame", nil, frame.scroll)
   frame.content:SetSize(1, 1)
@@ -559,26 +655,34 @@ function AuraTree:Create(parent)
   frame.rows = {}
   frame.sectionHeaders = {}
   frame.emptyText = Frames.CreateLabel(frame.content, "", "GameFontHighlightSmall")
-  frame.emptyText:SetTextColor(0.72, 0.76, 0.84)
+  Theme.SetText(frame.emptyText, "textMuted")
   frame.emptyText:SetWidth(220)
   frame.emptyText:SetJustifyH("LEFT")
   frame.emptyText:Hide()
+
+  frame.collapseButton = Frames.CreateButton(frame, "Collapse Groups", 120, 28, function()
+    ns.db.ui.collapsedGroups = ns.db.ui.collapsedGroups or {}
+    for auraId, aura in pairs(ns.Registry:GetAuras() or {}) do
+      if IsGroupAura(aura) then
+        ns.db.ui.collapsedGroups[auraId] = true
+      end
+    end
+    AuraTree:Refresh()
+  end)
+  frame.collapseButton:SetPoint("BOTTOMLEFT", 0, 6)
+  frame.collapseButton:SetPoint("BOTTOMRIGHT", -2, 6)
+  Theme.StyleButton(frame.collapseButton, "ghost")
+  Fonts.Apply(frame.collapseButton:GetFontString(), 11, "")
 
   frame.dragProxy = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
   frame.dragProxy:SetSize(150, 24)
   frame.dragProxy:SetFrameStrata("TOOLTIP")
   frame.dragProxy:SetFrameLevel(100)
-  frame.dragProxy:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  frame.dragProxy:SetBackdropColor(0.10, 0.18, 0.32, 0.95)
-  frame.dragProxy:SetBackdropBorderColor(0.26, 0.62, 1, 1)
+  Theme.StyleSurface(frame.dragProxy, "surfaceHover", "borderFocus")
   frame.dragProxy.text = frame.dragProxy:CreateFontString(nil, "OVERLAY")
   Fonts.Apply(frame.dragProxy.text, 12, "OUTLINE")
   frame.dragProxy.text:SetPoint("CENTER")
-  frame.dragProxy.text:SetTextColor(0.96, 0.98, 1)
+  Theme.SetText(frame.dragProxy.text, "text")
   frame.dragProxy:Hide()
   self.dragProxy = frame.dragProxy
 
@@ -599,6 +703,9 @@ function AuraTree:Refresh()
   end
   for _, header in ipairs(self.frame.sectionHeaders or {}) do
     header:Hide()
+    if header.line then
+      header.line:Hide()
+    end
   end
   if self.frame.emptyText then
     self.frame.emptyText:Hide()
@@ -615,8 +722,9 @@ function AuraTree:Refresh()
     end
 
     local header = Frames.CreateLabel(content, "", "GameFontNormal")
-    Fonts.Apply(header, 13, "OUTLINE")
-    header:SetTextColor(1, 0.88, 0.15)
+    Fonts.Apply(header, 10, "")
+    Theme.SetText(header, "textAccent")
+    header.line = Theme.CreateAccentLine(content, 1, "border")
     self.frame.sectionHeaders[i] = header
     return header
   end
@@ -626,48 +734,71 @@ function AuraTree:Refresh()
     local header = EnsureSectionHeader(sectionHeaderIndex)
     header:ClearAllPoints()
     header:SetPoint("TOPLEFT", 0, -yOffset)
-    header:SetText(text)
+    header:SetText(text:upper())
+    Theme.SetText(header, text:find("Not Loaded", 1, true) and "textMuted" or "textAccent")
     header:Show()
-    yOffset = yOffset + 22
+    header.line:ClearAllPoints()
+    header.line:SetPoint("LEFT", header, "RIGHT", 10, 0)
+    header.line:SetPoint("RIGHT", content, "RIGHT", 0, 0)
+    header.line:Show()
+    yOffset = yOffset + 26
   end
 
   local function EnsureRow(i)
     if self.frame.rows[i] then
       return self.frame.rows[i]
     end
-    local row = CreateFrame("Frame", nil, content)
-    row:SetSize(240, 28)
+    local row = CreateFrame("Frame", nil, content, "BackdropTemplate")
+    row:SetSize(272, 40)
     row:SetFrameStrata("FULLSCREEN_DIALOG")
     row:SetFrameLevel(self.frame:GetFrameLevel() + 40)
     row:EnableMouse(false)
+    Theme.StyleSurface(row, "surface", "border")
 
     row.button = CreateFrame("Button", nil, row, "BackdropTemplate")
     row.button:SetPoint("LEFT", 0, 0)
-    row.button:SetSize(192, 26)
+    row.button:SetSize(192, 38)
     row.button:SetFrameStrata("FULLSCREEN_DIALOG")
     row.button:SetFrameLevel(row:GetFrameLevel() + 1)
     row.button:EnableMouse(true)
-    row.button:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1,
-    })
+    Theme.StyleSurface(row.button, "transparent", "transparent")
     row.button.text = row.button:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(row.button.text, 13, "OUTLINE")
-    row.button.text:SetPoint("LEFT", 8, 0)
-    row.button.text:SetPoint("RIGHT", -8, 0)
+    Fonts.Apply(row.button.text, 12, "")
+    row.button.text:SetPoint("TOPLEFT", 12, -5)
+    row.button.text:SetPoint("TOPRIGHT", -8, -5)
     row.button.text:SetJustifyH("LEFT")
-    row.button.text:SetJustifyV("MIDDLE")
-    row.button.text:SetTextColor(0.97, 0.98, 1)
+    row.button.text:SetJustifyV("TOP")
+    Theme.SetText(row.button.text, "text")
     row.button.text:SetAlpha(1)
     row.button.text:SetShadowOffset(1, -1)
-    row.button.text:SetShadowColor(0, 0, 0, 0.9)
+    row.button.text:SetShadowColor(0, 0, 0, 0.55)
 
-    row.previewOutline = CreateFrame("Frame", nil, row.button, "BackdropTemplate")
+    row.button.kindText = row.button:CreateFontString(nil, "OVERLAY")
+    Fonts.Apply(row.button.kindText, 10, "")
+    row.button.kindText:SetPoint("BOTTOMLEFT", 12, 5)
+    row.button.kindText:SetPoint("BOTTOMRIGHT", -8, 5)
+    row.button.kindText:SetJustifyH("LEFT")
+    Theme.SetText(row.button.kindText, "textMuted")
+
+    row.button.selectionBar = Theme.CreateAccentLine(row, 1, "accentBright")
+    row.button.selectionBar:ClearAllPoints()
+    row.button.selectionBar:SetPoint("TOPLEFT", 0, -1)
+    row.button.selectionBar:SetPoint("BOTTOMLEFT", 0, 1)
+    row.button.selectionBar:SetWidth(3)
+    row.button.selectionBar:Hide()
+
+    row.groupIndicator = Theme.CreateAccentLine(row, 1, "groupAccent")
+    row.groupIndicator:ClearAllPoints()
+    row.groupIndicator:SetPoint("TOPLEFT", 5, -5)
+    row.groupIndicator:SetPoint("BOTTOMLEFT", 5, 5)
+    row.groupIndicator:SetWidth(3)
+    row.groupIndicator:Hide()
+
+    row.previewOutline = CreateFrame("Frame", nil, row, "BackdropTemplate")
     row.previewOutline:SetPoint("TOPLEFT", -1, 1)
     row.previewOutline:SetPoint("BOTTOMRIGHT", 1, -1)
     row.previewOutline:SetFrameStrata("FULLSCREEN_DIALOG")
-    row.previewOutline:SetFrameLevel(row.button:GetFrameLevel() + 2)
+    row.previewOutline:SetFrameLevel(row:GetFrameLevel() + 3)
     row.previewOutline:EnableMouse(false)
     row.previewOutline:SetBackdrop({
       edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -676,11 +807,11 @@ function AuraTree:Refresh()
     row.previewOutline:SetBackdropBorderColor(unpack(PREVIEW_OUTLINE_COLOR))
     row.previewOutline:Hide()
 
-    row.debugOutline = CreateFrame("Frame", nil, row.button, "BackdropTemplate")
+    row.debugOutline = CreateFrame("Frame", nil, row, "BackdropTemplate")
     row.debugOutline:SetPoint("TOPLEFT", -3, 3)
     row.debugOutline:SetPoint("BOTTOMRIGHT", 3, -3)
     row.debugOutline:SetFrameStrata("FULLSCREEN_DIALOG")
-    row.debugOutline:SetFrameLevel(row.button:GetFrameLevel() + 3)
+    row.debugOutline:SetFrameLevel(row:GetFrameLevel() + 4)
     row.debugOutline:EnableMouse(false)
     row.debugOutline:SetBackdrop({
       edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -689,20 +820,20 @@ function AuraTree:Refresh()
     row.debugOutline:SetBackdropBorderColor(unpack(DEBUG_OUTLINE_COLOR))
     row.debugOutline:Hide()
 
-    row.topDottedLine = row.button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.topDottedLine = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.topDottedLine:SetPoint("TOPLEFT", 6, -1)
     row.topDottedLine:SetPoint("TOPRIGHT", -6, -1)
     row.topDottedLine:SetJustifyH("CENTER")
     row.topDottedLine:SetText(string.rep(". ", 40))
-    row.topDottedLine:SetTextColor(0.72, 0.76, 0.84, 0.85)
+    Theme.SetText(row.topDottedLine, "textMuted")
     row.topDottedLine:Hide()
 
-    row.bottomDottedLine = row.button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.bottomDottedLine = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.bottomDottedLine:SetPoint("BOTTOMLEFT", 6, 1)
     row.bottomDottedLine:SetPoint("BOTTOMRIGHT", -6, 1)
     row.bottomDottedLine:SetJustifyH("CENTER")
     row.bottomDottedLine:SetText(string.rep(". ", 40))
-    row.bottomDottedLine:SetTextColor(0.72, 0.76, 0.84, 0.85)
+    Theme.SetText(row.bottomDottedLine, "textMuted")
     row.bottomDottedLine:Hide()
 
     row.button:SetScript("OnClick", function(selfButton)
@@ -724,9 +855,21 @@ function AuraTree:Refresh()
     row.button:SetScript("OnEnter", function(selfButton)
       if AuraTree.draggingAuraId then
         AuraTree:UpdateDragSession()
+        return
+      end
+      local aura = ns.Registry:GetAura(selfButton.auraId)
+      if aura and aura.id ~= ns.db.ui.selectedAuraId then
+        Theme.StyleSurface(row, "surfaceHover", "borderStrong")
+      end
+      if aura then
+        ShowTooltip(selfButton, aura.name or "Aura", GetAuraKindLabel(aura) .. " — drag to reorder")
       end
     end)
     row.button:SetScript("OnLeave", function()
+      GameTooltip:Hide()
+      if row.auraId ~= ns.db.ui.selectedAuraId and not AuraTree.draggingAuraId then
+        Theme.StyleSurface(row, "surface", "border")
+      end
       if AuraTree.draggingAuraId then
         AuraTree:UpdateDragSession()
       end
@@ -742,7 +885,8 @@ function AuraTree:Refresh()
       edgeSize = 1,
     })
     row.expandButton.text = row.expandButton:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(row.expandButton.text, 11, "OUTLINE")
+    row.expandButton.Text = row.expandButton.text
+    Fonts.Apply(row.expandButton.text, 13, "")
     row.expandButton.text:SetPoint("CENTER")
     row.expandButton:SetPoint("LEFT", row.button, "RIGHT", 2, 0)
     row.expandButton:SetScript("OnClick", function(selfButton)
@@ -760,33 +904,6 @@ function AuraTree:Refresh()
       GameTooltip:Hide()
     end)
 
-    row.ungroupButton = CreateFrame("Button", nil, row, "BackdropTemplate")
-    row.ungroupButton:SetSize(20, 20)
-    row.ungroupButton:SetFrameStrata("FULLSCREEN_DIALOG")
-    row.ungroupButton:SetFrameLevel(row:GetFrameLevel() + 2)
-    row.ungroupButton:EnableMouse(true)
-    row.ungroupButton:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1,
-    })
-    row.ungroupButton.text = row.ungroupButton:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(row.ungroupButton.text, 12, "OUTLINE")
-    row.ungroupButton.text:SetPoint("CENTER")
-    row.ungroupButton.text:SetText("-")
-    row.ungroupButton:SetScript("OnClick", function(selfButton)
-      if ns.Registry:RemoveFromGroup(selfButton.auraId) then
-        ns.runtime:RefreshAll()
-        ns.ui.MainWindow:Refresh()
-      end
-    end)
-    row.ungroupButton:SetScript("OnEnter", function(selfButton)
-      ShowTooltip(selfButton, "Remove From Group", "Moves this aura back to the top level.")
-    end)
-    row.ungroupButton:SetScript("OnLeave", function()
-      GameTooltip:Hide()
-    end)
-
     row.upButton = CreateFrame("Button", nil, row, "BackdropTemplate")
     row.upButton:SetSize(20, 20)
     row.upButton:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -798,9 +915,12 @@ function AuraTree:Refresh()
       edgeSize = 1,
     })
     row.upButton.text = row.upButton:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(row.upButton.text, 11, "OUTLINE")
+    row.upButton.Text = row.upButton.text
+    Fonts.Apply(row.upButton.text, 10, "")
     row.upButton.text:SetPoint("CENTER")
-    row.upButton.text:SetText("^")
+    row.upButton.text:SetText("")
+    CreateActionIcon(row.upButton, "up")
+    SetActionIconColor(row.upButton, "textMuted")
     row.upButton:SetScript("OnClick", function(selfButton)
       local aura = ns.Registry:GetAura(selfButton.auraId)
       local _, currentIndex = GetSiblingInfo(aura)
@@ -811,9 +931,11 @@ function AuraTree:Refresh()
       end
     end)
     row.upButton:SetScript("OnEnter", function(selfButton)
+      SetActionIconColor(selfButton, "text")
       ShowTooltip(selfButton, "Move Up", "Moves this aura earlier in its current list or group.")
     end)
-    row.upButton:SetScript("OnLeave", function()
+    row.upButton:SetScript("OnLeave", function(selfButton)
+      SetActionIconColor(selfButton, "textMuted")
       GameTooltip:Hide()
     end)
 
@@ -828,9 +950,12 @@ function AuraTree:Refresh()
       edgeSize = 1,
     })
     row.downButton.text = row.downButton:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(row.downButton.text, 11, "OUTLINE")
+    row.downButton.Text = row.downButton.text
+    Fonts.Apply(row.downButton.text, 10, "")
     row.downButton.text:SetPoint("CENTER")
-    row.downButton.text:SetText("v")
+    row.downButton.text:SetText("")
+    CreateActionIcon(row.downButton, "down")
+    SetActionIconColor(row.downButton, "textMuted")
     row.downButton:SetScript("OnClick", function(selfButton)
       local aura = ns.Registry:GetAura(selfButton.auraId)
       local _, currentIndex, count = GetSiblingInfo(aura)
@@ -841,9 +966,11 @@ function AuraTree:Refresh()
       end
     end)
     row.downButton:SetScript("OnEnter", function(selfButton)
+      SetActionIconColor(selfButton, "text")
       ShowTooltip(selfButton, "Move Down", "Moves this aura later in its current list or group.")
     end)
-    row.downButton:SetScript("OnLeave", function()
+    row.downButton:SetScript("OnLeave", function(selfButton)
+      SetActionIconColor(selfButton, "textMuted")
       GameTooltip:Hide()
     end)
 
@@ -858,9 +985,12 @@ function AuraTree:Refresh()
       edgeSize = 1,
     })
     row.duplicateButton.text = row.duplicateButton:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(row.duplicateButton.text, 11, "OUTLINE")
+    row.duplicateButton.Text = row.duplicateButton.text
+    Fonts.Apply(row.duplicateButton.text, 10, "")
     row.duplicateButton.text:SetPoint("CENTER")
-    row.duplicateButton.text:SetText("D")
+    row.duplicateButton.text:SetText("")
+    CreateActionIcon(row.duplicateButton, "copy")
+    SetActionIconColor(row.duplicateButton, "textSecondary")
     row.duplicateButton:SetScript("OnClick", function(selfButton)
       local copy = ns.Registry:DuplicateAura(selfButton.auraId)
       if copy then
@@ -871,9 +1001,11 @@ function AuraTree:Refresh()
       end
     end)
     row.duplicateButton:SetScript("OnEnter", function(selfButton)
+      SetActionIconColor(selfButton, "text")
       ShowTooltip(selfButton, "Duplicate Aura", "Creates a copy of this aura or group.")
     end)
-    row.duplicateButton:SetScript("OnLeave", function()
+    row.duplicateButton:SetScript("OnLeave", function(selfButton)
+      SetActionIconColor(selfButton, "textSecondary")
       GameTooltip:Hide()
     end)
 
@@ -888,9 +1020,12 @@ function AuraTree:Refresh()
       edgeSize = 1,
     })
     row.deleteButton.text = row.deleteButton:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(row.deleteButton.text, 12, "OUTLINE")
+    row.deleteButton.Text = row.deleteButton.text
+    Fonts.Apply(row.deleteButton.text, 10, "")
     row.deleteButton.text:SetPoint("CENTER")
-    row.deleteButton.text:SetText("X")
+    row.deleteButton.text:SetText("")
+    CreateActionIcon(row.deleteButton, "trash")
+    SetActionIconColor(row.deleteButton, "dangerBorder")
     row.deleteButton:SetScript("OnClick", function(selfButton)
       GameTooltip:Hide()
       local aura = ns.Registry:GetAura(selfButton.auraId)
@@ -931,9 +1066,11 @@ function AuraTree:Refresh()
       })
     end)
     row.deleteButton:SetScript("OnEnter", function(selfButton)
+      SetActionIconColor(selfButton, "text")
       ShowTooltip(selfButton, "Delete Aura", "Deletes this aura. Groups delete their child auras too.")
     end)
-    row.deleteButton:SetScript("OnLeave", function()
+    row.deleteButton:SetScript("OnLeave", function(selfButton)
+      SetActionIconColor(selfButton, "dangerBorder")
       GameTooltip:Hide()
     end)
 
@@ -947,18 +1084,26 @@ function AuraTree:Refresh()
     local isLoaded = node.isLoaded ~= false
     index = index + 1
     local row = EnsureRow(index)
+    local indent = math.min(depth, 3) * 14
+    local rowWidth = 272 - indent
     row:ClearAllPoints()
-    row:SetPoint("TOPLEFT", 0, -yOffset)
-    local label = aura.name .. " [" .. aura.kind .. "]"
+    row:SetPoint("TOPLEFT", indent, -yOffset)
+    row:SetWidth(rowWidth)
+    local label = aura.name
+    local kindLabel = GetAuraKindLabel(aura)
+    local isDropPrompt = false
     if AuraTree.dropTargetAuraId == aura.id and AuraTree.dropMode == "group" and (aura.kind == "group" or aura.kind == "dynamic_group") then
       label = "> Drop into " .. aura.name
+      isDropPrompt = true
     elseif AuraTree.dropTargetAuraId == aura.id and AuraTree.dropMode == "reorder" then
       label = (AuraTree.dropInsertAfter and "v " or "^ ") .. label
+      isDropPrompt = true
     end
     row.button.text:SetText(label)
+    row.button.kindText:SetText(kindLabel)
     row.button.text:ClearAllPoints()
-    row.button.text:SetPoint("LEFT", 8, 0)
-    row.button.text:SetPoint("RIGHT", -8, 0)
+    row.button.text:SetPoint("TOPLEFT", 12, -5)
+    row.button.text:SetPoint("TOPRIGHT", -8, -5)
     row.button.auraId = aura.id
     row.auraId = aura.id
     row.depth = depth
@@ -966,22 +1111,29 @@ function AuraTree:Refresh()
     row.button:Show()
     row.button.text:Show()
     if aura.id == ns.db.ui.selectedAuraId then
-      row.button:SetBackdropColor(0.16, 0.31, 0.58, 1)
-      row.button:SetBackdropBorderColor(0.26, 0.62, 1, 1)
+      Theme.StyleSurface(row, "surfaceHover", "borderFocus")
+      row.button.selectionBar:Show()
     else
       local isGroupDropTarget = AuraTree.dropTargetAuraId == aura.id and AuraTree.dropMode == "group" and (aura.kind == "group" or aura.kind == "dynamic_group")
       local isReorderTarget = AuraTree.dropTargetAuraId == aura.id and AuraTree.dropMode == "reorder"
-      row.button:SetBackdropColor((isGroupDropTarget or isReorderTarget) and 0.14 or 0.10, (isGroupDropTarget or isReorderTarget) and 0.28 or 0.13, (isGroupDropTarget or isReorderTarget) and 0.52 or 0.18, 0.98)
-      row.button:SetBackdropBorderColor((isGroupDropTarget or isReorderTarget) and 0.32 or 0.22, (isGroupDropTarget or isReorderTarget) and 0.62 or 0.30, (isGroupDropTarget or isReorderTarget) and 1.0 or 0.40, 1)
+      Theme.StyleSurface(
+        row,
+        (isGroupDropTarget or isReorderTarget) and "accentSoft" or "surface",
+        (isGroupDropTarget or isReorderTarget) and "borderFocus" or "border"
+      )
+      row.button.selectionBar:Hide()
     end
+    Theme.StyleSurface(row.button, "transparent", "transparent")
 
     local contentAlpha = isLoaded and 1 or 0.52
-    local buttonAlpha = isLoaded and 0.98 or 0.72
+    local buttonAlpha = isLoaded and 1 or 0.66
     local statusAlpha = isLoaded and 1 or 0.68
     local hasPreviewOutline = AuraHasPreviewEnabled(aura)
     local hasDebugOutline = AuraHasDebugEnabled(aura)
-    row.button:SetAlpha(buttonAlpha)
+    row:SetAlpha(buttonAlpha)
+    row.button:SetAlpha(1)
     row.button.text:SetAlpha(contentAlpha)
+    row.button.kindText:SetAlpha(contentAlpha)
     row.topDottedLine:SetShown(not isLoaded)
     row.bottomDottedLine:SetShown(not isLoaded)
     row.topDottedLine:SetAlpha(contentAlpha)
@@ -992,61 +1144,58 @@ function AuraTree:Refresh()
     row.debugOutline:SetAlpha(statusAlpha)
 
     local isGroup = aura.kind == "group" or aura.kind == "dynamic_group"
-    local inGroup = aura.parentId ~= nil
+    row.groupIndicator:SetShown(isGroup)
+    row.groupIndicator:SetAlpha(contentAlpha)
     row.expandButton.auraId = aura.id
     row.expandButton:SetShown(isGroup and searchQuery == "")
     if isGroup then
-      row.expandButton.text:SetText(ns.db.ui.collapsedGroups[aura.id] and ">" or "v")
+      row.expandButton.text:SetText(ns.db.ui.collapsedGroups[aura.id] and "+" or "-")
       row.expandButton.text:Show()
-      row.expandButton:SetBackdropColor(0.12, 0.15, 0.20, 1)
-      row.expandButton:SetBackdropBorderColor(0.24, 0.30, 0.40, 1)
+      Theme.StyleButton(row.expandButton, "ghost")
     end
-
-    row.ungroupButton.auraId = aura.id
-    row.ungroupButton:SetShown(inGroup)
-    row.ungroupButton.text:SetShown(inGroup)
-    row.ungroupButton:SetBackdropColor(0.16, 0.11, 0.12, 1)
-    row.ungroupButton:SetBackdropBorderColor(0.40, 0.18, 0.20, 1)
 
     local _, siblingIndex, siblingCount = GetSiblingInfo(aura)
     row.upButton.auraId = aura.id
-    row.upButton:SetShown(siblingIndex > 1)
-    row.upButton.text:SetShown(siblingIndex > 1)
-    row.upButton:SetBackdropColor(0.11, 0.16, 0.22, 1)
-    row.upButton:SetBackdropBorderColor(0.24, 0.30, 0.40, 1)
+    row.upButton:SetShown(aura.parentId ~= nil and siblingIndex > 1)
+    row.upButton.text:SetShown(aura.parentId ~= nil and siblingIndex > 1)
+    Theme.StyleButton(row.upButton, "ghost")
 
     row.downButton.auraId = aura.id
-    row.downButton:SetShown(siblingIndex > 0 and siblingIndex < siblingCount)
-    row.downButton.text:SetShown(siblingIndex > 0 and siblingIndex < siblingCount)
-    row.downButton:SetBackdropColor(0.11, 0.16, 0.22, 1)
-    row.downButton:SetBackdropBorderColor(0.24, 0.30, 0.40, 1)
+    row.downButton:SetShown(aura.parentId ~= nil and siblingIndex > 0 and siblingIndex < siblingCount)
+    row.downButton.text:SetShown(aura.parentId ~= nil and siblingIndex > 0 and siblingIndex < siblingCount)
+    Theme.StyleButton(row.downButton, "ghost")
 
     row.duplicateButton.auraId = aura.id
     row.duplicateButton:SetShown(true)
-    row.duplicateButton:SetBackdropColor(0.11, 0.16, 0.22, 1)
-    row.duplicateButton:SetBackdropBorderColor(0.24, 0.30, 0.40, 1)
+    Theme.StyleButton(row.duplicateButton, "ghost")
 
     row.deleteButton.auraId = aura.id
     row.deleteButton:SetShown(true)
-    row.deleteButton:SetBackdropColor(0.22, 0.10, 0.12, 1)
-    row.deleteButton:SetBackdropBorderColor(0.55, 0.18, 0.20, 1)
+    Theme.StyleButton(row.deleteButton, "ghostDanger")
 
-    local actionCount = 2 + (isGroup and 1 or 0) + (inGroup and 1 or 0) + (row.upButton:IsShown() and 1 or 0) + (row.downButton:IsShown() and 1 or 0)
-    local indent = depth * 14
-    local buttonWidth = 236 - (actionCount * 22) - indent
-    row.button:SetWidth(math.max(120, buttonWidth))
+    local actionCount = 2 + (isGroup and 1 or 0) + (row.upButton:IsShown() and 1 or 0) + (row.downButton:IsShown() and 1 or 0)
+    local buttonWidth = rowWidth - 4 - (actionCount * 22)
+    row.button:SetWidth(math.max(112, buttonWidth))
     row.button:ClearAllPoints()
-    row.button:SetPoint("LEFT", indent, 0)
+    row.button:SetPoint("LEFT", 0, 0)
+    local showKind = buttonWidth >= 126 and not isDropPrompt
+    row.button.kindText:SetShown(showKind)
+    if not showKind and not isDropPrompt then
+      row.button.text:SetText(aura.name .. " [" .. kindLabel .. "]")
+    end
+    row.button.text:ClearAllPoints()
+    if showKind then
+      row.button.text:SetPoint("TOPLEFT", 12, -5)
+      row.button.text:SetPoint("TOPRIGHT", -8, -5)
+    else
+      row.button.text:SetPoint("LEFT", 12, 0)
+      row.button.text:SetPoint("RIGHT", -8, 0)
+    end
     local anchor = row.button
     if row.expandButton:IsShown() then
       row.expandButton:ClearAllPoints()
       row.expandButton:SetPoint("LEFT", anchor, "RIGHT", 2, 0)
       anchor = row.expandButton
-    end
-    if row.ungroupButton:IsShown() then
-      row.ungroupButton:ClearAllPoints()
-      row.ungroupButton:SetPoint("LEFT", anchor, "RIGHT", 2, 0)
-      anchor = row.ungroupButton
     end
     if row.upButton:IsShown() then
       row.upButton:ClearAllPoints()
@@ -1064,12 +1213,11 @@ function AuraTree:Refresh()
     row.deleteButton:SetPoint("LEFT", row.duplicateButton, "RIGHT", 2, 0)
 
     row.expandButton:SetAlpha(contentAlpha)
-    row.ungroupButton:SetAlpha(contentAlpha)
     row.upButton:SetAlpha(contentAlpha)
     row.downButton:SetAlpha(contentAlpha)
     row.duplicateButton:SetAlpha(contentAlpha)
     row.deleteButton:SetAlpha(contentAlpha)
-    yOffset = yOffset + 28
+    yOffset = yOffset + 46
 
   end
 
@@ -1100,7 +1248,7 @@ function AuraTree:Refresh()
     yOffset = yOffset + 22
   end
 
-  content:SetSize(240, math.max(1, yOffset))
+  content:SetSize(272, math.max(1, yOffset))
   content:SetFrameStrata("FULLSCREEN_DIALOG")
   content:SetFrameLevel(self.frame:GetFrameLevel() + 35)
 end

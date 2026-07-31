@@ -2,6 +2,7 @@ local _, ns = ...
 
 local Frames = ns.util.Frames
 local Fonts = ns.util.Fonts
+local Theme = ns.util.Theme
 
 local dialog = {}
 ns.ui.CreateAuraDialog = dialog
@@ -47,7 +48,65 @@ local presetOverrides = {
     defaultName = "Death Alert",
     triggerType = "death_alert",
   },
+  nameplate_buffs = {
+    label = "Nameplate Buff Display",
+    defaultName = "Nameplate Stealable",
+    triggerType = "aura",
+  },
 }
+
+local function IsPresetEnabled(preset)
+  return preset ~= "nameplate_buffs"
+    or (ns.Features and ns.Features:IsEnabled("feature_nameplate_buffs") == true)
+end
+
+local function ApplyPreset(aura, preset)
+  if not aura or preset ~= "nameplate_buffs" then
+    return
+  end
+
+  local trigger = aura.triggers and aura.triggers[1]
+  if not trigger then
+    return
+  end
+
+  trigger.unit = "nameplate"
+  trigger.auraType = "buff"
+  trigger.auraFilter = "present"
+  trigger.castByMe = false
+  trigger.aliveOnly = true
+  trigger.ignoreNPCs = false
+  trigger.spellId = nil
+  trigger.spellIDs = nil
+  trigger.spellNames = nil
+  trigger.nameplateAllBuffs = false
+  trigger.nameplateStealable = true
+  trigger.nameplateMagic = false
+  trigger.nameplateBossAura = false
+  trigger.nameplatePriorityAura = false
+  trigger.nameplateMaxAuras = 3
+
+  aura.load.instanceType = "party"
+  aura.display.width = 26
+  aura.display.height = 26
+  aura.display.spacing = 3
+  aura.display.growth = "RIGHT"
+  aura.display.showName = false
+  aura.display.showTimer = true
+  aura.display.showStacks = true
+  aura.display.showBackground = true
+  aura.display.backgroundColor = { r = 0, g = 0, b = 0, a = 0.65 }
+  aura.display.swipe = true
+  aura.display.soundEnabled = false
+  aura.display.showOnRaidFrames = false
+  aura.display.frameStrata = "HIGH"
+  aura.display.frameLevel = 10
+  ns.util.Anchors.ApplyNameplateAnchor(aura.position, "TOP")
+  aura.position.x = 0
+  aura.position.y = 18
+  aura.position.width = 26
+  aura.position.height = 26
+end
 
 local function GetAuraKindInfo(kind, preset)
   if preset and presetOverrides[preset] then
@@ -61,13 +120,7 @@ function dialog:Create()
   frame:SetSize(420, 220)
   frame:SetPoint("CENTER")
   frame:Hide()
-  frame:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  frame:SetBackdropColor(0.08, 0.10, 0.15, 0.98)
-  frame:SetBackdropBorderColor(0.22, 0.28, 0.36, 1)
+  Theme.StyleSurface(frame, "canvasAlt", "borderStrong")
   frame:SetFrameStrata("FULLSCREEN_DIALOG")
   frame:SetFrameLevel(200)
   frame:SetToplevel(true)
@@ -76,33 +129,27 @@ function dialog:Create()
   frame.header:SetPoint("TOPLEFT", 1, -1)
   frame.header:SetPoint("TOPRIGHT", -1, -1)
   frame.header:SetHeight(34)
-  frame.header:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  frame.header:SetBackdropColor(0.10, 0.14, 0.22, 1)
-  frame.header:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
+  Theme.StyleSurface(frame.header, "surfaceRaised", "border")
 
   frame.headerText = Frames.CreateLabel(frame.header, "Create Aura", "GameFontNormalLarge")
   frame.headerText:SetPoint("LEFT", 12, 0)
   Fonts.Apply(frame.headerText, 16, "OUTLINE")
-  frame.headerText:SetTextColor(0.92, 0.95, 1)
+  Theme.SetText(frame.headerText, "text")
 
-  frame.closeButton = CreateFrame("Button", nil, frame.header, "UIPanelCloseButton")
-  frame.closeButton:SetPoint("RIGHT", -2, 0)
-  frame.closeButton:SetScript("OnClick", function()
+  frame.closeButton = Frames.CreateButton(frame.header, "x", 26, 24, function()
     frame:Hide()
   end)
+  frame.closeButton:SetPoint("RIGHT", -6, 0)
+  Frames.StyleSecondaryButton(frame.closeButton)
 
   frame.kindLabel = Frames.CreateLabel(frame, "", "GameFontHighlight")
   frame.kindLabel:SetPoint("TOPLEFT", 18, -52)
   frame.kindLabel:SetWidth(360)
-  frame.kindLabel:SetTextColor(0.82, 0.88, 0.97)
+  Theme.SetText(frame.kindLabel, "textSecondary")
 
   frame.nameLabel = Frames.CreateLabel(frame, "Aura Name", "GameFontNormal")
   frame.nameLabel:SetPoint("TOPLEFT", frame.kindLabel, "BOTTOMLEFT", 0, -16)
-  frame.nameLabel:SetTextColor(1, 0.88, 0.15)
+  Theme.SetText(frame.nameLabel, "textAccent")
 
   frame.nameInput = Frames.CreateInput(frame, 290, 24)
   frame.nameInput:SetPoint("TOPLEFT", frame.nameLabel, "BOTTOMLEFT", 0, -6)
@@ -119,11 +166,17 @@ function dialog:Create()
   Fonts.Apply(frame.cancelButton:GetFontString(), 14, "OUTLINE")
 
   frame.createButton = Frames.CreateButton(frame, "Create", 120, 28, function()
+    if not IsPresetEnabled(frame.pendingPreset) then
+      frame:Hide()
+      return
+    end
+
     local kind = frame.pendingKind or "bar"
     local info = GetAuraKindInfo(kind, frame.pendingPreset)
     local requestedName = ns.Registry:GetUniqueAuraName(frame.nameInput:GetText())
     local aura = ns.Registry:CreateAura(kind, info.triggerType)
     aura.name = requestedName
+    ApplyPreset(aura, frame.pendingPreset)
     ns.db.ui.editorMode = "config"
     ns.db.ui.activeTab = "display"
     ns.db.ui.selectedAuraId = aura.id
@@ -145,6 +198,10 @@ function dialog:Create()
 end
 
 function dialog:Show(kind, preset)
+  if not IsPresetEnabled(preset) then
+    return
+  end
+
   if not self.frame then
     self:Create()
   end
