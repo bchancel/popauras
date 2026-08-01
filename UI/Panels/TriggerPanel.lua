@@ -827,7 +827,6 @@ function Panel:ApplyCurrent()
   ns.Defaults:ApplyTriggerDefaults(trigger)
   trigger.cooldownMatch = UIDropDownMenu_GetSelectedValue(frame.cooldownMatchDropDown) or trigger.cooldownMatch or "cooldown"
   trigger.mode = UIDropDownMenu_GetSelectedValue(frame.modeDropDown) or trigger.mode or "always"
-  trigger.showAlways = frame.showAlwaysCheck:GetChecked() == true
   if trigger.type == "trinket_cooldown" then
     trigger.trinketTop = frame.trinketTopCheck:GetChecked() == true
     trigger.trinketBottom = frame.trinketBottomCheck:GetChecked() == true
@@ -836,8 +835,6 @@ function Panel:ApplyCurrent()
     trigger.ignoredTrinkets = TrimmedText(frame.trinketIgnoreInput:GetText())
   end
   trigger.manualCooldown = tonumber(frame.manualCooldownInput:GetText()) or 0
-  trigger.showChargeCooldown = frame.chargeCooldownCheck:GetChecked() == true
-  trigger.showAuraWindow = frame.cooldownAuraWindowCheck:GetChecked() == true
   trigger.auraType = UIDropDownMenu_GetSelectedValue(frame.auraTypeDropDown) or trigger.auraType or "buff"
   trigger.auraFilter = UIDropDownMenu_GetSelectedValue(frame.auraFilterDropDown) or trigger.auraFilter or "present"
   trigger.unit = UIDropDownMenu_GetSelectedValue(frame.auraUnitDropDown) or trigger.unit or "player"
@@ -1327,12 +1324,11 @@ function Panel:Create(parent)
   frame.auraListSettingsBox = CreateFrame("Frame", nil, frame, "BackdropTemplate")
   frame.auraListSettingsBox:SetPoint("TOPLEFT", 16, -20)
   frame.auraListSettingsBox:SetSize(710, 300)
-  Theme.StyleSurface(frame.auraListSettingsBox, "surface", "borderStrong")
+  Theme.StyleSurface(frame.auraListSettingsBox, "transparent", "transparent")
 
-  frame.auraListSettingsTitle = Frames.CreateLabel(
-    frame.auraListSettingsBox, "Buffs and Debuffs", "GameFontNormalLarge")
-  frame.auraListSettingsTitle:SetPoint("TOPLEFT", 14, -12)
-  Theme.SetText(frame.auraListSettingsTitle, "text")
+  frame.auraListSettingsTitle = Frames.CreateSectionHeader(
+    frame.auraListSettingsBox, "Aura List Trigger", 676)
+  frame.auraListSettingsTitle:SetPoint("TOPLEFT", 14, -6)
 
   frame.auraListSettingsIntro = Frames.CreateLabel(
     frame.auraListSettingsBox,
@@ -1395,10 +1391,10 @@ function Panel:Create(parent)
   frame.auraListFilterHint:SetJustifyH("LEFT")
   Theme.SetText(frame.auraListFilterHint, "textMuted")
 
-  frame.auraListHideBlizzardBuffsCheck = Frames.CreateCheckbox(
+  frame.auraListHideBlizzardBuffsCheck = Frames.CreateLabeledToggle(
     frame.auraListSettingsBox, "Hide Blizzard Buffs")
   frame.auraListHideBlizzardBuffsCheck:SetPoint("TOPLEFT", 14, -258)
-  frame.auraListHideBlizzardDebuffsCheck = Frames.CreateCheckbox(
+  frame.auraListHideBlizzardDebuffsCheck = Frames.CreateLabeledToggle(
     frame.auraListSettingsBox, "Hide Blizzard Debuffs")
   frame.auraListHideBlizzardDebuffsCheck:SetPoint("TOPLEFT", 14, -258)
   frame.auraListSettingsBox:Hide()
@@ -1553,23 +1549,13 @@ function Panel:Create(parent)
   frame.cooldownMatchDropDown = Frames.CreateDropdown(frame, 170)
   frame.cooldownMatchDropDown:SetPoint("TOPLEFT", frame.cooldownMatchLabel, "BOTTOMLEFT", -14, -4)
 
-  frame.showAlwaysCheck = Frames.CreateCheckbox(frame, "Always Show")
-  frame.showAlwaysCheck:SetPoint("TOPLEFT", frame.cooldownMatchDropDown, "BOTTOMLEFT", 14, -10)
-  frame.showAlwaysCheck:Hide()
-
   frame.manualCooldownLabel = Frames.CreateLabel(frame, "Manual Cooldown Seconds", "GameFontNormal")
-  frame.manualCooldownLabel:SetPoint("TOPLEFT", frame.showAlwaysCheck, "BOTTOMLEFT", 0, -10)
+  frame.manualCooldownLabel:SetPoint("TOPLEFT", frame.cooldownMatchDropDown, "BOTTOMLEFT", 14, -10)
   frame.manualCooldownInput = Frames.CreateInput(frame, 120, 24)
   frame.manualCooldownInput:SetPoint("TOPLEFT", frame.manualCooldownLabel, "BOTTOMLEFT", 0, -6)
   frame.manualCooldownHint = Frames.CreateLabel(frame, "Optional fallback for spells whose cooldown API is restricted. Used when learned from cast.", "GameFontDisableSmall")
   frame.manualCooldownHint:SetPoint("TOPLEFT", frame.manualCooldownInput, "BOTTOMLEFT", 0, -6)
   frame.manualCooldownHint:SetWidth(320)
-
-  frame.chargeCooldownCheck = Frames.CreateCheckbox(frame, "Show cooldown while charges remain")
-  frame.chargeCooldownCheck:SetPoint("TOPLEFT", frame.manualCooldownHint, "BOTTOMLEFT", 0, -12)
-
-  frame.cooldownAuraWindowCheck = Frames.CreateCheckbox(frame, "Show CDM aura/proc window when no cooldown is active")
-  frame.cooldownAuraWindowCheck:SetPoint("TOPLEFT", frame.chargeCooldownCheck, "BOTTOMLEFT", 0, -6)
 
   frame.chatChannelLabel = Frames.CreateLabel(frame, "Chat Channels", "GameFontNormal")
   frame.chatChannelLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
@@ -1604,7 +1590,7 @@ function Panel:Create(parent)
   UpdateChatTriggerLayout(frame)
 
   frame.debugCheck = Frames.CreateCheckbox(frame, "Debug Trigger")
-  frame.debugCheck:SetPoint("TOPLEFT", frame.cooldownAuraWindowCheck, "BOTTOMLEFT", 0, -8)
+  frame.debugCheck:SetPoint("TOPLEFT", frame.manualCooldownHint, "BOTTOMLEFT", 0, -12)
   frame.debugCheck:Hide()
 
   frame.saveButton = Frames.CreateButton(frame, "Apply Trigger", 120, 22, function()
@@ -1828,7 +1814,6 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.deathDurationInput)
   self:WireLiveInput(frame.deathMaxAlertsInput)
   frame.chatExactCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
-  frame.showAlwaysCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.trinketTopCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.trinketBottomCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.trinketGlowCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
@@ -1841,8 +1826,6 @@ function Panel:Create(parent)
   end
   frame.auraListHideBlizzardBuffsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraListHideBlizzardDebuffsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
-  frame.chargeCooldownCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
-  frame.cooldownAuraWindowCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.deathTankCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.deathHealerCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.deathDPSCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
@@ -2081,6 +2064,8 @@ function Panel:Refresh(aura)
     isAuraList and tostring(UnitAuraList:GetMaxRows(trigger)) or "")
   self.frame.auraListHideBlizzardBuffsCheck:SetChecked(trigger.hideBlizzardBuffs == true)
   self.frame.auraListHideBlizzardDebuffsCheck:SetChecked(trigger.hideBlizzardDebuffs == true)
+  Theme.UpdateToggle(self.frame.auraListHideBlizzardBuffsCheck)
+  Theme.UpdateToggle(self.frame.auraListHideBlizzardDebuffsCheck)
   self.frame.auraAliveOnlyCheck:SetChecked(trigger.aliveOnly == true)
   self.frame.auraCastByMeCheck:SetChecked(trigger.castByMe == true)
   self.frame.auraIgnoreNPCsCheck:SetChecked(trigger.ignoreNPCs == true)
@@ -2097,12 +2082,6 @@ function Panel:Refresh(aura)
   self.frame.manualCooldownHint:SetShown(isSpellCooldown)
   self.frame.cooldownMatchLabel:SetShown(isCooldownType)
   self.frame.cooldownMatchDropDown:SetShown(isCooldownType)
-  self.frame.showAlwaysCheck:SetShown(isCooldownType)
-  self.frame.showAlwaysCheck:SetChecked(trigger.showAlways == true)
-  self.frame.chargeCooldownCheck:SetShown(isSpellCooldown)
-  self.frame.chargeCooldownCheck:SetChecked(trigger.showChargeCooldown ~= false)
-  self.frame.cooldownAuraWindowCheck:SetShown(isSpellCooldown)
-  self.frame.cooldownAuraWindowCheck:SetChecked(trigger.showAuraWindow == true)
   ApplyChatChannelSelection(self.frame, trigger)
   self.frame.chatSourceInput:SetText(trigger.chatSource or "")
   self.frame.chatDurationInput:SetText(isChat and tostring(NormalizeChatDuration(trigger.chatDuration)) or "")

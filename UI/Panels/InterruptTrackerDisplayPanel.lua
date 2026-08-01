@@ -63,19 +63,24 @@ end
 
 local function CreateSection(parent, title, y, height)
   local section = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-  Theme.StyleSurface(section, "surface", "border")
-  section:SetPoint("TOPLEFT", 16, y)
-  section:SetSize(840, height)
+  Theme.StyleSurface(section, "transparent", "transparent")
+  section.insetLeft = 0
+  section.insetRight = 0
+  section:SetPoint("TOPLEFT", 0, y)
+  section:SetPoint("TOPRIGHT", 0, y)
+  section:SetHeight(height)
 
   section.header = CreateFrame("Frame", nil, section, "BackdropTemplate")
   section.header:SetPoint("TOPLEFT", 1, -1)
   section.header:SetPoint("TOPRIGHT", -1, -1)
   section.header:SetHeight(28)
   Theme.StyleSurface(section.header, "surfaceRaised", "border")
+  section.header:Hide()
 
   section.title = Frames.CreateLabel(section.header, title, "GameFontNormal")
   section.title:SetPoint("LEFT", 10, 0)
   Theme.SetText(section.title, "text")
+  section.expandedHeight = height
   return section
 end
 
@@ -324,7 +329,7 @@ end
 
 local function CreateTextControlSection(section, showLabel)
   local controls = {}
-  controls.showCheck = Frames.CreateCheckbox(section, showLabel)
+  controls.showCheck = Frames.CreateLabeledToggle(section, showLabel)
   controls.showCheck:SetPoint("TOPLEFT", 12, -38)
   controls.fontWrap = CreateLabeledDropdown(section, "Font", 12, -74, 180)
   controls.sizeWrap = CreateLabeledInput(section, "Size", 220, -74, 56)
@@ -343,6 +348,14 @@ local function ApplyFilterSelection(meta, disabledSpells)
     end
   end
   return true
+end
+
+local function SetWidgetsShown(widgets, shown)
+  for _, widget in ipairs(widgets or {}) do
+    if widget and widget.SetShown then
+      widget:SetShown(shown == true)
+    end
+  end
 end
 
 function Panel:ApplyCurrent()
@@ -443,6 +456,134 @@ function Panel:ApplyCurrent()
   ns.ui.MainWindow:Refresh()
 end
 
+function Panel:LayoutSectionTabs()
+  if not self.frame or not self.frame.sectionEntries then
+    return
+  end
+
+  local contentWidth = math.max(1, self.frame.content:GetWidth() or 724)
+  local tabWidth = math.max(78, math.floor(contentWidth / #self.frame.sectionEntries))
+  local previous
+  for _, entry in ipairs(self.frame.sectionEntries) do
+    local tab = self.frame.sectionTabs[entry.key]
+    tab:ClearAllPoints()
+    tab:SetSize(tabWidth, 32)
+    if previous then
+      tab:SetPoint("TOPLEFT", previous, "TOPRIGHT", 0, 0)
+    else
+      tab:SetPoint("TOPLEFT", 0, -2)
+    end
+    previous = tab
+  end
+end
+
+function Panel:LayoutSections()
+  if not self.frame then
+    return
+  end
+  local y = -10
+  for _, section in ipairs(self.frame.sections or {}) do
+    if section:IsShown() then
+      section:ClearAllPoints()
+      section:SetPoint("TOPLEFT", section.insetLeft or 0, y)
+      section:SetPoint("TOPRIGHT", -(section.insetRight or 0), y)
+      y = y - section:GetHeight() - 10
+    end
+  end
+  local minHeight = self.frame:GetHeight() > 0 and self.frame:GetHeight() or 640
+  self.frame.content:SetHeight(math.max(minHeight, math.abs(y) + 28))
+end
+
+function Panel:SetActiveSection(key)
+  if not self.frame then
+    return
+  end
+  local activeEntry = self.frame.sectionEntries[1]
+  for _, entry in ipairs(self.frame.sectionEntries) do
+    if entry.key == key then
+      activeEntry = entry
+      break
+    end
+  end
+
+  local changed = self.frame.activeSectionKey ~= activeEntry.key
+  self.frame.activeSectionKey = activeEntry.key
+  for _, entry in ipairs(self.frame.sectionEntries) do
+    local active = entry == activeEntry
+    entry.section:SetShown(active)
+    Theme.StyleTab(self.frame.sectionTabs[entry.key], active)
+  end
+  self:LayoutSectionTabs()
+  self:LayoutSections()
+  if changed then
+    self.frame.scroll:SetVerticalScroll(0)
+  end
+end
+
+function Panel:UpdateControlStates()
+  if not self.frame then
+    return
+  end
+  local frame = self.frame
+  local showGroupBackground = frame.showBackgroundCheck:GetChecked() == true
+  local showBarBackground = frame.showBarBackgroundCheck:GetChecked() == true
+  local showIcon = frame.showIconCheck:GetChecked() == true
+  local showDuration = frame.timerControls.showCheck:GetChecked() == true
+  local announceEnabled = frame.clickAnnounceCheck:GetChecked() == true
+  local soundEnabled = frame.soundEnabledCheck:GetChecked() == true
+
+  SetWidgetsShown({ frame.groupBackgroundColorWrap.button, frame.groupBackgroundColorWrap.label }, showGroupBackground)
+  SetWidgetsShown({ frame.barBackgroundColorWrap.button, frame.barBackgroundColorWrap.label }, showBarBackground)
+  SetWidgetsShown({
+    frame.iconMatchSizeCheck,
+    frame.iconSizeWrap.label, frame.iconSizeWrap.input,
+    frame.iconAnchorWrap.label, frame.iconAnchorWrap.dropdown,
+    frame.iconXWrap.label, frame.iconXWrap.input,
+    frame.iconYWrap.label, frame.iconYWrap.input,
+    frame.iconHint,
+  }, showIcon)
+  frame.iconSizeWrap.label:SetShown(showIcon and frame.iconMatchSizeCheck:GetChecked() ~= true)
+  frame.iconSizeWrap.input:SetShown(showIcon and frame.iconMatchSizeCheck:GetChecked() ~= true)
+
+  SetWidgetsShown({
+    frame.nameControls.fontWrap.label, frame.nameControls.fontWrap.dropdown,
+    frame.nameControls.sizeWrap.label, frame.nameControls.sizeWrap.input,
+    frame.nameControls.rotationWrap.label, frame.nameControls.rotationWrap.dropdown,
+    frame.nameControls.anchorWrap.label, frame.nameControls.anchorWrap.dropdown,
+    frame.nameControls.xWrap.label, frame.nameControls.xWrap.input,
+    frame.nameControls.yWrap.label, frame.nameControls.yWrap.input,
+    frame.nameControls.colorWrap.button, frame.nameControls.colorWrap.label,
+    frame.nameHint,
+  }, true)
+  SetWidgetsShown({
+    frame.timerControls.fontWrap.label, frame.timerControls.fontWrap.dropdown,
+    frame.timerControls.sizeWrap.label, frame.timerControls.sizeWrap.input,
+    frame.timerControls.rotationWrap.label, frame.timerControls.rotationWrap.dropdown,
+    frame.timerControls.anchorWrap.label, frame.timerControls.anchorWrap.dropdown,
+    frame.timerControls.xWrap.label, frame.timerControls.xWrap.input,
+    frame.timerControls.yWrap.label, frame.timerControls.yWrap.input,
+    frame.timerControls.colorWrap.button, frame.timerControls.colorWrap.label,
+    frame.hideReadyCheck,
+    frame.timerDecimalsWrap.label, frame.timerDecimalsWrap.dropdown,
+    frame.durationHint,
+  }, showDuration)
+  SetWidgetsShown({
+    frame.channelWrap.label, frame.channelWrap.dropdown, frame.antiSpamCheck,
+  }, announceEnabled)
+  SetWidgetsShown({
+    frame.soundOwnOnlyCheck,
+    frame.soundSuccessWrap.label, frame.soundSuccessWrap.dropdown,
+    frame.soundFailedWrap.label, frame.soundFailedWrap.dropdown,
+  }, soundEnabled)
+
+  frame.iconSection:SetHeight(showIcon and 190 or 74)
+  frame.nameSection:SetHeight(220)
+  frame.durationSection:SetHeight(showDuration and 250 or 74)
+  frame.announceSection:SetHeight(announceEnabled and 150 or 74)
+  frame.soundSection:SetHeight(soundEnabled and 180 or 74)
+  self:LayoutSections()
+end
+
 function Panel:Create(parent)
   local frame = CreateFrame("Frame", nil, parent)
   frame:SetAllPoints()
@@ -453,17 +594,26 @@ function Panel:Create(parent)
   Theme.StyleScrollFrame(frame.scroll)
 
   frame.content = CreateFrame("Frame", nil, frame.scroll)
-  frame.content:SetSize(880, 1900)
+  frame.content:SetSize(724, 640)
   frame.scroll:SetScrollChild(frame.content)
+  frame:SetScript("OnSizeChanged", function(selfFrame, width)
+    frame.content:SetWidth(math.max(724, (tonumber(width) or selfFrame:GetWidth() or 0) - 28))
+    if Panel.frame == frame and frame.sectionEntries then
+      Panel:LayoutSectionTabs()
+      Panel:LayoutSections()
+    end
+  end)
 
   frame.summary = Frames.CreateLabel(frame.content, "Interrupt Tracker Display", "GameFontHighlight")
   frame.summary:SetPoint("TOPLEFT", 16, -10)
   frame.summary:SetTextColor(0.87, 0.91, 1)
+  frame.summary:Hide()
 
   frame.hint = Frames.CreateLabel(frame.content, "Track party interrupt cooldowns with BliZzi-compatible addon messaging and a compact spell filter list.", "GameFontDisableSmall")
   frame.hint:SetPoint("TOPLEFT", frame.summary, "BOTTOMLEFT", 0, -2)
   frame.hint:SetWidth(820)
   frame.hint:SetJustifyH("LEFT")
+  frame.hint:Hide()
 
   frame.credit = Frames.CreateLabel(
     frame.content,
@@ -474,14 +624,51 @@ function Panel:Create(parent)
   frame.credit:SetWidth(820)
   frame.credit:SetJustifyH("LEFT")
   frame.credit:SetTextColor(0.78, 0.84, 0.94)
+  frame.credit:Hide()
 
-  frame.lookSection = CreateSection(frame.content, "Look", -70, 300)
-  frame.iconSection = CreateSection(frame.content, "Icon", -382, 160)
-  frame.nameSection = CreateSection(frame.content, "Name Text", -554, 194)
-  frame.durationSection = CreateSection(frame.content, "Duration Text", -760, 224)
-  frame.announceSection = CreateSection(frame.content, "Click Announce", -996, 132)
-  frame.soundSection = CreateSection(frame.content, "Sounds", -1140, 162)
-  frame.filtersSection = CreateSection(frame.content, "Interrupt Filters", -1314, 540)
+  frame.lookSection = CreateSection(frame.content, "Look", -40, 350)
+  frame.iconSection = CreateSection(frame.content, "Icon", -40, 190)
+  frame.nameSection = CreateSection(frame.content, "Name Text", -40, 220)
+  frame.durationSection = CreateSection(frame.content, "Duration Text", -40, 250)
+  frame.announceSection = CreateSection(frame.content, "Click Announce", -40, 150)
+  frame.soundSection = CreateSection(frame.content, "Sounds", -40, 180)
+  frame.filtersSection = CreateSection(frame.content, "Interrupt Filters", -40, 540)
+
+  frame.credit:SetParent(frame.lookSection)
+  frame.credit:ClearAllPoints()
+  frame.credit:SetPoint("TOPLEFT", 12, -310)
+  frame.credit:SetWidth(690)
+  frame.credit:Show()
+
+  frame.sectionEntries = {
+    { key = "look", label = "Look", section = frame.lookSection },
+    { key = "icon", label = "Icon", section = frame.iconSection },
+    { key = "name", label = "Name", section = frame.nameSection },
+    { key = "duration", label = "Duration", section = frame.durationSection },
+    { key = "announce", label = "Announce", section = frame.announceSection },
+    { key = "sound", label = "Sound", section = frame.soundSection },
+    { key = "filters", label = "Filters", section = frame.filtersSection },
+  }
+  frame.sectionTabs = {}
+  for _, entry in ipairs(frame.sectionEntries) do
+    local sectionKey = entry.key
+    local tab = Frames.CreateButton(frame.content, entry.label, 80, 32, function()
+      Panel:SetActiveSection(sectionKey)
+      Panel:UpdateControlStates()
+    end)
+    Fonts.Apply(tab:GetFontString(), 11, "")
+    Theme.StyleTab(tab, false)
+    frame.sectionTabs[entry.key] = tab
+  end
+  frame.sections = {
+    frame.lookSection,
+    frame.iconSection,
+    frame.nameSection,
+    frame.durationSection,
+    frame.announceSection,
+    frame.soundSection,
+    frame.filtersSection,
+  }
 
   frame.nameWrap = CreateLabeledInput(frame.lookSection, "Aura Name", 12, -36, 260)
   frame.widthWrap = CreateLabeledInput(frame.lookSection, "Width", 292, -36, 70)
@@ -491,10 +678,10 @@ function Panel:Create(parent)
   frame.anchorWrap = CreateLabeledDropdown(frame.lookSection, "Anchor / Parent", 12, -96, 260)
   frame.framePointWrap = CreateLabeledDropdown(frame.lookSection, "Frame Point", 300, -96, 130)
   frame.parentPointWrap = CreateLabeledDropdown(frame.lookSection, "Parent Point", 458, -96, 130)
-  frame.showBackgroundCheck = Frames.CreateCheckbox(frame.lookSection, "Show Background")
+  frame.showBackgroundCheck = Frames.CreateLabeledToggle(frame.lookSection, "Show Background")
   frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -156)
   frame.groupBackgroundColorWrap = CreateColorSwatch(frame.lookSection, "Group BG", 182, -158)
-  frame.showBarBackgroundCheck = Frames.CreateCheckbox(frame.lookSection, "Show Bar Background")
+  frame.showBarBackgroundCheck = Frames.CreateLabeledToggle(frame.lookSection, "Show Bar Background")
   frame.showBarBackgroundCheck:SetPoint("TOPLEFT", 352, -156)
   frame.barBackgroundColorWrap = CreateColorSwatch(frame.lookSection, "Bar BG", 580, -158)
   frame.spacingWrap = CreateLabeledInput(frame.lookSection, "Spacing", 12, -214, 64)
@@ -507,7 +694,7 @@ function Panel:Create(parent)
   frame.failedKickCheck = Frames.CreateCheckbox(frame.lookSection, "Failed Kick Detection")
   frame.failedKickCheck:SetPoint("TOPLEFT", 388, -250)
 
-  frame.showIconCheck = Frames.CreateCheckbox(frame.iconSection, "Show Icon")
+  frame.showIconCheck = Frames.CreateLabeledToggle(frame.iconSection, "Show Icon")
   frame.showIconCheck:SetPoint("TOPLEFT", 12, -38)
   frame.iconMatchSizeCheck = Frames.CreateCheckbox(frame.iconSection, "Match Bar Size")
   frame.iconMatchSizeCheck:SetPoint("TOPLEFT", 154, -38)
@@ -517,15 +704,15 @@ function Panel:Create(parent)
   frame.iconYWrap = CreateLabeledInput(frame.iconSection, "Offset Y", 388, -74, 72)
   frame.iconHint = Frames.CreateLabel(frame.iconSection, "Uses each interrupt spell's real icon. Match Bar Size keeps the icon synced to the row height.", "GameFontDisableSmall")
   frame.iconHint:SetPoint("TOPLEFT", 12, -134)
-  frame.iconHint:SetWidth(780)
+  frame.iconHint:SetWidth(690)
   frame.iconHint:SetJustifyH("LEFT")
 
   frame.nameControls = CreateTextControlSection(frame.nameSection, "Show Player Name")
-  frame.displayInterruptNameCheck = Frames.CreateCheckbox(frame.nameSection, "Display Interrupt Name")
+  frame.displayInterruptNameCheck = Frames.CreateLabeledToggle(frame.nameSection, "Display Interrupt Name")
   frame.displayInterruptNameCheck:SetPoint("TOPLEFT", 180, -38)
   frame.nameHint = Frames.CreateLabel(frame.nameSection, "Mix player and interrupt names however you want: player only, spell only, both, or neither.", "GameFontDisableSmall")
   frame.nameHint:SetPoint("TOPLEFT", 12, -174)
-  frame.nameHint:SetWidth(780)
+  frame.nameHint:SetWidth(690)
   frame.nameHint:SetJustifyH("LEFT")
 
   frame.timerControls = CreateTextControlSection(frame.durationSection, "Show Duration / Ready Text")
@@ -534,16 +721,16 @@ function Panel:Create(parent)
   frame.timerDecimalsWrap = CreateLabeledDropdown(frame.durationSection, "Decimals", 360, -34, 120)
   frame.durationHint = Frames.CreateLabel(frame.durationSection, "READY text uses the same duration style and color controls as the cooldown timer.", "GameFontDisableSmall")
   frame.durationHint:SetPoint("TOPLEFT", 12, -204)
-  frame.durationHint:SetWidth(780)
+  frame.durationHint:SetWidth(690)
   frame.durationHint:SetJustifyH("LEFT")
 
-  frame.clickAnnounceCheck = Frames.CreateCheckbox(frame.announceSection, "Click on bar/icon to prepare interrupt status")
+  frame.clickAnnounceCheck = Frames.CreateLabeledToggle(frame.announceSection, "Enable Click Announce")
   frame.clickAnnounceCheck:SetPoint("TOPLEFT", 12, -38)
   frame.channelWrap = CreateLabeledDropdown(frame.announceSection, "Announce Channel", 12, -74, 160)
   frame.antiSpamCheck = Frames.CreateCheckbox(frame.announceSection, "Prevent duplicate announces")
   frame.antiSpamCheck:SetPoint("TOPLEFT", 220, -100)
 
-  frame.soundEnabledCheck = Frames.CreateCheckbox(frame.soundSection, "Enable Sounds")
+  frame.soundEnabledCheck = Frames.CreateLabeledToggle(frame.soundSection, "Enable Sounds")
   frame.soundEnabledCheck:SetPoint("TOPLEFT", 12, -38)
   frame.soundOwnOnlyCheck = Frames.CreateCheckbox(frame.soundSection, "Only play sounds for your own kicks")
   frame.soundOwnOnlyCheck:SetPoint("TOPLEFT", 220, -38)
@@ -717,6 +904,22 @@ function Panel:Refresh(aura)
   for _, meta in ipairs(self.frame.filterControls or {}) do
     meta.check:SetChecked(ApplyFilterSelection(meta, interrupt.disabledSpells))
   end
+
+  for _, toggle in ipairs({
+    self.frame.showBackgroundCheck,
+    self.frame.showBarBackgroundCheck,
+    self.frame.showIconCheck,
+    self.frame.nameControls.showCheck,
+    self.frame.displayInterruptNameCheck,
+    self.frame.timerControls.showCheck,
+    self.frame.clickAnnounceCheck,
+    self.frame.soundEnabledCheck,
+  }) do
+    Theme.UpdateToggle(toggle)
+  end
+
+  self:SetActiveSection(self.frame.activeSectionKey or "look")
+  self:UpdateControlStates()
 
   self.suppressUpdates = false
 end

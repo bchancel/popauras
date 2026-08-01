@@ -310,6 +310,32 @@ function Frames.CreateToggle(parent)
   return check
 end
 
+function Frames.CreateLabeledToggle(parent, labelText)
+  local check = Frames.CreateToggle(parent)
+  local text = check:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  text:SetPoint("LEFT", check, "RIGHT", 8, 0)
+  text:SetText(labelText or "")
+  Theme.SetText(text, "textSecondary")
+  check.Text = text
+  return check
+end
+
+function Frames.CreateSectionHeader(parent, titleText, width)
+  local header = CreateFrame("Frame", nil, parent)
+  header:SetSize(width or 700, 22)
+
+  header.title = header:CreateFontString(nil, "OVERLAY")
+  Fonts.Apply(header.title, 11, "")
+  header.title:SetPoint("LEFT", 0, 0)
+  header.title:SetText(string.upper(titleText or ""))
+  Theme.SetText(header.title, "groupAccent")
+
+  header.divider = Theme.CreateAccentLine(header, 1, "border")
+  header.divider:SetPoint("LEFT", header.title, "RIGHT", 12, 0)
+  header.divider:SetPoint("RIGHT", header, "RIGHT", 0, 0)
+  return header
+end
+
 function Frames.CreateDropdown(parent, width, initializer)
   local frame = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
   UIDropDownMenu_SetWidth(frame, width or 140)

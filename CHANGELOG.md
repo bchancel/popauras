@@ -1,3 +1,8 @@
+# v12.1.5
+- Simplified UI Options
+- Removed unsupported nameplate buff filtering options
+- Instance and Encounter Information available on the Load Tab
+
 # v12.1.4
 - Add additional unit frame support: DandersFrames, EllesmereUI Unit Frames, EllesmereUI Raid and Party Frames, Midnight Simple Unit Frames, VuhDo
 

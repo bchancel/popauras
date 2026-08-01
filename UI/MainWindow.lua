@@ -109,6 +109,13 @@ local function GetDisplayPanelKey(aura)
   return "DisplayPanel"
 end
 
+local function IsNameplateBuffAura(aura)
+  local trigger = aura and aura.triggers and aura.triggers[1] or nil
+  return aura and aura.kind == "icon"
+    and type(aura.triggers) == "table" and #aura.triggers == 1
+    and trigger and trigger.type == "aura" and trigger.unit == "nameplate"
+end
+
 local function ShouldShowTab(aura, key)
   if not aura then
     return key == "import_export"
@@ -123,6 +130,9 @@ local function ShouldShowTab(aura, key)
     return true
   end
   if key == "group" then
+    return false
+  end
+  if key == "trigger" and IsNameplateBuffAura(aura) then
     return false
   end
 
@@ -290,9 +300,9 @@ function MainWindow:Create()
   Theme.StyleSurface(frame.brandMark, "accentSoft", "accent")
 
   frame.brandText = frame.brandMark:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.brandText, 18, "")
+  Fonts.Apply(frame.brandText, 13, "")
   frame.brandText:SetPoint("CENTER", 0, 1)
-  frame.brandText:SetText("P")
+  frame.brandText:SetText("/PA")
   Theme.SetText(frame.brandText, "accentBright")
 
   frame.headerText = frame.header:CreateFontString(nil, "OVERLAY")
@@ -608,6 +618,7 @@ function MainWindow:RefreshSelection()
     and aura.kind ~= "interrupt_tracker"
     and aura.triggers
     and GetSelectedAuraTrigger(aura) ~= nil
+    and not IsNameplateBuffAura(aura)
   local showPreviewToggle = editorMode ~= "new_aura" and aura ~= nil and aura.kind ~= "interrupt_tracker"
   local selectedTrigger = GetSelectedAuraTrigger(aura)
 

@@ -235,17 +235,11 @@ local function ApplyTriggerTypeDefaults(trigger)
       trigger.auraType = "buff"
       trigger.auraFilter = "present"
       trigger.castByMe = false
-      local hadConfiguredCategory = trigger.nameplateStealable ~= nil
-        or trigger.nameplateMagic ~= nil
-        or trigger.nameplateBossAura ~= nil
-        or trigger.nameplatePriorityAura ~= nil
-        or trigger.nameplateRoleAura ~= nil
-        or trigger.nameplateShowAll ~= nil
-        or trigger.nameplateShowPersonal ~= nil
-      trigger.nameplateAllBuffs = trigger.nameplateAllBuffs == true
-      if not hadConfiguredCategory then
-        trigger.nameplateStealable = true
-      end
+      -- Retail currently honors only the unrestricted helpful-aura candidate
+      -- set for hostile nameplates. Keep the trigger fixed to that supported
+      -- mode now that its redundant Trigger tab is no longer exposed. Retain
+      -- legacy category selections so saved data remains forward-compatible.
+      trigger.nameplateAllBuffs = true
       trigger.nameplateStealable = trigger.nameplateStealable == true
       trigger.nameplateMagic = trigger.nameplateMagic == true
       trigger.nameplateBossAura = trigger.nameplateBossAura == true
@@ -253,12 +247,6 @@ local function ApplyTriggerTypeDefaults(trigger)
       trigger.nameplateRoleAura = nil
       trigger.nameplateShowAll = nil
       trigger.nameplateShowPersonal = nil
-      if trigger.nameplateAllBuffs then
-        trigger.nameplateStealable = false
-        trigger.nameplateMagic = false
-        trigger.nameplateBossAura = false
-        trigger.nameplatePriorityAura = false
-      end
       local maxAuras = math.floor(tonumber(trigger.nameplateMaxAuras or 3) or 3)
       trigger.nameplateMaxAuras = math.max(1, math.min(maxAuras, 8))
     end
@@ -271,9 +259,6 @@ local function ApplyTriggerTypeDefaults(trigger)
     trigger.manualCooldown = tonumber(trigger.manualCooldown or 0) or 0
     if trigger.showChargeCooldown == nil then
       trigger.showChargeCooldown = true
-    end
-    if trigger.showAuraWindow == nil then
-      trigger.showAuraWindow = false
     end
   elseif triggerType == "item_cooldown" then
     trigger.itemId = tonumber(trigger.itemId or 0) or 0
@@ -593,7 +578,6 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].showAlways = false
       aura.triggers[1].manualCooldown = 0
       aura.triggers[1].showChargeCooldown = true
-      aura.triggers[1].showAuraWindow = false
     elseif triggerType == "item_cooldown" then
       aura.triggers[1].itemId = 0
       aura.triggers[1].cooldownMatch = "cooldown"

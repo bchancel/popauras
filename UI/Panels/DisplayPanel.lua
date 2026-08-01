@@ -533,7 +533,7 @@ end
 
 local function CreateTwoColumnTextSection(parent, topY, prefix, includeAlternateName)
   local section = {}
-  section.showCheck = Frames.CreateCheckbox(parent, "Show " .. prefix)
+  section.showCheck = Frames.CreateLabeledToggle(parent, "Show " .. prefix)
   section.showCheck:SetPoint("TOPLEFT", 12, topY)
 
   section.fontWrap = CreateLabeledDropdown(parent, "Font", 12, topY - 32, 180, fontStyleValues)
@@ -715,10 +715,11 @@ function Panel:UpdateControlStates()
   local showTimer = frame.timerControls.showCheck:GetChecked() == true
   local showStacks = frame.stacksControls.showCheck:GetChecked() == true
   local showBackground = frame.showBackgroundCheck:GetChecked() == true
-  local readyLook = frame.readyLookCheck:GetChecked() == true
+  local readyStateEnabled = frame.showAlwaysReadyCheck:GetChecked() == true
   local trigger = GetSelectedTrigger(aura)
   local supportsNoStacksColor = trigger and trigger.type == "spell_cooldown" and kind == "bar"
   local supportsActiveGlowStyle = trigger and trigger.type == "spell_cooldown" and kind == "bar"
+  local supportsChargeCooldown = trigger and trigger.type == "spell_cooldown" and not isGroup and not isText
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura")
   local showIconCooldownControls = not isGroup and not isText and isIconAura and frame.iconSection.collapsed ~= true
   local showRaidFrameSection = not isGroup and not isText and isIconAura and frame.raidFrameSection:IsShown()
@@ -730,7 +731,6 @@ function Panel:UpdateControlStates()
 
   SetControlGroupEnabled({
     frame.barColorWrap.button, frame.barColorWrap.label,
-    frame.readyLookCheck,
     frame.showAlwaysReadyCheck,
     frame.readyColorWrap.button, frame.readyColorWrap.label,
     frame.barTextureWrap.dropdown, frame.barTextureWrap.label,
@@ -738,10 +738,12 @@ function Panel:UpdateControlStates()
   SetControlGroupEnabled({ frame.glowWhenActiveCheck }, not isGroup and not isText and not isAuraBarList and not supportsActiveGlowStyle)
   SetControlGroupEnabled({ frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown }, supportsActiveGlowStyle)
   SetControlGroupEnabled({ frame.showBackgroundCheck }, true)
-  SetControlGroupEnabled({ frame.readyColorWrap.button, frame.readyColorWrap.label }, not isGroup and not isText and readyLook)
+  SetControlGroupEnabled({ frame.readyColorWrap.button, frame.readyColorWrap.label },
+    not isGroup and not isText and readyStateEnabled)
   SetControlGroupEnabled({ frame.noStacksBarColorCheck }, supportsNoStacksColor)
   SetControlGroupEnabled({ frame.noStacksBarColorWrap.button, frame.noStacksBarColorWrap.label },
     supportsNoStacksColor and frame.noStacksBarColorCheck:GetChecked() == true)
+  SetControlGroupEnabled({ frame.chargeCooldownCheck }, supportsChargeCooldown)
   SetControlGroupEnabled({ frame.showAlwaysReadyCheck }, not isGroup and not isText and supportsShowAlways)
   SetControlGroupEnabled({ frame.backgroundColorWrap.button, frame.backgroundColorWrap.label }, showBackground)
   SetControlGroupEnabled({ frame.backgroundGammaWrap.input, frame.backgroundGammaWrap.label }, showBackground and isAuraBarList)
@@ -841,6 +843,114 @@ function Panel:UpdateControlStates()
     frame.blizzardSpellAlertWrap.label,
     frame.blizzardSpellAlertHint,
   }, blizzardSpellAlertEnabled and not isGroup)
+
+  -- Feature toggles are the only controls left visible while their feature is
+  -- off. This keeps each submenu useful without presenting inactive fields.
+  SetControlGroupShown({
+    frame.backgroundColorWrap.button, frame.backgroundColorWrap.label, frame.backgroundColorWrap.valueText,
+  }, showBackground)
+  SetControlGroupShown({
+    frame.backgroundGammaWrap.input, frame.backgroundGammaWrap.label,
+  }, showBackground and isAuraBarList)
+  SetControlGroupShown({
+    frame.noStacksBarColorWrap.button, frame.noStacksBarColorWrap.label, frame.noStacksBarColorWrap.valueText,
+  }, supportsNoStacksColor and frame.noStacksBarColorCheck:GetChecked() == true)
+  SetControlGroupShown({
+    frame.readyColorWrap.button, frame.readyColorWrap.label, frame.readyColorWrap.valueText,
+  }, readyStateEnabled and supportsShowAlways and not isGroup and not isText and not isNameplateAura)
+
+  SetControlGroupShown({ frame.iconMatchSizeCheck }, showIcon and not isIconAura)
+  SetControlGroupShown({
+    frame.iconEdgeCheck, frame.iconFinishFlashCheck,
+    frame.iconSwipeColorWrap.button, frame.iconSwipeColorWrap.label, frame.iconSwipeColorWrap.valueText,
+  }, showIcon and isIconAura)
+  SetControlGroupShown({
+    frame.altIconIdWrap.input, frame.altIconIdWrap.label,
+  }, showIcon and not isAuraBarList and not isGroup and not isText and not isNameplateAura)
+  SetControlGroupShown({
+    frame.iconSizeWrap.input, frame.iconSizeWrap.label,
+    frame.iconAnchorWrap.dropdown, frame.iconAnchorWrap.label,
+    frame.iconXWrap.input, frame.iconXWrap.label,
+    frame.iconYWrap.input, frame.iconYWrap.label,
+  }, showIcon and not isNameplateAura)
+  SetControlGroupShown({ frame.iconHint }, showIcon and not isAuraBarList and not isGroup and not isText)
+
+  SetControlGroupShown({
+    frame.nameControls.fontWrap.dropdown, frame.nameControls.fontWrap.label,
+    frame.nameControls.sizeWrap.input, frame.nameControls.sizeWrap.label,
+    frame.nameControls.rotationWrap.dropdown, frame.nameControls.rotationWrap.label,
+    frame.nameControls.anchorWrap.dropdown, frame.nameControls.anchorWrap.label,
+    frame.nameControls.xWrap.input, frame.nameControls.xWrap.label,
+    frame.nameControls.yWrap.input, frame.nameControls.yWrap.label,
+    frame.nameControls.colorWrap.button, frame.nameControls.colorWrap.label, frame.nameControls.colorWrap.valueText,
+  }, showName and not isGroup)
+  SetControlGroupShown({
+    frame.nameControls.altNameWrap.input, frame.nameControls.altNameWrap.label,
+  }, showName and not isAuraBarList and not isNameplateAura)
+
+  SetControlGroupShown({
+    frame.timerControls.fontWrap.dropdown, frame.timerControls.fontWrap.label,
+    frame.timerControls.sizeWrap.input, frame.timerControls.sizeWrap.label,
+    frame.timerControls.rotationWrap.dropdown, frame.timerControls.rotationWrap.label,
+    frame.timerControls.anchorWrap.dropdown, frame.timerControls.anchorWrap.label,
+    frame.timerControls.xWrap.input, frame.timerControls.xWrap.label,
+    frame.timerControls.yWrap.input, frame.timerControls.yWrap.label,
+    frame.timerControls.colorWrap.button, frame.timerControls.colorWrap.label, frame.timerControls.colorWrap.valueText,
+    frame.timerControls.decimalsWrap.dropdown, frame.timerControls.decimalsWrap.label,
+  }, showTimer and not isGroup and not isText)
+  SetControlGroupShown({ frame.timerControls.hideReadyCheck },
+    showTimer and not isAuraBarList and not isNameplateAura)
+
+  SetControlGroupShown({
+    frame.stacksControls.fontWrap.dropdown, frame.stacksControls.fontWrap.label,
+    frame.stacksControls.sizeWrap.input, frame.stacksControls.sizeWrap.label,
+    frame.stacksControls.rotationWrap.dropdown, frame.stacksControls.rotationWrap.label,
+    frame.stacksControls.anchorWrap.dropdown, frame.stacksControls.anchorWrap.label,
+    frame.stacksControls.xWrap.input, frame.stacksControls.xWrap.label,
+    frame.stacksControls.yWrap.input, frame.stacksControls.yWrap.label,
+    frame.stacksControls.colorWrap.button, frame.stacksControls.colorWrap.label, frame.stacksControls.colorWrap.valueText,
+  }, showStacks and not isGroup and not isText)
+
+  SetControlGroupShown({
+    frame.soundReadyCheck,
+    frame.soundChannelWrap.dropdown, frame.soundChannelWrap.label,
+    frame.soundHint,
+  }, showSoundBody and soundEnabled)
+  SetControlGroupShown({
+    frame.soundFileButton, frame.soundFileWrap.label,
+  }, showSoundBody and soundEnabled and not dualTrinketSounds)
+  SetControlGroupShown({
+    frame.trinketTopSoundFileButton, frame.trinketTopSoundFileWrap.label,
+    frame.trinketBottomSoundFileButton, frame.trinketBottomSoundFileWrap.label,
+  }, showSoundBody and soundEnabled and dualTrinketSounds)
+  SetControlGroupShown({
+    frame.blizzardSpellAlertWrap.input, frame.blizzardSpellAlertWrap.label, frame.blizzardSpellAlertHint,
+  }, blizzardSpellAlertEnabled and not isGroup)
+
+  local showRaidFrameBody = showRaidFrameControls
+  SetControlGroupShown({
+    frame.raidFrameGlowCheck, frame.raidFrameDurationCheck, frame.raidFrameStacksCheck,
+    frame.raidFrameSizeWrap.input, frame.raidFrameSizeWrap.label,
+    frame.raidFrameAnchorWrap.dropdown, frame.raidFrameAnchorWrap.label,
+    frame.raidFrameGrowthWrap.dropdown, frame.raidFrameGrowthWrap.label,
+    frame.raidFrameXWrap.input, frame.raidFrameXWrap.label,
+    frame.raidFrameYWrap.input, frame.raidFrameYWrap.label,
+    frame.raidFrameHint,
+  }, showRaidFrameBody)
+
+  if frame.reverseCheck.Text then
+    frame.reverseCheck.Text:SetText(frame.reverseCheck:GetChecked() and "Fill" or "Drain")
+  end
+
+  frame.iconSection:SetHeight(showIcon and (isNameplateAura and 180 or 270) or 70)
+  frame.nameSection:SetHeight(showName and 290 or 70)
+  frame.timerSection:SetHeight(showTimer and 260 or 70)
+  frame.stacksSection:SetHeight(showStacks and 220 or 70)
+  frame.soundSection:SetHeight(soundEnabled and (dualTrinketSounds and 226 or 164) or 70)
+  frame.blizzardSection:SetHeight(blizzardSpellAlertEnabled and 176 or 70)
+  frame.raidFrameSection:SetHeight(showRaidFrameBody and 236 or 70)
+  self:LayoutSections()
+
   if not soundEnabled or isGroup or isAuraBarList then
     HideAllSoundPickers(frame)
   elseif dualTrinketSounds and SoundPicker then
@@ -906,7 +1016,16 @@ function Panel:ApplyCurrent()
   aura.display.noStacksBarColor = Colors.Copy(frame.noStacksBarColorWrap.color
     or aura.display.noStacksBarColor or { r = 0.86, g = 0.18, b = 0.18, a = 1 })
   local trigger = GetSelectedTrigger(aura)
-  aura.display.readyLook = frame.readyLookCheck:GetChecked() == true
+  if isNameplateAura then
+    local maxAuras = CommitInteger(frame.nameplateMaxAurasWrap.input, trigger.nameplateMaxAuras or 3)
+    trigger.nameplateMaxAuras = math.max(1, math.min(maxAuras, 8))
+    frame.nameplateMaxAurasWrap.input:SetText(tostring(trigger.nameplateMaxAuras))
+  end
+  if trigger.type == "spell_cooldown" then
+    trigger.showChargeCooldown = frame.chargeCooldownCheck:GetChecked() == true
+  end
+  local readyStateEnabled = frame.showAlwaysReadyCheck:GetChecked() == true
+  aura.display.readyLook = readyStateEnabled
   if trigger.type == "spell_cooldown" and aura.kind == "bar" then
     local style = UIDropDownMenu_GetSelectedValue(frame.activeGlowStyleWrap.dropdown) or aura.display.activeGlowStyle or "NONE"
     aura.display.activeGlowStyle = style
@@ -915,7 +1034,7 @@ function Panel:ApplyCurrent()
     aura.display.glowWhenActive = frame.glowWhenActiveCheck:GetChecked() == true
   end
   if trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura") then
-    trigger.showAlways = frame.showAlwaysReadyCheck:GetChecked() == true
+    trigger.showAlways = readyStateEnabled
   end
   aura.display.readyColor = Colors.Copy(frame.readyColorWrap.color or aura.display.readyColor or aura.display.color)
   local selectedBarTexture = UIDropDownMenu_GetSelectedValue(frame.barTextureWrap.dropdown) or aura.display.barTexture or "FLAT"
@@ -1129,16 +1248,14 @@ function Panel:Create(parent)
   frame.levelWrap = CreateLabeledInput(frame.canvasSection, "Level", 200, -212, 58)
 
   frame.barColorWrap = CreateColorSwatch(frame.canvasSection, "Bar Color", 12, -284)
-  frame.readyLookCheck = Frames.CreateCheckbox(frame.canvasSection, "Style Ready State")
-  frame.readyLookCheck:SetPoint("TOPLEFT", 12, -336)
   frame.glowWhenActiveCheck = Frames.CreateCheckbox(frame.canvasSection, "Glow When Active")
-  frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 180, -336)
-  frame.activeGlowStyleWrap = CreateLabeledDropdown(frame.canvasSection, "Glow When Active", 180, -324, 155, activeGlowStyleValues)
-  frame.showAlwaysReadyCheck = Frames.CreateCheckbox(frame.canvasSection, "Show While Ready")
-  frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 360, -336)
-  frame.readyColorWrap = CreateColorSwatch(frame.canvasSection, "Ready Color", 220, -284)
+  frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 400, -336)
+  frame.activeGlowStyleWrap = CreateLabeledDropdown(frame.canvasSection, "Glow When Active", 400, -324, 155, activeGlowStyleValues)
+  frame.showAlwaysReadyCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Show While Ready")
+  frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 12, -336)
+  frame.readyColorWrap = CreateColorSwatch(frame.canvasSection, "Ready Color", 220, -336)
   frame.barTextureWrap = CreateLabeledDropdown(frame.canvasSection, "Bar Texture", 430, -276, 166, barTextureValues)
-  frame.showBackgroundCheck = Frames.CreateCheckbox(frame.canvasSection, "Show Background")
+  frame.showBackgroundCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Show Background")
   frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -364)
   frame.backgroundColorWrap = CreateColorSwatch(frame.canvasSection, "Background", 220, -364)
   frame.backgroundColorWrap.button:ClearAllPoints()
@@ -1150,9 +1267,12 @@ function Panel:Create(parent)
   frame.auraListSwipeCheck = Frames.CreateCheckbox(
     frame.canvasSection, "Show Cooldown Swipe")
   frame.auraListSwipeCheck:SetPoint("TOPLEFT", 12, -412)
-  frame.noStacksBarColorCheck = Frames.CreateCheckbox(frame.canvasSection, "No Stacks Bar Color")
+  frame.noStacksBarColorCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Out-of-Stacks Color")
   frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -412)
   frame.noStacksBarColorWrap = CreateColorSwatch(frame.canvasSection, "Color", 220, -404)
+  frame.chargeCooldownCheck = Frames.CreateLabeledToggle(
+    frame.canvasSection, "Show cooldown while charges remain")
+  frame.chargeCooldownCheck:SetPoint("TOPLEFT", 12, -448)
   frame.barColorWrap.button:SetScript("OnClick", function()
     local widget = frame.barColorWrap
     local starting = widget.color or { r = 0.1, g = 0.6, b = 1, a = 1 }
@@ -1257,11 +1377,11 @@ function Panel:Create(parent)
   frame.groupHint:SetPoint("TOPLEFT", 12, -94)
   frame.groupHint:SetWidth(780)
 
-  frame.showIconCheck = Frames.CreateCheckbox(frame.iconSection, "Show Icon")
+  frame.showIconCheck = Frames.CreateLabeledToggle(frame.iconSection, "Show Icon")
   frame.showIconCheck:SetPoint("TOPLEFT", 12, -34)
-  frame.reverseCheck = Frames.CreateCheckbox(frame.canvasSection, "Drain / Reverse Fill")
-  frame.reverseCheck:SetPoint("TOPLEFT", 540, -336)
-  frame.hideCDMIconCheck = Frames.CreateCheckbox(frame.iconSection, "Hide CDM Icon")
+  frame.reverseCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Drain")
+  frame.reverseCheck:SetPoint("TOPLEFT", 600, -336)
+  frame.hideCDMIconCheck = Frames.CreateLabeledToggle(frame.iconSection, "Hide CDM Icon")
   frame.hideCDMIconCheck:SetPoint("TOPLEFT", 330, -34)
   frame.iconMatchSizeCheck = Frames.CreateCheckbox(frame.iconSection, "Match Bar Size")
   frame.iconMatchSizeCheck:SetPoint("TOPLEFT", 12, -64)
@@ -1279,7 +1399,7 @@ function Panel:Create(parent)
   frame.iconHint:SetPoint("TOPLEFT", 12, -196)
   frame.iconHint:SetWidth(660)
 
-  frame.showOnRaidFramesCheck = Frames.CreateCheckbox(frame.raidFrameSection, "Show on Raid Frames")
+  frame.showOnRaidFramesCheck = Frames.CreateLabeledToggle(frame.raidFrameSection, "Show on Raid Frames")
   frame.showOnRaidFramesCheck:SetPoint("TOPLEFT", 12, -34)
   frame.raidFrameGlowCheck = Frames.CreateCheckbox(frame.raidFrameSection, "Glow")
   frame.raidFrameGlowCheck:SetPoint("TOPLEFT", 200, -34)
@@ -1296,7 +1416,7 @@ function Panel:Create(parent)
   frame.raidFrameHint:SetPoint("TOPLEFT", 12, -204)
   frame.raidFrameHint:SetWidth(660)
 
-  frame.soundEnabledCheck = Frames.CreateCheckbox(frame.soundSection, "Play Aura Sound")
+  frame.soundEnabledCheck = Frames.CreateLabeledToggle(frame.soundSection, "Play Aura Sound")
   frame.soundEnabledCheck:SetPoint("TOPLEFT", 12, -34)
   frame.soundReadyCheck = Frames.CreateCheckbox(frame.soundSection, "Play On Ready")
   frame.soundReadyCheck:SetPoint("LEFT", frame.soundEnabledCheck.Text, "RIGHT", 28, 0)
@@ -1362,7 +1482,7 @@ function Panel:Create(parent)
   frame.soundHint:SetPoint("TOPLEFT", 12, -146)
   frame.soundHint:SetWidth(720)
 
-  frame.hideBlizzardSpellAlertCheck = Frames.CreateCheckbox(frame.blizzardSection, "Hide Blizzard Spell Alert")
+  frame.hideBlizzardSpellAlertCheck = Frames.CreateLabeledToggle(frame.blizzardSection, "Hide Blizzard Spell Alert")
   frame.hideBlizzardSpellAlertCheck:SetPoint("TOPLEFT", 12, -34)
   frame.blizzardSpellAlertWrap = CreateLabeledInput(frame.blizzardSection, "Spell Name or ID", 12, -70, 280)
   frame.blizzardSpellAlertHint = Frames.CreateLabel(frame.blizzardSection, "", "GameFontDisableSmall")
@@ -1373,6 +1493,7 @@ function Panel:Create(parent)
   frame.nameControls = CreateTwoColumnTextSection(frame.nameSection, -34, "Name", true)
   frame.timerControls = CreateTwoColumnTextSection(frame.timerSection, -34, "Duration")
   frame.stacksControls = CreateTwoColumnTextSection(frame.stacksSection, -34, "Stack Count")
+  frame.nameplateMaxAurasWrap = CreateLabeledInput(frame.canvasSection, "Maximum Icons per Nameplate", 310, -150, 72)
   frame.timerControls.decimalsWrap = CreateLabeledDropdown(frame.timerSection, "Decimals", 150, -190, 120, { "0", "1", "2" })
   frame.timerControls.hideReadyCheck = Frames.CreateCheckbox(frame.timerSection, "Hide While Ready")
   frame.timerControls.hideReadyCheck:SetPoint("TOPLEFT", 310, -218)
@@ -1388,12 +1509,13 @@ function Panel:Create(parent)
     frame.parentPointWrap.label, frame.parentPointWrap.dropdown,
     frame.anchorWrap.label, frame.anchorWrap.dropdown,
     frame.nameplateAnchorWrap.label, frame.nameplateAnchorWrap.dropdown,
+    frame.nameplateMaxAurasWrap.label, frame.nameplateMaxAurasWrap.input,
     frame.strataWrap.label, frame.strataWrap.dropdown,
     frame.levelWrap.label, frame.levelWrap.input,
     frame.barColorWrap.label, frame.barColorWrap.button, frame.barColorWrap.valueText,
     frame.noStacksBarColorCheck,
     frame.noStacksBarColorWrap.label, frame.noStacksBarColorWrap.button, frame.noStacksBarColorWrap.valueText,
-    frame.readyLookCheck,
+    frame.chargeCooldownCheck,
     frame.glowWhenActiveCheck,
     frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown,
     frame.showAlwaysReadyCheck,
@@ -1504,6 +1626,7 @@ function Panel:Create(parent)
   ConfigureNumericInput(frame.raidFrameYWrap.input, 10)
   ConfigureNumericInput(frame.backgroundGammaWrap.input, 5)
   ConfigureNumericInput(frame.permanentAlphaWrap.input, 5)
+  ConfigureNumericInput(frame.nameplateMaxAurasWrap.input, 1)
   frame.nameControls.altNameWrap.input:SetMaxLetters(64)
   ConfigureNumericInput(frame.nameControls.sizeWrap.input, 3)
   ConfigureNumericInput(frame.nameControls.xWrap.input, 10)
@@ -1537,6 +1660,7 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.levelWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.backgroundGammaWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.permanentAlphaWrap.input, function() Panel:ApplyCurrent() end)
+  self:WireLiveInput(frame.nameplateMaxAurasWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.blizzardSpellAlertWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.groupSpacingWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.iconSizeWrap.input, function() Panel:ApplyCurrent() end)
@@ -1571,8 +1695,8 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.showBackgroundCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.auraListSwipeCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupShowBackgroundCheck, function() Panel:ApplyCurrent() end)
-  self:WireLiveCheckbox(frame.readyLookCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.noStacksBarColorCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.chargeCooldownCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.glowWhenActiveCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showAlwaysReadyCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.groupMaintainOrderCheck, function() Panel:ApplyCurrent() end)
@@ -1711,17 +1835,15 @@ function Panel:ApplyCanvasLayout(isGroup, isNameplateAura)
   PositionLabeledInput(frame.levelWrap, 200, -212)
 
   PositionColorSwatch(frame.barColorWrap, 12, -284)
-  PositionColorSwatch(frame.readyColorWrap, 220, -284)
   PositionLabeledDropdown(frame.barTextureWrap, 430, -276)
-  frame.readyLookCheck:ClearAllPoints()
-  frame.readyLookCheck:SetPoint("TOPLEFT", 12, -336)
+  PositionColorSwatch(frame.readyColorWrap, 220, -336)
   frame.glowWhenActiveCheck:ClearAllPoints()
-  frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 180, -336)
-  PositionLabeledDropdown(frame.activeGlowStyleWrap, 180, -324)
+  frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 400, -336)
+  PositionLabeledDropdown(frame.activeGlowStyleWrap, 400, -324)
   frame.showAlwaysReadyCheck:ClearAllPoints()
-  frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 360, -336)
+  frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 12, -336)
   frame.reverseCheck:ClearAllPoints()
-  frame.reverseCheck:SetPoint("TOPLEFT", 540, -336)
+  frame.reverseCheck:SetPoint("TOPLEFT", 600, -336)
 
   frame.showBackgroundCheck:ClearAllPoints()
   frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -364)
@@ -1733,6 +1855,8 @@ function Panel:ApplyCanvasLayout(isGroup, isNameplateAura)
   frame.noStacksBarColorCheck:ClearAllPoints()
   frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -412)
   PositionColorSwatch(frame.noStacksBarColorWrap, 220, -404)
+  frame.chargeCooldownCheck:ClearAllPoints()
+  frame.chargeCooldownCheck:SetPoint("TOPLEFT", 12, -448)
 end
 
 function Panel:ApplyIconLayout(isNameplateAura)
@@ -1828,10 +1952,12 @@ function Panel:SetActiveSection(key)
   local changed = self.frame.activeSectionKey ~= activeEntry.key
   self.frame.activeSectionKey = activeEntry.key
   for _, entry in ipairs(self.frame.sectionEntries) do
-    local isActive = entry == activeEntry
+    local isEmbeddedLayout = self.frame.embedLayoutInLook == true
+      and activeEntry.key == "canvas" and entry.key == "group"
+    local isActive = entry == activeEntry or isEmbeddedLayout
     entry.section.collapsed = not isActive
     entry.section:SetShown(isActive)
-    Theme.StyleTab(self.frame.sectionTabs[entry.key], isActive)
+    Theme.StyleTab(self.frame.sectionTabs[entry.key], entry == activeEntry)
   end
 
   self:LayoutSectionTabs()
@@ -1896,21 +2022,11 @@ function Panel:Refresh(aura)
   self.frame.noStacksBarColorCheck:SetChecked(aura.display.noStacksBarColorEnabled == true)
   SetColorSwatch(self.frame.noStacksBarColorWrap,
     aura.display.noStacksBarColor or { r = 0.86, g = 0.18, b = 0.18, a = 1 })
-  self.frame.readyLookCheck:SetChecked(aura.display.readyLook == true)
+  self.frame.chargeCooldownCheck:SetChecked(trigger.showChargeCooldown ~= false)
   self.frame.glowWhenActiveCheck:SetChecked(aura.display.glowWhenActive == true)
   SetDropdown(self.frame.activeGlowStyleWrap.dropdown, aura.display.activeGlowStyle or "NONE")
-  self.frame.showAlwaysReadyCheck:SetChecked(trigger.showAlways == true)
-  if self.frame.readyLookCheck.Text then
-    if trigger.type == "aura" then
-      if trigger.auraFilter == "missing" then
-        self.frame.readyLookCheck.Text:SetText("Style Present State")
-      else
-        self.frame.readyLookCheck.Text:SetText("Style Missing State")
-      end
-    else
-      self.frame.readyLookCheck.Text:SetText("Style Ready State")
-    end
-  end
+  self.frame.showAlwaysReadyCheck:SetChecked(
+    trigger.showAlways == true or aura.display.readyLook == true)
   if self.frame.showAlwaysReadyCheck.Text then
     if trigger.type == "aura" then
       if trigger.auraFilter == "missing" then
@@ -1920,6 +2036,9 @@ function Panel:Refresh(aura)
         self.frame.showAlwaysReadyCheck.Text:SetText("Show While Missing")
         self.frame.readyColorWrap.label:SetText("Missing Color")
       end
+    elseif trigger.cooldownMatch == "ready" then
+      self.frame.showAlwaysReadyCheck.Text:SetText("Use Ready Appearance")
+      self.frame.readyColorWrap.label:SetText("Ready Color")
     else
       self.frame.showAlwaysReadyCheck.Text:SetText("Show While Ready")
       self.frame.readyColorWrap.label:SetText("Ready Color")
@@ -1934,6 +2053,8 @@ function Panel:Refresh(aura)
   SetColorSwatch(self.frame.backgroundColorWrap, aura.display.backgroundColor or { r = 0, g = 0, b = 0, a = 0.45 })
   self.frame.backgroundGammaWrap.input:SetText(tostring(aura.display.backgroundGamma or 1))
   self.frame.permanentAlphaWrap.input:SetText(string.format("%.2f", tonumber(aura.display.permanentAlpha or 0.25) or 0.25))
+  self.frame.nameplateMaxAurasWrap.input:SetText(
+    isNameplateAura and tostring(trigger.nameplateMaxAuras or 3) or "")
   self.frame.auraListSwipeCheck:SetChecked(aura.display.swipe == true)
 
   self.frame.groupSpacingWrap.input:SetText(tostring(aura.display.spacing or GetDefaultLayoutSpacing(aura)))
@@ -2022,7 +2143,8 @@ function Panel:Refresh(aura)
   SetColorSwatch(self.frame.stacksControls.colorWrap, aura.display.stacksColor or { r = 1, g = 1, b = 1, a = 1 })
 
   self.frame.canvasSection._popAurasAvailable = true
-  self.frame.groupSection._popAurasAvailable = usesLayoutSection
+  self.frame.embedLayoutInLook = isAuraBarList
+  self.frame.groupSection._popAurasAvailable = usesLayoutSection and not isAuraBarList
   self.frame.iconSection._popAurasAvailable = not isGroup and not isText
   self.frame.raidFrameSection._popAurasAvailable = false
   self.frame.nameSection._popAurasAvailable = not isGroup
@@ -2059,6 +2181,8 @@ function Panel:Refresh(aura)
   self.frame.parentPointWrap.dropdown:SetShown(not isNameplateAura)
   self.frame.nameplateAnchorWrap.label:SetShown(isNameplateAura)
   self.frame.nameplateAnchorWrap.dropdown:SetShown(isNameplateAura)
+  self.frame.nameplateMaxAurasWrap.label:SetShown(isNameplateAura)
+  self.frame.nameplateMaxAurasWrap.input:SetShown(isNameplateAura)
   self.frame.strataWrap.label:SetShown(true)
   self.frame.strataWrap.dropdown:SetShown(true)
   self.frame.levelWrap.label:SetShown(true)
@@ -2071,7 +2195,8 @@ function Panel:Refresh(aura)
   self.frame.noStacksBarColorWrap.label:SetShown(showNoStacksColor)
   self.frame.noStacksBarColorWrap.button:SetShown(showNoStacksColor)
   self.frame.noStacksBarColorWrap.valueText:SetShown(showNoStacksColor)
-  self.frame.readyLookCheck:SetShown(not isGroup and not isText and not isNameplateAura)
+  self.frame.chargeCooldownCheck:SetShown(
+    trigger.type == "spell_cooldown" and not isGroup and not isText and not isNameplateAura)
   local showActiveGlowStyle = trigger.type == "spell_cooldown" and aura.kind == "bar"
   self.frame.glowWhenActiveCheck:SetShown(not isGroup and not isText and not isAuraBarList
     and not isNameplateAura and not showActiveGlowStyle)
@@ -2079,9 +2204,11 @@ function Panel:Refresh(aura)
   self.frame.activeGlowStyleWrap.dropdown:SetShown(showActiveGlowStyle)
   self.frame.showAlwaysReadyCheck:SetShown(not isGroup and not isText and supportsShowAlways)
   self.frame.reverseCheck:SetShown(not isGroup and not isText)
-  self.frame.readyColorWrap.label:SetShown(not isGroup and not isText and not isNameplateAura)
-  self.frame.readyColorWrap.button:SetShown(not isGroup and not isText and not isNameplateAura)
-  self.frame.readyColorWrap.valueText:SetShown(not isGroup and not isText and not isNameplateAura)
+  local showReadyStateOptions = self.frame.showAlwaysReadyCheck:GetChecked() == true
+    and supportsShowAlways and not isGroup and not isText and not isNameplateAura
+  self.frame.readyColorWrap.label:SetShown(showReadyStateOptions)
+  self.frame.readyColorWrap.button:SetShown(showReadyStateOptions)
+  self.frame.readyColorWrap.valueText:SetShown(showReadyStateOptions)
   self.frame.barTextureWrap.label:SetShown(not isGroup and not isText and not isNameplateAura)
   self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText and not isNameplateAura)
   self.frame.showBackgroundCheck:SetShown(true)
@@ -2133,6 +2260,18 @@ function Panel:Refresh(aura)
   self.frame.groupMaintainOrderCheck:SetShown(isGroup)
   self.frame.groupSection.title:SetText(isAuraBarList and "List Layout"
     or isNameplateAura and "Nameplate Icon Layout" or "Group Layout")
+  self.frame.groupSection.header:SetShown(isAuraBarList)
+  self.frame.groupSection.bodyTop:SetShown(isAuraBarList)
+  if isAuraBarList then
+    Theme.StyleSurface(self.frame.groupSection.header, "transparent", "transparent")
+    self.frame.groupSection.title:SetText("LAYOUT")
+    Theme.SetText(self.frame.groupSection.title, "groupAccent")
+    Theme.SetTexture(self.frame.groupSection.bodyTop, "border")
+    self.frame.groupSection:SetHeight(162)
+  else
+    Theme.SetText(self.frame.groupSection.title, "text")
+    self.frame.groupSection:SetHeight(132)
+  end
   if isAuraBarList then
     self.frame.groupHint:SetText("Control the spacing and growth direction for the buff/debuff bar list.")
   elseif isNameplateAura then
@@ -2142,6 +2281,24 @@ function Panel:Refresh(aura)
   end
   self.frame.iconSection.title:SetText(isAuraBarList and "Row Icon" or "Icon")
   self.frame.blizzardSection.title:SetText("Blizzard UI")
+
+  for _, toggle in ipairs({
+    self.frame.showBackgroundCheck,
+    self.frame.noStacksBarColorCheck,
+    self.frame.chargeCooldownCheck,
+    self.frame.reverseCheck,
+    self.frame.showAlwaysReadyCheck,
+    self.frame.showIconCheck,
+    self.frame.hideCDMIconCheck,
+    self.frame.showOnRaidFramesCheck,
+    self.frame.nameControls.showCheck,
+    self.frame.timerControls.showCheck,
+    self.frame.stacksControls.showCheck,
+    self.frame.soundEnabledCheck,
+    self.frame.hideBlizzardSpellAlertCheck,
+  }) do
+    Theme.UpdateToggle(toggle)
+  end
 
   self:ApplyCanvasLayout(isGroup, isNameplateAura)
   self:SetActiveSection(self.frame.activeSectionKey or "canvas")

@@ -168,6 +168,116 @@ local function GetInstanceTypeLabel(current)
   return INSTANCE_TYPE_OPTIONS[1].label
 end
 
+local MAX_INSTANCE_ENCOUNTERS = 64
+
+local function GetCurrentInstanceInformation()
+  local inInstance, detectedType = IsInInstance()
+  inInstance = ns.SafeValues:Boolean(inInstance)
+  detectedType = ns.SafeValues:String(detectedType) or ""
+  if inInstance ~= true then
+    return {
+      inInstance = false,
+      instanceType = detectedType,
+      encounters = {},
+    }
+  end
+
+  local ok, instanceName, instanceType, _, difficultyName, _, _, _, instanceID = pcall(GetInstanceInfo)
+  if not ok then
+    return {
+      inInstance = true,
+      unavailable = true,
+      encounters = {},
+    }
+  end
+
+  instanceName = ns.SafeValues:String(instanceName) or "Unknown Instance"
+  instanceType = ns.SafeValues:String(instanceType) or detectedType
+  difficultyName = ns.SafeValues:String(difficultyName) or ""
+  instanceID = ns.SafeValues:Number(instanceID) or 0
+
+  local encounters = {}
+  local journalInstanceID
+  if instanceID > 0 and C_EncounterJournal and C_EncounterJournal.GetInstanceForGameMap then
+    local journalOK, resolvedJournalInstanceID = pcall(
+      C_EncounterJournal.GetInstanceForGameMap, instanceID)
+    journalInstanceID = journalOK and ns.SafeValues:Number(resolvedJournalInstanceID) or nil
+  end
+
+  if journalInstanceID and EJ_GetEncounterInfoByIndex then
+    for index = 1, MAX_INSTANCE_ENCOUNTERS do
+      local encounterOK, encounterName, _, journalEncounterID =
+        pcall(EJ_GetEncounterInfoByIndex, index, journalInstanceID)
+      encounterName = encounterOK and ns.SafeValues:String(encounterName) or nil
+      journalEncounterID = encounterOK and ns.SafeValues:Number(journalEncounterID) or nil
+      if not encounterName or not journalEncounterID then
+        break
+      end
+      local dungeonEncounterID
+      if EJ_GetEncounterInfo then
+        local detailOK, _, _, _, _, _, _, resolvedDungeonEncounterID =
+          pcall(EJ_GetEncounterInfo, journalEncounterID)
+        dungeonEncounterID = detailOK
+          and ns.SafeValues:Number(resolvedDungeonEncounterID) or nil
+      end
+      encounters[#encounters + 1] = {
+        name = encounterName,
+        encounterID = dungeonEncounterID,
+      }
+    end
+  end
+
+  return {
+    inInstance = true,
+    name = instanceName,
+    instanceType = instanceType,
+    difficultyName = difficultyName,
+    instanceID = instanceID,
+    journalInstanceID = journalInstanceID,
+    encounters = encounters,
+  }
+end
+
+local function BuildInstanceInformationText()
+  local info = GetCurrentInstanceInformation()
+  if info.inInstance ~= true then
+    return "|cffaaaaaaYou are not currently inside an instance.|r",
+      "|cffaaaaaaEncounter IDs will appear here inside a supported dungeon or raid.|r", 2
+  end
+  if info.unavailable then
+    return "|cffaaaaaaCurrent instance information is unavailable.|r",
+      "|cffaaaaaaEncounter IDs could not be resolved.|r", 2
+  end
+
+  local typeLabel = GetInstanceTypeLabel(info.instanceType)
+  if info.difficultyName ~= "" then
+    typeLabel = string.format("%s / %s", typeLabel, info.difficultyName)
+  end
+  local currentText = string.format(
+    "|cff88ff88Current Instance:|r %s\n|cff88ff88Instance ID:|r %d   |cff88ff88Type:|r %s",
+    info.name, info.instanceID, typeLabel)
+
+  local encounterLines = {}
+  if #info.encounters > 0 then
+    encounterLines[#encounterLines + 1] = "|cff88ff88Encounter IDs:|r"
+    for _, encounter in ipairs(info.encounters) do
+      if encounter.encounterID then
+        encounterLines[#encounterLines + 1] = string.format(
+          "%s: |cffffffff%d|r", encounter.name, encounter.encounterID)
+      else
+        encounterLines[#encounterLines + 1] = string.format(
+          "%s: |cffaaaaaaID unavailable|r", encounter.name)
+      end
+    end
+  elseif info.journalInstanceID then
+    encounterLines[1] = "|cffaaaaaaNo encounters are listed for this instance.|r"
+  else
+    encounterLines[1] = "|cffaaaaaaNo Encounter Journal mapping is available for this instance.|r"
+  end
+
+  return currentText, table.concat(encounterLines, "\n"), 2 + #encounterLines
+end
+
 local function NormalizeText(value)
   if Items and Items.NormalizeText then
     return Items.NormalizeText(value)
@@ -1357,6 +1467,17 @@ function Panel:ApplyCurrent()
   ns.runtime:RefreshAura(aura.id)
 end
 
+function Panel:RefreshInstanceInformation()
+  if not self.frame or not self.frame.instanceInfoRoot then
+    return
+  end
+
+  local currentText, encountersText, lineCount = BuildInstanceInformationText()
+  self.frame.instanceInfoCurrent:SetText(currentText)
+  self.frame.instanceInfoEncounters:SetText(encountersText)
+  self.frame.instanceInfoRoot:SetHeight(math.max(112, 44 + (lineCount * 16)))
+end
+
 function Panel:RefreshSpecSection(aura)
   local load = aura.load or {}
   load.classes = EnsureMap(load.classes)
@@ -1376,9 +1497,9 @@ function Panel:RefreshSpecSection(aura)
 
   self.frame.classHeader:ClearAllPoints()
   self.frame.classHeader:SetPoint("TOPLEFT", self.frame.combatDropDown, "BOTTOMLEFT", 14, -18)
-  self.frame.classHeader:SetText("Class Filter")
+  self.frame.classHeader.title:SetText("CLASS FILTER")
   self.frame.classToggle:ClearAllPoints()
-  self.frame.classToggle:SetPoint("LEFT", self.frame.classHeader, "RIGHT", 8, 0)
+  self.frame.classToggle:SetPoint("LEFT", self.frame.classHeader.title, "RIGHT", 8, 0)
   self.frame.classToggle:Show()
   SetCollapseButtonText(self.frame.classToggle, classCollapsed)
 
@@ -1409,7 +1530,7 @@ function Panel:RefreshSpecSection(aura)
         specIndex = specIndex + 1
         local check = self.frame.specChecks[specIndex]
         if not check then
-          check = Frames.CreateCheckbox(self.frame.content, "")
+          check = Frames.CreateCheckbox(self.frame.conditionsRoot, "")
           self.frame.specChecks[specIndex] = check
         end
         check:ClearAllPoints()
@@ -1579,8 +1700,11 @@ function Panel:RefreshTalentSection(aura, topAnchor)
   self.frame.equippedItemResolved:ClearAllPoints()
   self.frame.equippedItemResolved:SetPoint("TOPLEFT", self.frame.equippedItemInput, "BOTTOMLEFT", 0, -6)
 
+  self.frame.instanceInfoRoot:ClearAllPoints()
+  self.frame.instanceInfoRoot:SetPoint("TOPLEFT", self.frame.equippedItemResolved, "BOTTOMLEFT", 0, -24)
+
   self.frame.saveButton:ClearAllPoints()
-  self.frame.saveButton:SetPoint("TOPLEFT", self.frame.equippedItemResolved, "BOTTOMLEFT", 0, -18)
+  self.frame.saveButton:SetPoint("TOPLEFT", self.frame.instanceInfoRoot, "BOTTOMLEFT", 0, -18)
 
   local selectedSpecCount = 0
   for _, classToken in ipairs(CLASS_ORDER) do
@@ -1591,9 +1715,11 @@ function Panel:RefreshTalentSection(aura, topAnchor)
   local classHeight = classCollapsed and 0 or (math.ceil(#CLASS_ORDER / 2) * 24)
   local specHeight = classCollapsed and 0 or (selectedSpecCount * 24)
   local featureNoticeHeight = self.frame.featureDisabledNotice:IsShown() and 72 or 0
+  local instanceInfoHeight = self.frame.instanceInfoRoot:GetHeight() + 24
   self.frame.content:SetHeight(math.max(
-    980 + featureNoticeHeight,
-    640 + classHeight + specHeight + talentContentHeight + savedLoadoutContentHeight + featureNoticeHeight
+    980 + instanceInfoHeight + featureNoticeHeight,
+    640 + classHeight + specHeight + talentContentHeight + savedLoadoutContentHeight
+      + instanceInfoHeight + featureNoticeHeight
   ))
 end
 
@@ -1708,6 +1834,8 @@ function Panel:Create(parent)
   frame.content = CreateFrame("Frame", nil, frame.scroll)
   frame.content:SetSize(760, 900)
   frame.scroll:SetScrollChild(frame.content)
+  frame.conditionsRoot = CreateFrame("Frame", nil, frame.content)
+  frame.conditionsRoot:SetAllPoints(frame.content)
 
   frame.featureDisabledNotice = CreateFrame("Frame", nil, frame.content, "BackdropTemplate")
   frame.featureDisabledNotice:SetPoint("TOPLEFT", 16, -16)
@@ -1722,14 +1850,12 @@ function Panel:Create(parent)
   Theme.SetText(frame.featureDisabledNotice.text, "text")
   frame.featureDisabledNotice:Hide()
 
-  frame.alwaysHeader = Frames.CreateLabel(frame.content, "Always / Never", "GameFontNormal")
-  frame.alwaysHeader:SetPoint("TOPLEFT", 16, -20)
-  frame.enabledCheck = Frames.CreateCheckbox(frame.content, "Load this aura")
-  frame.enabledCheck:SetPoint("TOPLEFT", frame.alwaysHeader, "BOTTOMLEFT", 0, -8)
+  frame.enabledCheck = Frames.CreateLabeledToggle(frame.content, "Load Aura")
+  frame.enabledCheck:SetPoint("TOPLEFT", 16, -20)
 
-  frame.combatHeader = Frames.CreateLabel(frame.content, "Combat", "GameFontNormal")
+  frame.combatHeader = Frames.CreateSectionHeader(frame.conditionsRoot, "Combat", 700)
   frame.combatHeader:SetPoint("TOPLEFT", frame.enabledCheck, "BOTTOMLEFT", 0, -18)
-  frame.combatDropDown = Frames.CreateDropdown(frame.content, 180, function(self, level)
+  frame.combatDropDown = Frames.CreateDropdown(frame.conditionsRoot, 180, function(self, level)
     for _, value in ipairs({ "any", "in", "out" }) do
       local info = UIDropDownMenu_CreateInfo()
       info.text = CombatModeLabel(value)
@@ -1743,9 +1869,9 @@ function Panel:Create(parent)
   end)
   frame.combatDropDown:SetPoint("TOPLEFT", frame.combatHeader, "BOTTOMLEFT", -14, -4)
 
-  frame.classHeader = Frames.CreateLabel(frame.content, "By Class", "GameFontNormal")
+  frame.classHeader = Frames.CreateSectionHeader(frame.conditionsRoot, "Class Filter", 700)
   frame.classHeader:SetPoint("TOPLEFT", frame.combatDropDown, "BOTTOMLEFT", 14, -18)
-  frame.classToggle = Frames.CreateButton(frame.content, "v", 22, 20, function()
+  frame.classToggle = Frames.CreateButton(frame.conditionsRoot, "v", 22, 20, function()
     frame.collapsedSections.class = not frame.collapsedSections.class
     local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
     if aura then
@@ -1753,7 +1879,7 @@ function Panel:Create(parent)
     end
   end)
   Frames.StyleSecondaryButton(frame.classToggle)
-  frame.classSection = CreateFrame("Frame", nil, frame.content)
+  frame.classSection = CreateFrame("Frame", nil, frame.conditionsRoot)
   frame.classSection:SetPoint("TOPLEFT", frame.classHeader, "BOTTOMLEFT", 0, -8)
   frame.classSection:SetSize(520, 180)
   frame.classChecks = {}
@@ -1767,8 +1893,8 @@ function Panel:Create(parent)
     frame.classChecks[classToken] = check
   end
 
-  frame.specHeader = Frames.CreateLabel(frame.content, "", "GameFontNormal")
-  frame.specToggle = Frames.CreateButton(frame.content, "v", 22, 20, function()
+  frame.specHeader = Frames.CreateLabel(frame.conditionsRoot, "", "GameFontNormal")
+  frame.specToggle = Frames.CreateButton(frame.conditionsRoot, "v", 22, 20, function()
     frame.collapsedSections.spec = not frame.collapsedSections.spec
     local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
     if aura then
@@ -1779,24 +1905,24 @@ function Panel:Create(parent)
   frame.specToggle:Hide()
   frame.specChecks = {}
 
-  frame.talentHeader = Frames.CreateLabel(frame.content, "Talent Filter", "GameFontNormal")
-  frame.talentEnabledCheck = Frames.CreateCheckbox(frame.content, "Require Talents")
-  frame.talentHint = Frames.CreateLabel(frame.content, "", "GameFontHighlightSmall")
+  frame.talentHeader = Frames.CreateLabel(frame.conditionsRoot, "Talent Filter", "GameFontNormal")
+  frame.talentEnabledCheck = Frames.CreateLabeledToggle(frame.conditionsRoot, "Require Talents")
+  frame.talentHint = Frames.CreateLabel(frame.conditionsRoot, "", "GameFontHighlightSmall")
   frame.talentHint:SetWidth(700)
   frame.talentHint:SetJustifyH("LEFT")
-  frame.talentPickerButton = Frames.CreateButton(frame.content, "Choose Talents", 140, 22, function() end)
+  frame.talentPickerButton = Frames.CreateButton(frame.conditionsRoot, "Choose Talents", 140, 22, function() end)
   Frames.StyleSecondaryButton(frame.talentPickerButton)
   frame.talentPickerButton:Hide()
   frame.talentHeaders = {}
   frame.talentRows = {}
-  frame.savedLoadoutHeader = Frames.CreateLabel(frame.content, "Filter Layouts", "GameFontNormal")
-  frame.savedLoadoutModeLabel = Frames.CreateLabel(frame.content, "Mode", "GameFontNormal")
-  frame.savedLoadoutModeDropDown = Frames.CreateDropdown(frame.content, 190)
-  frame.savedLoadoutCaptureButton = Frames.CreateButton(frame.content, "Refresh Layouts", 160, 22, function() end)
+  frame.savedLoadoutHeader = Frames.CreateLabel(frame.conditionsRoot, "Talent Layouts", "GameFontNormal")
+  frame.savedLoadoutModeLabel = Frames.CreateLabel(frame.conditionsRoot, "Mode", "GameFontNormal")
+  frame.savedLoadoutModeDropDown = Frames.CreateDropdown(frame.conditionsRoot, 190)
+  frame.savedLoadoutCaptureButton = Frames.CreateButton(frame.conditionsRoot, "Refresh Layouts", 160, 22, function() end)
   Frames.StyleSecondaryButton(frame.savedLoadoutCaptureButton)
-  frame.savedLoadoutPickerButton = Frames.CreateButton(frame.content, "Choose Layouts", 160, 22, function() end)
+  frame.savedLoadoutPickerButton = Frames.CreateButton(frame.conditionsRoot, "Choose Layouts", 160, 22, function() end)
   Frames.StyleSecondaryButton(frame.savedLoadoutPickerButton)
-  frame.savedLoadoutHint = Frames.CreateLabel(frame.content, "", "GameFontHighlightSmall")
+  frame.savedLoadoutHint = Frames.CreateLabel(frame.conditionsRoot, "", "GameFontHighlightSmall")
   frame.savedLoadoutHint:SetWidth(700)
   frame.savedLoadoutHint:SetJustifyH("LEFT")
   frame.savedLoadoutHeader:Hide()
@@ -1806,8 +1932,8 @@ function Panel:Create(parent)
   frame.savedLoadoutPickerButton:Hide()
   frame.savedLoadoutHint:Hide()
 
-  frame.visibilityHeader = Frames.CreateLabel(frame.content, "Visibility", "GameFontNormal")
-  frame.visibilitySection = CreateFrame("Frame", nil, frame.content)
+  frame.visibilityHeader = Frames.CreateSectionHeader(frame.conditionsRoot, "Visibility", 700)
+  frame.visibilitySection = CreateFrame("Frame", nil, frame.conditionsRoot)
   frame.visibilitySection:SetSize(560, 80)
   frame.visibilityChecks = {}
   for _, entry in ipairs(VISIBILITY_OPTIONS) do
@@ -1893,14 +2019,14 @@ function Panel:Create(parent)
   frame.savedLoadoutModal.emptyText:SetJustifyH("LEFT")
   frame.savedLoadoutModal.savedLoadoutRows = {}
 
-  frame.levelLabel = Frames.CreateLabel(frame.content, "Minimum Level", "GameFontNormal")
+  frame.levelLabel = Frames.CreateLabel(frame.conditionsRoot, "Minimum Level", "GameFontNormal")
   frame.levelLabel:SetPoint("TOPLEFT", frame.classSection, "BOTTOMLEFT", 0, -24)
-  frame.levelInput = Frames.CreateInput(frame.content, 48, 24)
+  frame.levelInput = Frames.CreateInput(frame.conditionsRoot, 48, 24)
   frame.levelInput:SetPoint("TOPLEFT", frame.levelLabel, "BOTTOMLEFT", 0, -6)
   frame.levelInput:SetMaxLetters(3)
 
-  frame.instanceTypeLabel = Frames.CreateLabel(frame.content, "Instance Type", "GameFontNormal")
-  frame.instanceTypeDropDown = Frames.CreateDropdown(frame.content, 170, function(self, level)
+  frame.instanceTypeLabel = Frames.CreateLabel(frame.conditionsRoot, "Instance Type", "GameFontNormal")
+  frame.instanceTypeDropDown = Frames.CreateDropdown(frame.conditionsRoot, 170, function(self, level)
     for _, entry in ipairs(INSTANCE_TYPE_OPTIONS) do
       local info = UIDropDownMenu_CreateInfo()
       info.text = entry.label
@@ -1913,25 +2039,43 @@ function Panel:Create(parent)
     end
   end)
 
-  frame.instanceIdLabel = Frames.CreateLabel(frame.content, "Instance ID", "GameFontNormal")
-  frame.instanceIdInput = Frames.CreateInput(frame.content, 78, 24)
+  frame.instanceIdLabel = Frames.CreateLabel(frame.conditionsRoot, "Instance ID", "GameFontNormal")
+  frame.instanceIdInput = Frames.CreateInput(frame.conditionsRoot, 78, 24)
   frame.instanceIdInput:SetMaxLetters(10)
 
-  frame.encounterIdLabel = Frames.CreateLabel(frame.content, "Encounter ID", "GameFontNormal")
-  frame.encounterIdInput = Frames.CreateInput(frame.content, 78, 24)
+  frame.encounterIdLabel = Frames.CreateLabel(frame.conditionsRoot, "Encounter ID", "GameFontNormal")
+  frame.encounterIdInput = Frames.CreateInput(frame.conditionsRoot, 78, 24)
   frame.encounterIdInput:SetMaxLetters(10)
 
-  frame.equippedItemLabel = Frames.CreateLabel(frame.content, "Only Load If Item Equipped", "GameFontNormal")
+  frame.equippedItemLabel = Frames.CreateLabel(frame.conditionsRoot, "Only Load If Item Equipped", "GameFontNormal")
   frame.equippedItemLabel:SetPoint("TOPLEFT", frame.levelInput, "BOTTOMLEFT", 0, -18)
-  frame.equippedItemInput = Frames.CreateInput(frame.content, 240, 24)
+  frame.equippedItemInput = Frames.CreateInput(frame.conditionsRoot, 240, 24)
   frame.equippedItemInput:SetPoint("TOPLEFT", frame.equippedItemLabel, "BOTTOMLEFT", 0, -6)
-  frame.equippedItemResolved = Frames.CreateLabel(frame.content, "|cffaaaaaaNo equipped item requirement.|r", "GameFontHighlightSmall")
+  frame.equippedItemResolved = Frames.CreateLabel(frame.conditionsRoot, "|cffaaaaaaNo equipped item requirement.|r", "GameFontHighlightSmall")
   frame.equippedItemResolved:SetPoint("TOPLEFT", frame.equippedItemInput, "BOTTOMLEFT", 0, -6)
 
-  frame.saveButton = Frames.CreateButton(frame.content, "Save", 120, 22, function()
+  frame.instanceInfoRoot = CreateFrame("Frame", nil, frame.conditionsRoot)
+  frame.instanceInfoRoot:SetPoint("TOPLEFT", frame.equippedItemResolved, "BOTTOMLEFT", 0, -24)
+  frame.instanceInfoRoot:SetSize(700, 112)
+  frame.instanceInfoHeader = Frames.CreateSectionHeader(
+    frame.instanceInfoRoot, "Instance Information", 700)
+  frame.instanceInfoHeader:SetPoint("TOPLEFT", 0, 0)
+  frame.instanceInfoCurrent = Frames.CreateLabel(
+    frame.instanceInfoRoot, "", "GameFontHighlightSmall")
+  frame.instanceInfoCurrent:SetPoint("TOPLEFT", frame.instanceInfoHeader, "BOTTOMLEFT", 0, -10)
+  frame.instanceInfoCurrent:SetWidth(700)
+  frame.instanceInfoCurrent:SetJustifyH("LEFT")
+  frame.instanceInfoEncounters = Frames.CreateLabel(
+    frame.instanceInfoRoot, "", "GameFontHighlightSmall")
+  frame.instanceInfoEncounters:SetPoint(
+    "TOPLEFT", frame.instanceInfoCurrent, "BOTTOMLEFT", 0, -10)
+  frame.instanceInfoEncounters:SetWidth(700)
+  frame.instanceInfoEncounters:SetJustifyH("LEFT")
+
+  frame.saveButton = Frames.CreateButton(frame.conditionsRoot, "Save", 120, 22, function()
     Panel:ApplyCurrent()
   end)
-  frame.saveButton:SetPoint("TOPLEFT", frame.equippedItemResolved, "BOTTOMLEFT", 0, -18)
+  frame.saveButton:SetPoint("TOPLEFT", frame.instanceInfoRoot, "BOTTOMLEFT", 0, -18)
   Frames.StylePrimaryButton(frame.saveButton)
   frame.saveButton:Hide()
 
@@ -1939,6 +2083,10 @@ function Panel:Create(parent)
 
   frame.enabledCheck:SetScript("OnClick", function()
     Panel:ApplyCurrent()
+    local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+    if aura then
+      Panel:Refresh(aura)
+    end
   end)
   UIDropDownMenu_Initialize(frame.combatDropDown, function(self, level)
     for _, value in ipairs({ "any", "in", "out" }) do
@@ -2040,6 +2188,26 @@ function Panel:Create(parent)
     Panel:ShowSavedLoadoutPicker(aura)
   end)
 
+  frame.instanceInfoEvents = CreateFrame("Frame", nil, frame)
+  for _, event in ipairs({
+    "PLAYER_ENTERING_WORLD",
+    "ZONE_CHANGED_NEW_AREA",
+    "ENCOUNTER_START",
+    "ENCOUNTER_END",
+  }) do
+    frame.instanceInfoEvents:RegisterEvent(event)
+  end
+  frame.instanceInfoEvents:SetScript("OnEvent", function()
+    if not frame:IsShown() then
+      return
+    end
+    Panel:RefreshInstanceInformation()
+    local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+    if aura and aura.enabled ~= false then
+      Panel:RefreshSpecSection(aura)
+    end
+  end)
+
   return frame
 end
 
@@ -2049,12 +2217,12 @@ function Panel:Refresh(aura)
   self.frame.featureDisabledNotice:SetShown(featureDisabledNotice ~= nil)
   self.frame.featureDisabledNotice.text:SetText(
     featureDisabledNotice and ("|cffff6b78Feature disabled|r\n" .. featureDisabledNotice) or "")
-  self.frame.alwaysHeader:ClearAllPoints()
+  self.frame.enabledCheck:ClearAllPoints()
   if featureDisabledNotice then
-    self.frame.alwaysHeader:SetPoint(
+    self.frame.enabledCheck:SetPoint(
       "TOPLEFT", self.frame.featureDisabledNotice, "BOTTOMLEFT", 0, -16)
   else
-    self.frame.alwaysHeader:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", 16, -20)
+    self.frame.enabledCheck:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", 16, -20)
   end
   aura.load.classes = EnsureMap(aura.load.classes)
   aura.load.specs = EnsureMap(aura.load.specs)
@@ -2092,6 +2260,16 @@ function Panel:Refresh(aura)
   for key, check in pairs(self.frame.visibilityChecks or {}) do
     check:SetChecked(visibilitySelection[key] == true)
   end
+  self:RefreshInstanceInformation()
   self:RefreshSpecSection(aura)
+  local loadEnabled = aura.enabled ~= false
+  self.frame.conditionsRoot:SetShown(loadEnabled)
+  Theme.UpdateToggle(self.frame.enabledCheck)
+  Theme.UpdateToggle(self.frame.talentEnabledCheck)
+  if not loadEnabled then
+    local featureNoticeHeight = self.frame.featureDisabledNotice:IsShown() and 72 or 0
+    self.frame.content:SetHeight(math.max(160 + featureNoticeHeight, self.frame:GetHeight() or 0))
+    self.frame.scroll:SetVerticalScroll(0)
+  end
   self.suppressUpdates = false
 end

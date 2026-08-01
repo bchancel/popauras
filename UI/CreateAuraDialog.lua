@@ -50,7 +50,7 @@ local presetOverrides = {
   },
   nameplate_buffs = {
     label = "Nameplate Buff Display",
-    defaultName = "Nameplate Stealable",
+    defaultName = "Nameplate Buffs",
     triggerType = "aura",
   },
 }
@@ -79,8 +79,8 @@ local function ApplyPreset(aura, preset)
   trigger.spellId = nil
   trigger.spellIDs = nil
   trigger.spellNames = nil
-  trigger.nameplateAllBuffs = false
-  trigger.nameplateStealable = true
+  trigger.nameplateAllBuffs = true
+  trigger.nameplateStealable = false
   trigger.nameplateMagic = false
   trigger.nameplateBossAura = false
   trigger.nameplatePriorityAura = false

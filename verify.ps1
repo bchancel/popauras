@@ -22,8 +22,8 @@ $tocText = Get-Content -LiteralPath $toc -Raw
 if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
     throw "PopAuras.toc is not targeting PTR interface 120100"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.4\s*$') {
-    throw "PopAuras.toc version is not aligned to release 12.1.4"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.5\s*$') {
+    throw "PopAuras.toc version is not aligned to release 12.1.5"
 }
 
 $forbiddenPatterns = @(
@@ -569,6 +569,7 @@ if ($runtimeStoreText -notmatch 'trinketTopSoundFile' -or
 }
 
 $displayPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\DisplayPanel.lua") -Raw
+$triggerPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\TriggerPanel.lua") -Raw
 foreach ($label in @('Trinket 1 (Top)', 'Trinket 2 (Bottom)')) {
     if ($displayPanelText -notmatch [regex]::Escape($label)) {
         throw "Dual trinket sound UI is missing '$label'"
@@ -603,19 +604,40 @@ if ($barRegionText -notmatch 'GetAuraSpellInstanceID' -or
     $barRegionText -notmatch 'FindAuraStateSource\(state\.activeBuffSpellIDs, "player", true\)') {
     throw "Spell cooldown combat presentation does not consume an opaque CDM aura DurationObject on the rendering path"
 }
-if ($displayPanelText -notmatch 'No Stacks Bar Color' -or
+if ($displayPanelText -notmatch 'Out-of-Stacks Color' -or
     $displayPanelText -notmatch 'noStacksBarColorEnabled' -or
     $defaultsText -notmatch 'noStacksBarColorEnabled\s*=\s*false') {
-    throw "Spell Cooldown bars do not expose a saved No Stacks Bar Color option"
+    throw "Spell Cooldown bars do not expose a saved Out-of-Stacks Color option"
+}
+if ($displayPanelText -notmatch 'Show cooldown while charges remain' -or
+    $displayPanelText -notmatch 'CreateLabeledToggle\([\s\S]{0,100}"Show cooldown while charges remain"' -or
+    $displayPanelText -notmatch 'chargeCooldownCheck:SetPoint\("TOPLEFT", 12, -448\)' -or
+    $displayPanelText -notmatch 'trigger\.showChargeCooldown\s*=\s*frame\.chargeCooldownCheck:GetChecked' -or
+    $triggerPanelText -match 'Show cooldown while charges remain') {
+    throw "The partial-charge cooldown option is not owned exclusively by Display"
+}
+if ($displayPanelText -match 'showAuraWindow|Show CDM aura/proc' -or
+    $triggerPanelText -match 'showAuraWindow|Show CDM aura/proc' -or
+    $defaultsText -match 'showAuraWindow') {
+    throw "The unused CDM aura/proc option is still exposed or initialized"
+}
+$loadPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\LoadPanel.lua") -Raw
+if ($loadPanelText -notmatch '"Instance Information"' -or
+    $loadPanelText -notmatch 'GetInstanceInfo' -or
+    $loadPanelText -notmatch 'C_EncounterJournal\.GetInstanceForGameMap' -or
+    $loadPanelText -notmatch 'EJ_GetEncounterInfoByIndex' -or
+    $loadPanelText -notmatch 'EJ_GetEncounterInfo' -or
+    $loadPanelText -notmatch 'resolvedDungeonEncounterID' -or
+    $loadPanelText -notmatch 'ZONE_CHANGED_NEW_AREA') {
+    throw "Load configuration is missing live instance and runtime encounter ID information"
 }
 if ($spellCooldownText -notmatch 'noCharges\s*=\s*chargeStateKnown and outOfCharges' -or
     $schemaText -notmatch 'state\.noCharges\s*=\s*SafeBoolean' -or
     $triggerEngineText -notmatch '"noCharges"' -or
     $barRegionText -notmatch 'state\.noCharges\s*==\s*true') {
-    throw "No Stacks Bar Color is not driven by the secret-safe zero-charge state"
+    throw "Out-of-Stacks Color is not driven by the secret-safe zero-charge state"
 }
 
-$triggerPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\TriggerPanel.lua") -Raw
 if ($triggerPanelText -notmatch 'Frames\.CreateScrollPanel' -or
     $triggerPanelText -notmatch 'contentHeight\s*=\s*1040') {
     throw "Long trigger forms are not hosted in the shared scroll panel"
