@@ -30,8 +30,8 @@ end
 
 local function StartGlow(frame)
   local baseRegion = ns.renderers and ns.renderers.BaseRegion or nil
-  if baseRegion and baseRegion.SetGlow then
-    baseRegion:SetGlow(frame, true)
+  if baseRegion and baseRegion.SetUnitFrameGlow then
+    baseRegion:SetUnitFrameGlow(frame, true)
     return true
   end
   return false
@@ -39,16 +39,56 @@ end
 
 local function StopGlow(frame)
   local baseRegion = ns.renderers and ns.renderers.BaseRegion or nil
-  if baseRegion and baseRegion.SetGlow then
-    baseRegion:SetGlow(frame, false)
+  if baseRegion and baseRegion.SetUnitFrameGlow then
+    baseRegion:SetUnitFrameGlow(frame, false)
   end
 end
 
-local function NormalizePlayerName(name)
-  if type(name) ~= "string" or name == "" then
+local function GetNonSecretBoolean(value)
+  if issecretvalue and issecretvalue(value) then
     return nil
   end
-  if issecretvalue and issecretvalue(name) then
+  if type(value) == "boolean" then
+    return value
+  end
+  return nil
+end
+
+local function GetNonSecretString(value)
+  if issecretvalue and issecretvalue(value) then
+    return nil
+  end
+  if type(value) == "string" and value ~= "" then
+    return value
+  end
+  return nil
+end
+
+local function UnitsMatch(firstUnit, secondUnit)
+  firstUnit = GetNonSecretString(firstUnit)
+  secondUnit = GetNonSecretString(secondUnit)
+  if not firstUnit or not secondUnit then
+    return false
+  end
+  if firstUnit == secondUnit then
+    return true
+  end
+  local ok, matches = pcall(UnitIsUnit, firstUnit, secondUnit)
+  return ok and GetNonSecretBoolean(matches) == true
+end
+
+local function UnitExistsSafe(unitId)
+  unitId = GetNonSecretString(unitId)
+  if not unitId then
+    return false
+  end
+  local ok, exists = pcall(UnitExists, unitId)
+  return ok and GetNonSecretBoolean(exists) == true
+end
+
+local function NormalizePlayerName(name)
+  name = GetNonSecretString(name)
+  if not name then
     return nil
   end
   local short = name:match("^([^%-]+)")
@@ -59,14 +99,11 @@ local function NormalizePlayerName(name)
 end
 
 local function UnitMatchesName(unitId, targetName)
-  if not UnitExists(unitId) then
+  if not UnitExistsSafe(unitId) then
     return false
   end
-  local unitName = UnitName(unitId)
-  if type(unitName) ~= "string" then
-    return false
-  end
-  return NormalizePlayerName(unitName) == targetName
+  local unitName = NormalizePlayerName(UnitName(unitId))
+  return unitName ~= nil and unitName == targetName
 end
 
 local function FindUnitIdForName(targetName)
@@ -99,28 +136,31 @@ local function FrameMatchesUnit(frame, targetUnitId)
     return false
   end
 
-  local frameUnit = frame.unit
-  if not frameUnit and frame.displayedUnit then
-    frameUnit = frame.displayedUnit
+  local frameUnit = GetNonSecretString(frame.unit)
+  if not frameUnit then
+    frameUnit = GetNonSecretString(frame.displayedUnit)
   end
-  if not frameUnit and frame.unitToken then
-    frameUnit = frame.unitToken
+  if not frameUnit then
+    frameUnit = GetNonSecretString(frame.unitToken)
+  end
+  if not frameUnit then
+    frameUnit = GetNonSecretString(frame.MSUFUnitKey)
+  end
+  if not frameUnit then
+    frameUnit = GetNonSecretString(frame.unitKey)
   end
   if not frameUnit and frame.GetUnit then
-    frameUnit = frame:GetUnit()
+    frameUnit = GetNonSecretString(frame:GetUnit())
   end
   if not frameUnit and frame.GetAttribute then
-    frameUnit = frame:GetAttribute("unit")
+    frameUnit = GetNonSecretString(frame:GetAttribute("unit"))
   end
-  if type(frameUnit) ~= "string" or frameUnit == "" then
-    return false
-  end
-  return UnitIsUnit(frameUnit, targetUnitId)
+  return UnitsMatch(frameUnit, targetUnitId)
 end
 
 local function SafeFrameMatchesUnit(frame, targetUnitId)
   local ok, matches = pcall(FrameMatchesUnit, frame, targetUnitId)
-  return ok and matches == true
+  return ok and GetNonSecretBoolean(matches) == true
 end
 
 local function IsFrameUsable(frame)
@@ -131,14 +171,14 @@ local function IsFrameUsable(frame)
   local okShown, isShown = pcall(function()
     return frame.IsShown and frame:IsShown()
   end)
-  if okShown and isShown == false then
+  if okShown and GetNonSecretBoolean(isShown) == false then
     return false
   end
 
   local okVisible, isVisible = pcall(function()
     return frame.IsVisible and frame:IsVisible()
   end)
-  if okVisible and isVisible == false then
+  if okVisible and GetNonSecretBoolean(isVisible) == false then
     return false
   end
 
@@ -221,6 +261,15 @@ local function AddMatchingFrame(frame, targetUnitId, results)
   end
 end
 
+local function AddMatchingFrames(frames, targetUnitId, results)
+  if type(frames) ~= "table" then
+    return
+  end
+  for _, frame in pairs(frames) do
+    AddMatchingFrame(frame, targetUnitId, results)
+  end
+end
+
 local function CollectBlizzardUnitFrames(targetUnitId, results)
   -- The default party UI owns its member frames through a frame pool.
   local partyFrame = _G.PartyFrame
@@ -254,6 +303,98 @@ local function CollectBlizzardUnitFrames(targetUnitId, results)
   end
 end
 
+local function CollectDandersFrames(targetUnitId, results)
+  local getFrameForUnit = _G.DandersFrames_GetFrameForUnit
+  if type(getFrameForUnit) == "function" then
+    local ok, frame = pcall(getFrameForUnit, targetUnitId)
+    if ok then
+      AddMatchingFrame(frame, targetUnitId, results)
+    end
+  else
+    local getAllFrames = _G.DandersFrames_GetAllFrames
+    if type(getAllFrames) == "function" then
+      local ok, frames = pcall(getAllFrames)
+      if ok then
+        AddMatchingFrames(frames, targetUnitId, results)
+      end
+    end
+  end
+
+  -- Pinned DandersFrames are separate copies and may show the same unit as the
+  -- main party or raid frame, so include every visible pinned match as well.
+  local getPinnedFrames = _G.DandersFrames_GetPinnedFrames
+  if type(getPinnedFrames) == "function" then
+    local ok, frames = pcall(getPinnedFrames)
+    if ok then
+      AddMatchingFrames(frames, targetUnitId, results)
+    end
+  end
+end
+
+local function CollectEllesmereUIFrames(targetUnitId, results)
+  -- EllesmereUI's standalone unit-frame module exports its embedded oUF
+  -- instance. The object registry contains every frame actually spawned for
+  -- player, target, focus, pet, target-of-target, focus-target, and boss units.
+  local ellesmereUF = _G.EUIStandaloneUnitFramesUF
+  if type(ellesmereUF) == "table" then
+    AddMatchingFrames(ellesmereUF.objects, targetUnitId, results)
+  end
+
+  -- Party and raid frames are owned by separate secure headers. Party self can
+  -- be a standalone button when "Show Self First" is enabled; raids use either
+  -- one flat header or eight group headers. The optional Extra Frames container
+  -- deliberately duplicates selected raid units, so include its visible copies.
+  AddMatchingFrame(_G.ERFPartySelfButton, targetUnitId, results)
+  CollectChildFramesRecursive(_G.ERFPartyHeader, targetUnitId, results, 0)
+  CollectChildFramesRecursive(_G.ERFFlatHeader, targetUnitId, results, 0)
+  for group = 1, 8 do
+    CollectChildFramesRecursive(_G["ERFGroupHeader" .. group], targetUnitId, results, 0)
+  end
+  CollectChildFramesRecursive(_G.ERFExtraFramesContainer, targetUnitId, results, 0)
+end
+
+local function CollectMidnightSimpleUnitFrames(targetUnitId, results)
+  -- Standalone MSUF frames are exported by exact unit token.
+  local standaloneFrames = _G.MSUF_UnitFrames
+  if type(standaloneFrames) == "table" then
+    AddMatchingFrame(standaloneFrames[targetUnitId], targetUnitId, results)
+  end
+
+  -- Group frames use a visual frame inside each secure header child. The
+  -- indexed API also includes priority-frame duplicates without traversing
+  -- protected header internals.
+  local msuf = _G.MSUF or _G.MSUF_NS
+  local groupFrames = type(msuf) == "table" and msuf.GF or nil
+  local forEachFrameForUnit = type(groupFrames) == "table" and groupFrames.ForEachFrameForUnit or nil
+  if type(forEachFrameForUnit) == "function" then
+    pcall(forEachFrameForUnit, targetUnitId, function(frame)
+      AddMatchingFrame(frame, targetUnitId, results)
+      return false
+    end)
+  end
+end
+
+local function CollectVuhDoFrames(targetUnitId, results)
+  local getUnitButtons = _G.VUHDO_getUnitButtonsSafe or _G.VUHDO_getUnitButtons
+  if type(getUnitButtons) == "function" then
+    local ok, frames = pcall(getUnitButtons, targetUnitId)
+    if ok then
+      AddMatchingFrames(frames, targetUnitId, results)
+    end
+  end
+
+  -- VuhDo can index the player's button under an equivalent party/raid token.
+  -- Its bounded unit map also covers duplicate panels for the same unit.
+  local buttonsByUnit = _G.VUHDO_UNIT_BUTTONS
+  if type(buttonsByUnit) == "table" then
+    for indexedUnit, frames in pairs(buttonsByUnit) do
+      if UnitsMatch(indexedUnit, targetUnitId) then
+        AddMatchingFrames(frames, targetUnitId, results)
+      end
+    end
+  end
+end
+
 local CONTAINER_GLOBALS = {
   "Grid2LayoutFrame",
   "Grid2Layout",
@@ -271,6 +412,7 @@ local INDEXED_FRAME_PATTERNS = {
 }
 
 local function FindUnitFramesForUnit(targetUnitId)
+  targetUnitId = GetNonSecretString(targetUnitId)
   if not targetUnitId then
     return nil
   end
@@ -283,6 +425,10 @@ local function FindUnitFramesForUnit(targetUnitId)
   local frames = {}
 
   CollectBlizzardUnitFrames(targetUnitId, frames)
+  CollectDandersFrames(targetUnitId, frames)
+  CollectEllesmereUIFrames(targetUnitId, frames)
+  CollectMidnightSimpleUnitFrames(targetUnitId, frames)
+  CollectVuhDoFrames(targetUnitId, frames)
 
   for _, globalName in ipairs(CONTAINER_GLOBALS) do
     local container = _G[globalName]
@@ -341,6 +487,23 @@ local function GetFrameDebugName(frame)
   return string.format("<%s>", tostring(objectType))
 end
 
+local function GetGlowRendererDebug(frames)
+  local borderCount = 0
+  local fallbackCount = 0
+  local unknownCount = 0
+  for _, frame in ipairs(frames or {}) do
+    local renderer = GetNonSecretString(frame and frame._popAurasUnitFrameGlowRenderer)
+    if renderer == "blizzard_border" then
+      borderCount = borderCount + 1
+    elseif renderer == "fallback_texture" then
+      fallbackCount = fallbackCount + 1
+    else
+      unknownCount = unknownCount + 1
+    end
+  end
+  return string.format("blizzardBorder=%d fallbackTexture=%d unknown=%d", borderCount, fallbackCount, unknownCount)
+end
+
 function UnitFrameGlow:FindUnitFramesForUnit(unitId)
   return FindUnitFramesForUnit(unitId)
 end
@@ -390,7 +553,8 @@ function UnitFrameGlow:CancelForAura(auraId)
 end
 
 function UnitFrameGlow:ApplyByUnit(targetUnitId, auraId, duration)
-  if not targetUnitId or not UnitExists(targetUnitId) then
+  targetUnitId = GetNonSecretString(targetUnitId)
+  if not targetUnitId or not UnitExistsSafe(targetUnitId) then
     return
   end
 
@@ -431,7 +595,8 @@ function UnitFrameGlow:ApplyByUnits(targetUnitIds, auraId, duration)
   local seenFrames = {}
   local glowedFrames = {}
   for _, unitId in ipairs(targetUnitIds) do
-    if type(unitId) == "string" and unitId ~= "" and UnitExists(unitId) then
+    unitId = GetNonSecretString(unitId)
+    if unitId and UnitExistsSafe(unitId) then
       local unitFrames = FindUnitFramesForUnit(unitId)
       for _, frame in ipairs(unitFrames or {}) do
         if not seenFrames[frame] and StartGlow(frame) then
@@ -465,7 +630,7 @@ ns.ActionEngine:RegisterHandler("glow_unit_frame", function(action, aura, state)
     DebugLogAction(aura, string.format("matchedUnits=%d duration=%.2f", #state.matchedUnits, duration))
     UnitFrameGlow:ApplyByUnits(state.matchedUnits, aura.id, duration)
     local active = activeGlows[aura.id]
-    DebugLogAction(aura, string.format("glowApplied matchedUnits activeFrames=%d", active and #active or 0))
+    DebugLogAction(aura, string.format("glowApplied matchedUnits activeFrames=%d %s", active and #active or 0, GetGlowRendererDebug(active)))
     return
   end
 
@@ -488,13 +653,13 @@ ns.ActionEngine:RegisterHandler("glow_unit_frame", function(action, aura, state)
       end
       UnitFrameGlow:ApplyByUnit(unitId, aura.id, duration)
       local active = activeGlows[aura.id]
-      DebugLogAction(aura, string.format("glowApplied unitId=%s activeFrames=%d", tostring(unitId), active and #active or 0))
+      DebugLogAction(aura, string.format("glowApplied unitId=%s activeFrames=%d %s", tostring(unitId), active and #active or 0, GetGlowRendererDebug(active)))
       return
     end
   end
 
-  local stateUnit = state and state.unit
-  if stateUnit and type(stateUnit) == "string" and UnitExists(stateUnit) then
+  local stateUnit = GetNonSecretString(state and state.unit)
+  if stateUnit and UnitExistsSafe(stateUnit) then
     DebugLogAction(aura, string.format("fallbackStateUnit=%s duration=%.2f", tostring(stateUnit), duration))
     local unitFrames = FindUnitFramesForUnit(stateUnit)
     if not unitFrames or #unitFrames == 0 then
@@ -511,7 +676,7 @@ ns.ActionEngine:RegisterHandler("glow_unit_frame", function(action, aura, state)
     end
     UnitFrameGlow:ApplyByUnit(stateUnit, aura.id, duration)
     local active = activeGlows[aura.id]
-    DebugLogAction(aura, string.format("glowApplied unitId=%s activeFrames=%d", tostring(stateUnit), active and #active or 0))
+    DebugLogAction(aura, string.format("glowApplied unitId=%s activeFrames=%d %s", tostring(stateUnit), active and #active or 0, GetGlowRendererDebug(active)))
     return
   end
 

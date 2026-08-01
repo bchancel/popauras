@@ -1,3 +1,6 @@
+# v12.1.4
+- Add additional unit frame support: DandersFrames, EllesmereUI Unit Frames, EllesmereUI Raid and Party Frames, Midnight Simple Unit Frames, VuhDo
+
 # v12.1.3
 - Reskinned the configuration UI for a cleaner, more fluid experience
 - Added resizable windows and standardized scrollable panels

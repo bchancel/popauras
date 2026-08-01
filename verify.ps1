@@ -22,8 +22,8 @@ $tocText = Get-Content -LiteralPath $toc -Raw
 if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
     throw "PopAuras.toc is not targeting PTR interface 120100"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.3\s*$') {
-    throw "PopAuras.toc version is not aligned to release 12.1.3"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.4\s*$') {
+    throw "PopAuras.toc version is not aligned to release 12.1.4"
 }
 
 $forbiddenPatterns = @(
@@ -487,8 +487,31 @@ if ($unitFrameGlowText -match 'LibCustomGlow' -or $unitFrameGlowText -match 'Arc
     $unitFrameGlowText -match 'LibButtonGlow' -or $unitFrameGlowText -match 'GetGlowLibrary') {
     throw "Unit-frame glow actions still discover third-party addon libraries"
 }
-if ($unitFrameGlowText -notmatch 'BaseRegion' -or $baseRegionText -notmatch 'function BaseRegion:SetGlow') {
-    throw "Unit-frame glow actions do not use the self-contained PopAuras glow"
+if ($unitFrameGlowText -notmatch 'SetUnitFrameGlow' -or
+    $baseRegionText -notmatch 'function BaseRegion:SetUnitFrameGlow' -or
+    $baseRegionText -notmatch 'ActionButtonSpellAlertManager' -or
+    $baseRegionText -notmatch 'EnsureUnitFrameGlowHost') {
+    throw "Unit-frame glow actions do not use Midnight's standard animated border with a PopAuras-owned host"
+}
+if ($unitFrameGlowText -notmatch 'DandersFrames_GetFrameForUnit' -or
+    $unitFrameGlowText -notmatch 'EUIStandaloneUnitFramesUF' -or
+    $unitFrameGlowText -notmatch 'ERFPartyHeader' -or
+    $unitFrameGlowText -notmatch 'ERFFlatHeader' -or
+    $unitFrameGlowText -notmatch 'ForEachFrameForUnit' -or
+    $unitFrameGlowText -notmatch 'VUHDO_getUnitButtonsSafe') {
+    throw "Unit-frame resolution is missing a supported third-party adapter"
+}
+if ($unitFrameGlowText -notmatch 'GetNonSecretBoolean' -or
+    $unitFrameGlowText -notmatch 'GetNonSecretBoolean\(isShown\)' -or
+    $unitFrameGlowText -notmatch 'GetNonSecretBoolean\(isVisible\)' -or
+    $unitFrameGlowText -match 'isShown\s*==\s*false' -or
+    $unitFrameGlowText -match 'isVisible\s*==\s*false') {
+    throw "Unit-frame resolution branches on restricted visibility booleans"
+}
+if ($unitFrameGlowText -notmatch 'UnitExistsSafe' -or
+    $unitFrameGlowText -match 'and\s+UnitExists\(' -or
+    $unitFrameGlowText -match 'not\s+UnitExists\(') {
+    throw "Unit-frame resolution branches directly on restricted unit-existence values"
 }
 
 $cooldownManagerText = Get-Content -LiteralPath (Join-Path $root "Core\CooldownManager.lua") -Raw

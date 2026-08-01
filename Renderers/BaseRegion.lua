@@ -14,8 +14,82 @@ local GLOW_PULSE_TEXCOORD = { 0.00781250, 0.50781250, 0.53515625, 0.78515625 }
 
 local function CleanupLegacyGlow(frame)
   if frame and frame.spellActivationAlert and ActionButton_HideOverlayGlow then
-    ActionButton_HideOverlayGlow(frame)
+    pcall(ActionButton_HideOverlayGlow, frame)
   end
+end
+
+local function UpdateUnitFrameGlowHost(frame)
+  local host = frame and frame._popAurasUnitFrameGlowHost
+  if not host then
+    return
+  end
+
+  host:ClearAllPoints()
+  host:SetAllPoints(frame)
+  host:SetFrameStrata(frame:GetFrameStrata())
+  host:SetFrameLevel(frame:GetFrameLevel() + 20)
+end
+
+local function EnsureUnitFrameGlowHost(frame)
+  if not frame then
+    return nil
+  end
+
+  local host = frame._popAurasUnitFrameGlowHost
+  if not host then
+    host = CreateFrame("Frame", nil, frame)
+    host:EnableMouse(false)
+    frame._popAurasUnitFrameGlowHost = host
+  end
+
+  UpdateUnitFrameGlowHost(frame)
+  return host
+end
+
+local function StopBlizzardUnitFrameGlow(frame)
+  local host = frame and frame._popAurasUnitFrameGlowHost
+  if not host then
+    return
+  end
+
+  local alertManager = _G.ActionButtonSpellAlertManager
+  if type(alertManager) == "table" and type(alertManager.HideAlert) == "function" then
+    pcall(alertManager.HideAlert, alertManager, host)
+  end
+  if host.spellActivationAlert and ActionButton_HideOverlayGlow then
+    pcall(ActionButton_HideOverlayGlow, host)
+  end
+  host:Hide()
+end
+
+local function StartBlizzardUnitFrameGlow(frame)
+  local host = EnsureUnitFrameGlowHost(frame)
+  if not host then
+    return false
+  end
+
+  host:Show()
+
+  -- Midnight replaced ActionButton_ShowOverlayGlow with the spell-alert
+  -- manager. Its current template is Blizzard's animated action-button border.
+  local alertManager = _G.ActionButtonSpellAlertManager
+  if type(alertManager) == "table" and type(alertManager.ShowAlert) == "function" then
+    local ok = pcall(alertManager.ShowAlert, alertManager, host)
+    if ok and host.SpellActivationAlert then
+      return true
+    end
+  end
+
+  -- Retain the pre-Midnight path for clients where the legacy helper remains.
+  if type(ActionButton_ShowOverlayGlow) == "function" then
+    local ok = pcall(ActionButton_ShowOverlayGlow, host)
+    if ok and host.spellActivationAlert then
+      return true
+    end
+  end
+
+  StopBlizzardUnitFrameGlow(frame)
+  return false
 end
 
 local function UpdateBuiltInGlowLayout(frame)
@@ -267,6 +341,32 @@ end
 
 function BaseRegion:SetGlow(frame, shouldGlow)
   SetAuraGlow(frame, shouldGlow == true)
+end
+
+function BaseRegion:SetUnitFrameGlow(frame, shouldGlow)
+  if not frame then
+    return
+  end
+
+  if shouldGlow == true then
+    StopBuiltInGlow(frame)
+    if StartBlizzardUnitFrameGlow(frame) then
+      frame._popAurasUnitFrameGlowFallback = false
+      frame._popAurasUnitFrameGlowRenderer = "blizzard_border"
+    else
+      StartBuiltInGlow(frame)
+      frame._popAurasUnitFrameGlowFallback = true
+      frame._popAurasUnitFrameGlowRenderer = "fallback_texture"
+    end
+    frame._popAurasUnitFrameGlowShown = true
+    return
+  end
+
+  StopBlizzardUnitFrameGlow(frame)
+  StopBuiltInGlow(frame)
+  frame._popAurasUnitFrameGlowFallback = false
+  frame._popAurasUnitFrameGlowShown = false
+  frame._popAurasUnitFrameGlowRenderer = nil
 end
 
 function BaseRegion:ApplyCommonAppearance(aura, frame, state, glowTarget, activeGlowOverride)
