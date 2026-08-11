@@ -11,6 +11,41 @@ Duration objects and Blizzard display strings are opaque presentation values.
 They may be handed to compatible widgets but must not be converted or used for
 control flow.
 
+## Demand-driven runtime lifecycle
+
+`Core/FeatureInventory.lua` derives runtime demand only from normalized,
+non-secret saved definitions. Disabled auras do not contribute demand. The
+inventory selects the provider event set and activates optional native-aura,
+Cooldown Manager, spell-alert, and Interrupt Tracker systems when a configured
+consumer first needs them. Activated managers stay active for the session;
+this avoids risky mid-session teardown of Blizzard-owned or restricted frames.
+
+`Core/Events.lua` diffs its subscriptions against that inventory. Trigger-type
+events and load-rule events are registered only while at least one enabled
+definition can use them. Registry mutations coalesce inventory rebuilds onto
+the next tick, while manager public entry points retain defensive activation so
+create/import flows cannot outrun the index update.
+
+Transient update drivers must return to an idle state. The share transport
+runs its `OnUpdate` pump only while chunks are queued, and Interrupt Tracker
+arms its correlation driver only while short-lived signals need matching.
+
+## Load-on-demand editor
+
+The runtime addon owns `PopAurasDB`, migrations, providers, renderers, sharing,
+and a thin options loader. The repository's `Options/` directory is packaged as
+the sibling `PopAuras_Options` addon. Its TOC depends on `PopAuras`, declares
+`LoadOnDemand`, and does not declare saved variables.
+
+`/pa` and received-share review load the companion before using editor modules.
+Requests made during combat are deferred until `PLAYER_REGEN_ENABLED`. Both
+folders ship in the same release archive even though the WoW addon list shows
+the companion as a separate dependency.
+
+The editor consumes semantic typography and layout roles from `Util/Theme.lua`.
+Reusable editor-only field and section builders augment `Util/Frames.lua` from
+`Options/EditorDesign.lua`, keeping their source out of base startup.
+
 ## Aura restrictions
 
 Blizzard owns restricted aura presence, ordering, duration, count, tooltips,

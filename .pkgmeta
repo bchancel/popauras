@@ -4,6 +4,9 @@ enable-nolib-creation: no
 manual-changelog: CHANGELOG.md
 changelog-format: markdown
 
+move-folders:
+  PopAuras/Options: PopAuras_Options
+
 ignore:
   - AGENTS.md
   - ARCHITECTURE.md

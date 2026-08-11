@@ -4,10 +4,11 @@ local Frames = ns.util.Frames
 local Anchors = ns.util.Anchors
 local BaseRegion = ns.renderers.BaseRegion
 local Colors = ns.util.Colors
-local Fonts = ns.util.Fonts
 local SoundPicker = ns.util.SoundPicker
+local TexturePicker = ns.util.TexturePicker
 local Spells = ns.util.Spells
 local Theme = ns.util.Theme
+local Media = ns.util.Media
 
 local Panel = {}
 ns.panels.DisplayPanel = Panel
@@ -70,14 +71,15 @@ local textRotationValues = {
   "270",
 }
 
-local barTextureValues = {
-  "FLAT",
-  "GLAZE",
-  "BLIZZARD",
-}
+local function GetBarTextureValues()
+  return Media and Media:GetStatusBarTextureOptions(true) or {
+    { value = "FLAT", label = "Flat" },
+    { value = "GLAZE", label = "Glaze" },
+    { value = "BLIZZARD", label = "Blizzard" },
+  }
+end
 
 local activeGlowStyleValues = {
-  { value = "NONE", label = "None" },
   { value = "INNER_GLOW", label = "Inner Glow" },
   { value = "OUTER_GLOW", label = "Outer Glow" },
   { value = "ACTIVE_DURATION", label = "Active Duration" },
@@ -119,6 +121,9 @@ local function HideAllSoundPickers(frame)
   SoundPicker:HideIfDropdown(frame.soundFileWrap and frame.soundFileWrap.dropdown)
   SoundPicker:HideIfDropdown(frame.trinketTopSoundFileWrap and frame.trinketTopSoundFileWrap.dropdown)
   SoundPicker:HideIfDropdown(frame.trinketBottomSoundFileWrap and frame.trinketBottomSoundFileWrap.dropdown)
+  if TexturePicker then
+    TexturePicker:HideIfDropdown(frame.barTextureWrap and frame.barTextureWrap.dropdown)
+  end
 end
 
 local function GetDefaultLayoutSpacing(aura)
@@ -282,61 +287,19 @@ local function UpdateSelectorButtonText(button, dropdown)
 end
 
 local function CreateSection(parent, title, y, height)
-  local box = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-  Theme.StyleSurface(box, "transparent", "transparent")
-  box.insetLeft = 0
-  box.insetRight = 0
-  box:SetPoint("TOPLEFT", box.insetLeft, y)
-  box:SetPoint("TOPRIGHT", -box.insetRight, y)
-  box:SetHeight(height)
-
-  box.header = CreateFrame("Frame", nil, box, "BackdropTemplate")
-  box.header:SetPoint("TOPLEFT", 1, -1)
-  box.header:SetPoint("TOPRIGHT", -1, -1)
-  box.header:SetHeight(30)
-  Theme.StyleSurface(box.header, "surfaceRaised", "border")
-  box.header:Hide()
-
-  box.chevron = box.header:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(box.chevron, 12, "OUTLINE")
-  box.chevron:SetPoint("LEFT", 10, 0)
-  box.chevron:SetText("")
-  box.chevron:Hide()
-  Theme.SetText(box.chevron, "textAccent")
-
-  box.title = Frames.CreateLabel(box.header, title, "GameFontNormal")
-  box.title:SetPoint("LEFT", 14, 0)
-  Theme.SetText(box.title, "text")
-
-  box.bodyTop = box:CreateTexture(nil, "BORDER")
-  box.bodyTop:SetTexture("Interface\\Buttons\\WHITE8x8")
-  Theme.SetTexture(box.bodyTop, "borderStrong")
-  box.bodyTop:SetPoint("TOPLEFT", box.header, "BOTTOMLEFT", 0, -1)
-  box.bodyTop:SetPoint("TOPRIGHT", box.header, "BOTTOMRIGHT", 0, -1)
-  box.bodyTop:SetHeight(1)
-  box.bodyTop:Hide()
-  box.expandedHeight = height
-  box.collapsed = false
-  box.bodyWidgets = {}
-  return box
+  return Frames.CreateSectionCard(parent, title, y, height, {
+    chevron = true,
+    bodyDivider = true,
+    titleInset = 14,
+  })
 end
 
 local function RegisterSectionWidgets(section, ...)
-  for index = 1, select("#", ...) do
-    local widget = select(index, ...)
-    if widget then
-      section.bodyWidgets[#section.bodyWidgets + 1] = widget
-    end
-  end
+  Frames.RegisterSectionWidgets(section, ...)
 end
 
 local function CreateLabeledInput(parent, label, x, y, width)
-  local widget = {}
-  widget.label = Frames.CreateLabel(parent, label, "GameFontNormalSmall")
-  widget.label:SetPoint("TOPLEFT", x, y)
-  widget.input = Frames.CreateInput(parent, width or 120, 22)
-  widget.input:SetPoint("TOPLEFT", widget.label, "BOTTOMLEFT", 0, -4)
-  return widget
+  return Frames.CreateLabeledInput(parent, label, x, y, width)
 end
 
 local function ConfigureNumericInput(input, maxLetters)
@@ -345,11 +308,7 @@ local function ConfigureNumericInput(input, maxLetters)
 end
 
 local function CreateLabeledDropdown(parent, label, x, y, width, values)
-  local widget = {}
-  widget.label = Frames.CreateLabel(parent, label, "GameFontNormalSmall")
-  widget.label:SetPoint("TOPLEFT", x, y)
-  widget.dropdown = Frames.CreateDropdown(parent, width or 180)
-  widget.dropdown:SetPoint("TOPLEFT", widget.label, "BOTTOMLEFT", -14, -2)
+  local widget = Frames.CreateLabeledDropdown(parent, label, x, y, width)
   InitDropdown(widget.dropdown, values)
   return widget
 end
@@ -358,55 +317,25 @@ local function PositionLabeledInput(widget, x, y)
   if not widget then
     return
   end
-  widget.label:ClearAllPoints()
-  widget.label:SetPoint("TOPLEFT", x, y)
-  widget.input:ClearAllPoints()
-  widget.input:SetPoint("TOPLEFT", widget.label, "BOTTOMLEFT", 0, -4)
+  Frames.PositionLabeledInput(widget, x, y)
 end
 
 local function PositionLabeledDropdown(widget, x, y)
   if not widget then
     return
   end
-  widget.label:ClearAllPoints()
-  widget.label:SetPoint("TOPLEFT", x, y)
-  widget.dropdown:ClearAllPoints()
-  widget.dropdown:SetPoint("TOPLEFT", widget.label, "BOTTOMLEFT", -14, -2)
+  Frames.PositionLabeledDropdown(widget, x, y)
 end
 
 local function PositionColorSwatch(widget, x, y)
   if not widget then
     return
   end
-  widget.button:ClearAllPoints()
-  widget.button:SetPoint("TOPLEFT", x, y)
-  widget.label:ClearAllPoints()
-  widget.label:SetPoint("LEFT", widget.button, "RIGHT", 8, 0)
+  Frames.PositionColorSwatch(widget, x, y)
 end
 
 local function CreateColorSwatch(parent, label, x, y)
-  local widget = {}
-  widget.button = CreateFrame("Button", nil, parent, "BackdropTemplate")
-  widget.button:SetSize(28, 28)
-  widget.button:SetPoint("TOPLEFT", x, y)
-  widget.button:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    edgeSize = 12,
-  })
-  Theme.SetBackdrop(widget.button, "control", "border")
-
-  widget.swatch = widget.button:CreateTexture(nil, "ARTWORK")
-  widget.swatch:SetPoint("TOPLEFT", 4, -4)
-  widget.swatch:SetPoint("BOTTOMRIGHT", -4, 4)
-  widget.swatch:SetTexture("Interface\\Buttons\\WHITE8x8")
-
-  widget.label = Frames.CreateLabel(parent, label, "GameFontNormalSmall")
-  widget.label:SetPoint("LEFT", widget.button, "RIGHT", 8, 0)
-  widget.valueText = Frames.CreateLabel(parent, "", "GameFontHighlightSmall")
-  widget.valueText:Hide()
-
-  return widget
+  return Frames.CreateColorSwatch(parent, label, x, y)
 end
 
 local function SetWidgetEnabled(widget, enabled)
@@ -719,6 +648,10 @@ function Panel:UpdateControlStates()
   local trigger = GetSelectedTrigger(aura)
   local supportsNoStacksColor = trigger and trigger.type == "spell_cooldown" and kind == "bar"
   local supportsActiveGlowStyle = trigger and trigger.type == "spell_cooldown" and kind == "bar"
+  local activeGlowEnabled = frame.glowWhenActiveCheck:GetChecked() == true
+  local selectedActiveGlowStyle = UIDropDownMenu_GetSelectedValue(frame.activeGlowStyleWrap.dropdown) or "INNER_GLOW"
+  local showActiveGlowColor = supportsActiveGlowStyle and activeGlowEnabled
+    and selectedActiveGlowStyle ~= "ACTIVE_DURATION"
   local supportsChargeCooldown = trigger and trigger.type == "spell_cooldown" and not isGroup and not isText
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura")
   local showIconCooldownControls = not isGroup and not isText and isIconAura and frame.iconSection.collapsed ~= true
@@ -735,8 +668,15 @@ function Panel:UpdateControlStates()
     frame.readyColorWrap.button, frame.readyColorWrap.label,
     frame.barTextureWrap.dropdown, frame.barTextureWrap.label,
   }, not isGroup and not isText)
-  SetControlGroupEnabled({ frame.glowWhenActiveCheck }, not isGroup and not isText and not isAuraBarList and not supportsActiveGlowStyle)
-  SetControlGroupEnabled({ frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown }, supportsActiveGlowStyle)
+  SetControlGroupEnabled({ frame.glowWhenActiveCheck }, not isGroup and not isText and not isAuraBarList)
+  SetControlGroupShown({ frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown },
+    supportsActiveGlowStyle and activeGlowEnabled)
+  SetControlGroupEnabled({ frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown },
+    supportsActiveGlowStyle and activeGlowEnabled)
+  SetControlGroupShown({
+    frame.activeGlowColorWrap.label, frame.activeGlowColorWrap.button, frame.activeGlowColorWrap.valueText,
+  }, showActiveGlowColor)
+  SetControlGroupEnabled({ frame.activeGlowColorWrap.label, frame.activeGlowColorWrap.button }, showActiveGlowColor)
   SetControlGroupEnabled({ frame.showBackgroundCheck }, true)
   SetControlGroupEnabled({ frame.readyColorWrap.button, frame.readyColorWrap.label },
     not isGroup and not isText and readyStateEnabled)
@@ -973,6 +913,8 @@ function Panel:ApplyCurrent()
   end
   local isAuraBarList = aura.kind == "aura_bar_list"
   local isNameplateAura = IsNameplateAura(aura)
+  local previousGlowWhenActive = aura.display.glowWhenActive == true
+  local previousActiveGlowStyle = aura.display.activeGlowStyle or "NONE"
 
   aura.name = ns.Registry:GetUniqueAuraName(frame.nameInputWrap.input:GetText(), aura.id)
   frame.nameInputWrap.input:SetText(aura.name)
@@ -1026,13 +968,19 @@ function Panel:ApplyCurrent()
   end
   local readyStateEnabled = frame.showAlwaysReadyCheck:GetChecked() == true
   aura.display.readyLook = readyStateEnabled
+  local activeGlowEnabled = frame.glowWhenActiveCheck:GetChecked() == true
   if trigger.type == "spell_cooldown" and aura.kind == "bar" then
-    local style = UIDropDownMenu_GetSelectedValue(frame.activeGlowStyleWrap.dropdown) or aura.display.activeGlowStyle or "NONE"
-    aura.display.activeGlowStyle = style
-    aura.display.glowWhenActive = style ~= "NONE"
+    local style = UIDropDownMenu_GetSelectedValue(frame.activeGlowStyleWrap.dropdown)
+      or aura.display.activeGlowStyle or "INNER_GLOW"
+    if style == "NONE" then style = "INNER_GLOW" end
+    aura.display.activeGlowStyle = activeGlowEnabled and style or "NONE"
+    aura.display.glowWhenActive = activeGlowEnabled
   else
-    aura.display.glowWhenActive = frame.glowWhenActiveCheck:GetChecked() == true
+    aura.display.glowWhenActive = activeGlowEnabled
   end
+  aura.display.activeGlowColor = Colors.Copy(
+    frame.activeGlowColorWrap.color or aura.display.activeGlowColor
+      or { r = 1.00, g = 0.82, b = 0.08, a = 1 })
   if trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura") then
     trigger.showAlways = readyStateEnabled
   end
@@ -1142,6 +1090,18 @@ function Panel:ApplyCurrent()
     BaseRegion:ApplyAnchor(aura, region.frame)
   end
 
+  if ns.FeatureInventory and ns.FeatureInventory.ScheduleRebuild then
+    ns.FeatureInventory:ScheduleRebuild()
+  end
+  if previousGlowWhenActive ~= (aura.display.glowWhenActive == true)
+      or previousActiveGlowStyle ~= (aura.display.activeGlowStyle or "NONE") then
+    -- SpellCooldownProvider keeps a deliberately small UNIT_AURA index for
+    -- active-glow bars. Rebuild it immediately when the editor changes opt-in
+    -- state so the next player aura update cannot use a stale list.
+    if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+      ns.TriggerBase:InvalidateProviderCaches("spell_cooldown")
+    end
+  end
   ns.runtime:RefreshAura(aura.id)
   ns.ui.AuraTree:Refresh()
   self:UpdateControlStates()
@@ -1176,6 +1136,7 @@ function Panel:Create(parent)
   frame.content = CreateFrame("Frame", nil, frame.scroll)
   frame.content:SetSize(724, 1820)
   frame.scroll:SetScrollChild(frame.content)
+  Frames.ApplyPanelCanvas(frame.content)
   frame:SetScript("OnSizeChanged", function(selfFrame, width)
     frame.content:SetWidth(math.max(724, (tonumber(width) or selfFrame:GetWidth() or 0) - 28))
     if Panel.frame == frame and frame.sectionEntries then
@@ -1194,7 +1155,7 @@ function Panel:Create(parent)
   frame.hint:Hide()
 
   frame.canvasSection = CreateSection(frame.content, "Look", -36, 480)
-  frame.canvasSection.expandedHeightAura = 520
+  frame.canvasSection.expandedHeightAura = 590
   frame.canvasSection.expandedHeightGroup = 352
   frame.canvasSection.expandedHeightNameplate = 270
   frame.groupSection = CreateSection(frame.content, "Group Layout", -396, 132)
@@ -1227,7 +1188,7 @@ function Panel:Create(parent)
       Panel:SetActiveSection(sectionKey)
       Panel:UpdateControlStates()
     end)
-    Fonts.Apply(tab:GetFontString(), 11, "")
+    Theme.ApplyTypography(tab:GetFontString(), "controlSmall")
     Theme.StyleTab(tab, false)
     frame.sectionTabs[entry.key] = tab
   end
@@ -1248,31 +1209,32 @@ function Panel:Create(parent)
   frame.levelWrap = CreateLabeledInput(frame.canvasSection, "Level", 200, -212, 58)
 
   frame.barColorWrap = CreateColorSwatch(frame.canvasSection, "Bar Color", 12, -284)
-  frame.glowWhenActiveCheck = Frames.CreateCheckbox(frame.canvasSection, "Glow When Active")
-  frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 400, -336)
-  frame.activeGlowStyleWrap = CreateLabeledDropdown(frame.canvasSection, "Glow When Active", 400, -324, 155, activeGlowStyleValues)
+  frame.glowWhenActiveCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Glow When Active")
+  frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 12, -372)
+  frame.activeGlowStyleWrap = CreateLabeledDropdown(frame.canvasSection, "Glow Type", 220, -364, 155, activeGlowStyleValues)
+  frame.activeGlowColorWrap = CreateColorSwatch(frame.canvasSection, "Glow Color", 430, -372)
   frame.showAlwaysReadyCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Show While Ready")
   frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 12, -336)
   frame.readyColorWrap = CreateColorSwatch(frame.canvasSection, "Ready Color", 220, -336)
-  frame.barTextureWrap = CreateLabeledDropdown(frame.canvasSection, "Bar Texture", 430, -276, 166, barTextureValues)
+  frame.barTextureWrap = CreateLabeledDropdown(frame.canvasSection, "Bar Texture", 430, -276, 166, GetBarTextureValues)
   frame.showBackgroundCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Show Background")
-  frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -364)
-  frame.backgroundColorWrap = CreateColorSwatch(frame.canvasSection, "Background", 220, -364)
+  frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -444)
+  frame.backgroundColorWrap = CreateColorSwatch(frame.canvasSection, "Background", 220, -444)
   frame.backgroundColorWrap.button:ClearAllPoints()
-  frame.backgroundColorWrap.button:SetPoint("TOPLEFT", 220, -364)
+  frame.backgroundColorWrap.button:SetPoint("TOPLEFT", 220, -444)
   frame.backgroundColorWrap.label:ClearAllPoints()
   frame.backgroundColorWrap.label:SetPoint("LEFT", frame.backgroundColorWrap.button, "RIGHT", 8, 0)
-  frame.backgroundGammaWrap = CreateLabeledInput(frame.canvasSection, "Background Gamma", 430, -364, 70)
-  frame.permanentAlphaWrap = CreateLabeledInput(frame.canvasSection, "Permanent Aura Alpha", 540, -364, 70)
+  frame.backgroundGammaWrap = CreateLabeledInput(frame.canvasSection, "Background Gamma", 430, -444, 70)
+  frame.permanentAlphaWrap = CreateLabeledInput(frame.canvasSection, "Permanent Aura Alpha", 540, -444, 70)
   frame.auraListSwipeCheck = Frames.CreateCheckbox(
     frame.canvasSection, "Show Cooldown Swipe")
-  frame.auraListSwipeCheck:SetPoint("TOPLEFT", 12, -412)
+  frame.auraListSwipeCheck:SetPoint("TOPLEFT", 12, -480)
   frame.noStacksBarColorCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Out-of-Stacks Color")
-  frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -412)
-  frame.noStacksBarColorWrap = CreateColorSwatch(frame.canvasSection, "Color", 220, -404)
+  frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -480)
+  frame.noStacksBarColorWrap = CreateColorSwatch(frame.canvasSection, "Color", 220, -472)
   frame.chargeCooldownCheck = Frames.CreateLabeledToggle(
     frame.canvasSection, "Show cooldown while charges remain")
-  frame.chargeCooldownCheck:SetPoint("TOPLEFT", 12, -448)
+  frame.chargeCooldownCheck:SetPoint("TOPLEFT", 12, -516)
   frame.barColorWrap.button:SetScript("OnClick", function()
     local widget = frame.barColorWrap
     local starting = widget.color or { r = 0.1, g = 0.6, b = 1, a = 1 }
@@ -1380,7 +1342,7 @@ function Panel:Create(parent)
   frame.showIconCheck = Frames.CreateLabeledToggle(frame.iconSection, "Show Icon")
   frame.showIconCheck:SetPoint("TOPLEFT", 12, -34)
   frame.reverseCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Drain")
-  frame.reverseCheck:SetPoint("TOPLEFT", 600, -336)
+  frame.reverseCheck:SetPoint("TOPLEFT", 12, -408)
   frame.hideCDMIconCheck = Frames.CreateLabeledToggle(frame.iconSection, "Hide CDM Icon")
   frame.hideCDMIconCheck:SetPoint("TOPLEFT", 330, -34)
   frame.iconMatchSizeCheck = Frames.CreateCheckbox(frame.iconSection, "Match Bar Size")
@@ -1518,6 +1480,7 @@ function Panel:Create(parent)
     frame.chargeCooldownCheck,
     frame.glowWhenActiveCheck,
     frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown,
+    frame.activeGlowColorWrap.label, frame.activeGlowColorWrap.button, frame.activeGlowColorWrap.valueText,
     frame.showAlwaysReadyCheck,
     frame.reverseCheck,
     frame.readyColorWrap.label, frame.readyColorWrap.button, frame.readyColorWrap.valueText,
@@ -1713,7 +1676,23 @@ function Panel:Create(parent)
   InitDropdownWithCallback(frame.parentPointWrap.dropdown, Anchors.GetPointList, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.anchorWrap.dropdown, Anchors.GetTargetList, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.nameplateAnchorWrap.dropdown, Anchors.GetNameplateAnchorList, function() Panel:ApplyCurrent() end)
-  InitDropdownWithCallback(frame.barTextureWrap.dropdown, barTextureValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.barTextureWrap.dropdown, GetBarTextureValues, function() Panel:ApplyCurrent() end)
+  if frame.barTextureWrap.dropdown.Button and TexturePicker then
+    -- UIDropDownMenuTemplate opens its stock menu on mouse-down. Keep the
+    -- dropdown only as the saved-value/display adapter and put one release-
+    -- only hit target above it so Bar Texture has a single menu authority.
+    frame.barTextureWrap.dropdown.Button:EnableMouse(false)
+    frame.barTexturePickerHitBox = CreateFrame("Button", nil, frame.barTextureWrap.dropdown)
+    frame.barTexturePickerHitBox:SetAllPoints(frame.barTextureWrap.dropdown)
+    frame.barTexturePickerHitBox:SetFrameLevel(frame.barTextureWrap.dropdown:GetFrameLevel() + 20)
+    frame.barTexturePickerHitBox:RegisterForClicks("LeftButtonUp")
+    frame.barTexturePickerHitBox:SetScript("OnClick", function()
+      TexturePicker:Toggle(frame.barTextureWrap.dropdown, frame.barTextureWrap.dropdown, GetBarTextureValues, {
+        title = "Select Bar Texture",
+        onChanged = function() Panel:ApplyCurrent() end,
+      })
+    end)
+  end
   InitDropdownWithCallback(frame.activeGlowStyleWrap.dropdown, activeGlowStyleValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.groupGrowthWrap.dropdown, { "DOWN", "UP", "RIGHT", "LEFT" }, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.iconAnchorWrap.dropdown, iconAnchorValues, function() Panel:ApplyCurrent() end)
@@ -1769,6 +1748,7 @@ function Panel:Create(parent)
   WireColor(frame.iconSwipeColorWrap, { r = 0, g = 0, b = 0, a = 0.60 })
   WireColor(frame.groupBackgroundColorWrap, { r = 0, g = 0, b = 0, a = 0.45 })
   WireColor(frame.noStacksBarColorWrap, { r = 0.86, g = 0.18, b = 0.18, a = 1 })
+  WireColor(frame.activeGlowColorWrap, { r = 1.00, g = 0.82, b = 0.08, a = 1 })
 
   return frame
 end
@@ -1838,25 +1818,26 @@ function Panel:ApplyCanvasLayout(isGroup, isNameplateAura)
   PositionLabeledDropdown(frame.barTextureWrap, 430, -276)
   PositionColorSwatch(frame.readyColorWrap, 220, -336)
   frame.glowWhenActiveCheck:ClearAllPoints()
-  frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 400, -336)
-  PositionLabeledDropdown(frame.activeGlowStyleWrap, 400, -324)
+  frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 12, -372)
+  PositionLabeledDropdown(frame.activeGlowStyleWrap, 220, -364)
+  PositionColorSwatch(frame.activeGlowColorWrap, 430, -372)
   frame.showAlwaysReadyCheck:ClearAllPoints()
   frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 12, -336)
   frame.reverseCheck:ClearAllPoints()
-  frame.reverseCheck:SetPoint("TOPLEFT", 600, -336)
+  frame.reverseCheck:SetPoint("TOPLEFT", 12, -408)
 
   frame.showBackgroundCheck:ClearAllPoints()
-  frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -364)
-  PositionColorSwatch(frame.backgroundColorWrap, 220, -364)
-  PositionLabeledInput(frame.backgroundGammaWrap, 430, -364)
-  PositionLabeledInput(frame.permanentAlphaWrap, 540, -364)
+  frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -444)
+  PositionColorSwatch(frame.backgroundColorWrap, 220, -444)
+  PositionLabeledInput(frame.backgroundGammaWrap, 430, -444)
+  PositionLabeledInput(frame.permanentAlphaWrap, 540, -444)
   frame.auraListSwipeCheck:ClearAllPoints()
-  frame.auraListSwipeCheck:SetPoint("TOPLEFT", 12, -412)
+  frame.auraListSwipeCheck:SetPoint("TOPLEFT", 12, -480)
   frame.noStacksBarColorCheck:ClearAllPoints()
-  frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -412)
-  PositionColorSwatch(frame.noStacksBarColorWrap, 220, -404)
+  frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -480)
+  PositionColorSwatch(frame.noStacksBarColorWrap, 220, -472)
   frame.chargeCooldownCheck:ClearAllPoints()
-  frame.chargeCooldownCheck:SetPoint("TOPLEFT", 12, -448)
+  frame.chargeCooldownCheck:SetPoint("TOPLEFT", 12, -516)
 end
 
 function Panel:ApplyIconLayout(isNameplateAura)
@@ -1914,7 +1895,7 @@ function Panel:LayoutSectionTabs()
     tab:SetShown(available)
     if available then
       tab:ClearAllPoints()
-      tab:SetSize(tabWidth, 32)
+      tab:SetSize(tabWidth, Theme.layout.secondaryTabHeight)
       if previous then
         tab:SetPoint("TOPLEFT", previous, "TOPRIGHT", 0, 0)
       else
@@ -2023,8 +2004,13 @@ function Panel:Refresh(aura)
   SetColorSwatch(self.frame.noStacksBarColorWrap,
     aura.display.noStacksBarColor or { r = 0.86, g = 0.18, b = 0.18, a = 1 })
   self.frame.chargeCooldownCheck:SetChecked(trigger.showChargeCooldown ~= false)
-  self.frame.glowWhenActiveCheck:SetChecked(aura.display.glowWhenActive == true)
-  SetDropdown(self.frame.activeGlowStyleWrap.dropdown, aura.display.activeGlowStyle or "NONE")
+  local savedActiveGlowStyle = aura.display.activeGlowStyle or "NONE"
+  local activeGlowEnabled = aura.display.glowWhenActive == true or savedActiveGlowStyle ~= "NONE"
+  self.frame.glowWhenActiveCheck:SetChecked(activeGlowEnabled)
+  SetDropdown(self.frame.activeGlowStyleWrap.dropdown,
+    savedActiveGlowStyle ~= "NONE" and savedActiveGlowStyle or "INNER_GLOW")
+  SetColorSwatch(self.frame.activeGlowColorWrap,
+    aura.display.activeGlowColor or { r = 1.00, g = 0.82, b = 0.08, a = 1 })
   self.frame.showAlwaysReadyCheck:SetChecked(
     trigger.showAlways == true or aura.display.readyLook == true)
   if self.frame.showAlwaysReadyCheck.Text then
@@ -2049,6 +2035,7 @@ function Panel:Refresh(aura)
   SetColorSwatch(self.frame.readyColorWrap, aura.display.readyColor or { r = 0.16, g = 0.72, b = 0.26, a = 1 })
   aura.display.barTexture = NormalizeBarTextureValue(aura.display.barTexture)
   SetDropdown(self.frame.barTextureWrap.dropdown, aura.display.barTexture or "FLAT")
+  if TexturePicker then TexturePicker:RefreshIfOpen(self.frame.barTextureWrap.dropdown) end
   self.frame.showBackgroundCheck:SetChecked(aura.display.showBackground ~= false)
   SetColorSwatch(self.frame.backgroundColorWrap, aura.display.backgroundColor or { r = 0, g = 0, b = 0, a = 0.45 })
   self.frame.backgroundGammaWrap.input:SetText(tostring(aura.display.backgroundGamma or 1))
@@ -2198,10 +2185,18 @@ function Panel:Refresh(aura)
   self.frame.chargeCooldownCheck:SetShown(
     trigger.type == "spell_cooldown" and not isGroup and not isText and not isNameplateAura)
   local showActiveGlowStyle = trigger.type == "spell_cooldown" and aura.kind == "bar"
-  self.frame.glowWhenActiveCheck:SetShown(not isGroup and not isText and not isAuraBarList
-    and not isNameplateAura and not showActiveGlowStyle)
-  self.frame.activeGlowStyleWrap.label:SetShown(showActiveGlowStyle)
-  self.frame.activeGlowStyleWrap.dropdown:SetShown(showActiveGlowStyle)
+  local activeGlowEnabled = self.frame.glowWhenActiveCheck:GetChecked() == true
+  local selectedActiveGlowStyle = UIDropDownMenu_GetSelectedValue(self.frame.activeGlowStyleWrap.dropdown)
+    or "INNER_GLOW"
+  self.frame.glowWhenActiveCheck:SetShown(
+    not isGroup and not isText and not isAuraBarList and not isNameplateAura)
+  self.frame.activeGlowStyleWrap.label:SetShown(showActiveGlowStyle and activeGlowEnabled)
+  self.frame.activeGlowStyleWrap.dropdown:SetShown(showActiveGlowStyle and activeGlowEnabled)
+  local showActiveGlowColor = showActiveGlowStyle and activeGlowEnabled
+    and selectedActiveGlowStyle ~= "ACTIVE_DURATION"
+  self.frame.activeGlowColorWrap.label:SetShown(showActiveGlowColor)
+  self.frame.activeGlowColorWrap.button:SetShown(showActiveGlowColor)
+  self.frame.activeGlowColorWrap.valueText:SetShown(showActiveGlowColor)
   self.frame.showAlwaysReadyCheck:SetShown(not isGroup and not isText and supportsShowAlways)
   self.frame.reverseCheck:SetShown(not isGroup and not isText)
   local showReadyStateOptions = self.frame.showAlwaysReadyCheck:GetChecked() == true
@@ -2284,6 +2279,7 @@ function Panel:Refresh(aura)
 
   for _, toggle in ipairs({
     self.frame.showBackgroundCheck,
+    self.frame.glowWhenActiveCheck,
     self.frame.noStacksBarColorCheck,
     self.frame.chargeCooldownCheck,
     self.frame.reverseCheck,

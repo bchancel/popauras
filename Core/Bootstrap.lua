@@ -14,21 +14,29 @@ Bootstrap:SetScript("OnEvent", function(_, event, addonName)
   end
 
   ns.SavedVariables:Initialize()
-  if ns.NativeAuras and ns.NativeAuras.Initialize then
-    ns.NativeAuras:Initialize()
+  local featureSnapshot = ns.FeatureInventory and ns.FeatureInventory:Rebuild(false) or nil
+  if featureSnapshot and featureSnapshot.needsNativeAuras
+      and ns.NativeAuras and ns.NativeAuras.EnsureActive then
+    ns.NativeAuras:EnsureActive()
   end
-  ns.Events:Initialize()
-  if ns.CooldownManager and ns.CooldownManager.Initialize then
-    ns.CooldownManager:Initialize()
+  ns.Events:Initialize(featureSnapshot)
+  if featureSnapshot and featureSnapshot.needsCooldownManager
+      and ns.CooldownManager and ns.CooldownManager.EnsureActive then
+    ns.CooldownManager:EnsureActive(true)
   end
   if ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Initialize then
     ns.BlizzardAuraFrames:Initialize()
   end
-  if ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.Initialize then
-    ns.BlizzardSpellAlerts:Initialize()
+  if featureSnapshot and featureSnapshot.needsSpellAlerts
+      and ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.EnsureActive then
+    ns.BlizzardSpellAlerts:EnsureActive(true)
   end
-  if ns.InterruptTracker and ns.InterruptTracker.Initialize then
-    ns.InterruptTracker:Initialize()
+  if featureSnapshot and featureSnapshot.needsInterruptTracker
+      and ns.InterruptTracker and ns.InterruptTracker.EnsureInitialized then
+    ns.InterruptTracker:EnsureInitialized(true)
+  end
+  if featureSnapshot and featureSnapshot.needsSharedMedia and ns.util.Media then
+    ns.util.Media:EnsureSharedMedia(true)
   end
   ns.Slash:Initialize()
   ns.runtime:RefreshAll()

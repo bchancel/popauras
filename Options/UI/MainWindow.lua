@@ -1,13 +1,12 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
-local Fonts = ns.util.Fonts
 local Theme = ns.util.Theme
 
 local MainWindow = {}
 ns.ui.MainWindow = MainWindow
 
-local SIDEBAR_WIDTH = 340
+local SIDEBAR_WIDTH = Theme.layout.sidebarWidth
 
 local function GetAddonVersion()
   local getter = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
@@ -171,16 +170,16 @@ local function LayoutTabs(frame, aura)
     end
   end
 
-  local availableWidth = math.max(1, (frame.editor and frame.editor:GetWidth() or 0) - 24)
-  local tabWidth = math.max(90, math.floor(availableWidth / math.max(1, #visibleTabs)))
   local previousVisible
   for _, tab in ipairs(visibleTabs) do
     tab:ClearAllPoints()
-    tab:SetSize(tabWidth, 38)
+    local label = tab._popAurasTabLabel or ""
+    local tabWidth = math.max(92, math.min(142, 34 + (#label * 8)))
+    tab:SetSize(tabWidth, Theme.layout.primaryTabHeight)
     if previousVisible then
-      tab:SetPoint("TOPLEFT", previousVisible, "TOPRIGHT", 0, 0)
+      tab:SetPoint("TOPLEFT", previousVisible, "TOPRIGHT", 4, 0)
     else
-      tab:SetPoint("TOPLEFT", 12, -86)
+      tab:SetPoint("TOPLEFT", Theme.layout.panelPadding, -84)
     end
     previousVisible = tab
   end
@@ -300,13 +299,13 @@ function MainWindow:Create()
   Theme.StyleSurface(frame.brandMark, "accentSoft", "accent")
 
   frame.brandText = frame.brandMark:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.brandText, 13, "")
+  Theme.ApplyTypography(frame.brandText, "brand")
   frame.brandText:SetPoint("CENTER", 0, 1)
   frame.brandText:SetText("/PA")
   Theme.SetText(frame.brandText, "accentBright")
 
   frame.headerText = frame.header:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.headerText, 19, "")
+  Theme.ApplyTypography(frame.headerText, "windowTitle")
   frame.headerText:SetPoint("LEFT", frame.brandMark, "RIGHT", 10, 1)
   local version = GetAddonVersion()
   frame.headerText:SetText("PopAuras")
@@ -334,13 +333,13 @@ function MainWindow:Create()
   frame.editor:SetFrameLevel(frame:GetFrameLevel() + 5)
 
   frame.editorTitle = frame.editor:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.editorTitle, 18, "")
-  frame.editorTitle:SetPoint("TOPLEFT", 24, -20)
+  Theme.ApplyTypography(frame.editorTitle, "panelTitle")
+  frame.editorTitle:SetPoint("TOPLEFT", Theme.layout.panelPadding, -20)
   frame.editorTitle:SetText("Aura Configuration")
   Theme.SetText(frame.editorTitle, "text")
 
   frame.editorSubtitle = frame.editor:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.editorSubtitle, 11, "")
+  Theme.ApplyTypography(frame.editorSubtitle, "bodySmall")
   frame.editorSubtitle:SetPoint("TOPLEFT", frame.editorTitle, "BOTTOMLEFT", 0, -7)
   frame.editorSubtitle:SetText("Configure the selected aura.")
   Theme.SetText(frame.editorSubtitle, "textMuted")
@@ -350,12 +349,12 @@ function MainWindow:Create()
   end)
   frame.closeButton:SetPoint("TOPRIGHT", -16, -14)
   Theme.StyleButton(frame.closeButton, "ghost")
-  Fonts.Apply(frame.closeButton:GetFontString(), 15, "")
+  Theme.ApplyTypography(frame.closeButton:GetFontString(), "glyph", "")
 
   frame.previewAnimateCheck = Frames.CreateToggle(frame.editor)
   frame.previewAnimateCheck:SetPoint("RIGHT", frame.closeButton, "LEFT", -18, 0)
   frame.previewAnimateLabel = frame.editor:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.previewAnimateLabel, 11, "")
+  Theme.ApplyTypography(frame.previewAnimateLabel, "bodySmall")
   frame.previewAnimateLabel:SetPoint("RIGHT", frame.previewAnimateCheck, "LEFT", -8, 0)
   frame.previewAnimateLabel:SetText("Preview Animation")
   Theme.SetText(frame.previewAnimateLabel, "textSecondary")
@@ -380,7 +379,7 @@ function MainWindow:Create()
   frame.triggerDebugCheck = Frames.CreateToggle(frame.editor)
   frame.triggerDebugCheck:SetPoint("RIGHT", frame.previewAnimateLabel, "LEFT", -24, 0)
   frame.triggerDebugLabel = frame.editor:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.triggerDebugLabel, 11, "")
+  Theme.ApplyTypography(frame.triggerDebugLabel, "bodySmall")
   frame.triggerDebugLabel:SetPoint("RIGHT", frame.triggerDebugCheck, "LEFT", -8, 0)
   frame.triggerDebugLabel:SetText("Debug Trigger")
   Theme.SetText(frame.triggerDebugLabel, "textSecondary")
@@ -419,7 +418,7 @@ function MainWindow:Create()
   end)
   frame.removeFromGroupButton:SetPoint("RIGHT", frame.triggerDebugLabel, "LEFT", -18, 0)
   Frames.StyleDangerButton(frame.removeFromGroupButton)
-  Fonts.Apply(frame.removeFromGroupButton:GetFontString(), 10, "")
+  Theme.ApplyTypography(frame.removeFromGroupButton:GetFontString(), "caption")
 
   frame.addToGroupDropdown = Frames.CreateDropdown(frame.editor, 122, function(_, level)
     if level ~= 1 then
@@ -472,7 +471,7 @@ function MainWindow:Create()
   frame.addToGroupDropdown:SetPoint("RIGHT", frame.triggerDebugLabel, "LEFT", -2, 0)
   UIDropDownMenu_SetText(frame.addToGroupDropdown, "Add to Group")
   Theme.StyleDropdown(frame.addToGroupDropdown, "success")
-  Fonts.Apply(frame.addToGroupDropdown.Text, 10, "")
+  Theme.ApplyTypography(frame.addToGroupDropdown.Text, "caption")
 
   frame.editorDivider = Theme.CreateAccentLine(frame.editor, 1, "borderStrong")
   frame.editorDivider:SetPoint("TOPLEFT", 0, -124)
@@ -484,13 +483,14 @@ function MainWindow:Create()
       ns.db.ui.activeTab = key
       self:RefreshSelection()
     end)
-    Fonts.Apply(tab:GetFontString(), 12, "")
+    Theme.ApplyTypography(tab:GetFontString(), "control")
     Theme.StyleTab(tab, false)
+    tab._popAurasTabLabel = tabLabels[key]
     frame.tabs[key] = tab
   end
 
   frame.content = CreateFrame("Frame", nil, frame.editor)
-  frame.content:SetPoint("TOPLEFT", 24, -140)
+  frame.content:SetPoint("TOPLEFT", Theme.layout.panelPadding, -140)
   frame.content:SetPoint("BOTTOMRIGHT", -18, 14)
 
   frame.sidebarFooterLine = Theme.CreateAccentLine(frame.sidebar, 1, "border")
@@ -498,13 +498,13 @@ function MainWindow:Create()
   frame.sidebarFooterLine:SetPoint("BOTTOMRIGHT", -16, 44)
 
   frame.sidebarStatus = frame.sidebar:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.sidebarStatus, 10, "")
+  Theme.ApplyTypography(frame.sidebarStatus, "caption")
   frame.sidebarStatus:SetPoint("BOTTOMLEFT", 18, 16)
   frame.sidebarStatus:SetText("0 of 0 auras loaded")
   Theme.SetText(frame.sidebarStatus, "textMuted")
 
   frame.sidebarBuild = frame.sidebar:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.sidebarBuild, 10, "")
+  Theme.ApplyTypography(frame.sidebarBuild, "caption")
   frame.sidebarBuild:SetPoint("BOTTOMRIGHT", -18, 16)
   frame.sidebarBuild:SetText(version and ("v" .. version) or "")
   Theme.SetText(frame.sidebarBuild, "textSecondary")
@@ -514,7 +514,7 @@ function MainWindow:Create()
   frame.resizeHandle:SetPoint("BOTTOMRIGHT", -2, 2)
   frame.resizeHandle:SetFrameLevel(frame:GetFrameLevel() + 80)
   frame.resizeHandle.text = frame.resizeHandle:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.resizeHandle.text, 15, "OUTLINE")
+  Theme.ApplyTypography(frame.resizeHandle.text, "glyph")
   frame.resizeHandle.text:SetPoint("CENTER", 1, -1)
   frame.resizeHandle.text:SetText("//")
   Theme.SetText(frame.resizeHandle.text, "textMuted")

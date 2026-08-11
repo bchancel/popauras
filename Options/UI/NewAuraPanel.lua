@@ -1,7 +1,6 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
-local Fonts = ns.util.Fonts
 local Theme = ns.util.Theme
 
 local NewAuraPanel = {}
@@ -110,13 +109,13 @@ local function CreatePlaceholderTile(parent)
   tile.art:SetAlpha(0.85)
 
   local plus = tile.art:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(plus, 32, "OUTLINE")
+  Theme.ApplyTypography(plus, "illustration")
   plus:SetPoint("CENTER", 0, 2)
   plus:SetText("+")
   Theme.SetText(plus, "textMuted")
 
   tile.title = tile:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(tile.title, 14, "OUTLINE")
+  Theme.ApplyTypography(tile.title, "cardTitle")
   tile.title:SetPoint("TOPLEFT", 12, -96)
   tile.title:SetPoint("TOPRIGHT", -12, -96)
   tile.title:SetJustifyH("CENTER")
@@ -153,7 +152,7 @@ local function BuildIconArt(host)
   plate:SetBackdropBorderColor(0.40, 0.40, 0.45, 1)
 
   local question = plate:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(question, 32, "OUTLINE")
+  Theme.ApplyTypography(question, "illustration")
   question:SetPoint("CENTER")
   question:SetText("?")
   question:SetTextColor(0.98, 0.20, 0.16)
@@ -263,7 +262,7 @@ local function BuildDynamicArt(host)
   end
 
   local arrow = host:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(arrow, 22, "OUTLINE")
+  Theme.ApplyTypography(arrow, "glyphLarge")
   arrow:SetPoint("CENTER", 0, 6)
   arrow:SetText(">>")
   arrow:SetTextColor(0.28, 0.96, 0.22)
@@ -271,7 +270,7 @@ end
 
 local function BuildTextAuraArt(host)
   local label = host:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(label, 36, "OUTLINE")
+  Theme.ApplyTypography(label, "hero")
   label:SetPoint("CENTER", 0, 2)
   label:SetText("Abc")
   label:SetTextColor(0.82, 0.72, 0.98)
@@ -445,7 +444,7 @@ local function CreateTile(parent, option)
   BuildArt(tile.art, option.art)
 
   tile.title = tile:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(tile.title, 16, "OUTLINE")
+  Theme.ApplyTypography(tile.title, "sectionTitle", "OUTLINE")
   tile.title:SetPoint("TOPLEFT", 10, -94)
   tile.title:SetPoint("TOPRIGHT", -10, -94)
   tile.title:SetJustifyH("CENTER")
@@ -481,7 +480,7 @@ function NewAuraPanel:Create(parent)
 
   frame.summary = Frames.CreateLabel(frame.content, "Choose an aura type to start building.", "GameFontNormalLarge")
   frame.summary:SetPoint("TOPLEFT", 18, -20)
-  Fonts.Apply(frame.summary, 18, "OUTLINE")
+  Theme.ApplyTypography(frame.summary, "panelTitle", "OUTLINE")
   Theme.SetText(frame.summary, "text")
 
   frame.hint = Frames.CreateLabel(frame.content, "Pick a base layout first, then give it a name in the create dialog.", "GameFontHighlight")

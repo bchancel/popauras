@@ -3,6 +3,7 @@ local _, ns = ...
 local BaseRegion = ns.renderers.BaseRegion
 local Colors = ns.util.Colors
 local Fonts = ns.util.Fonts
+local Media = ns.util.Media
 local Frames = ns.util.Frames
 
 local Region = {}
@@ -135,12 +136,6 @@ local function PositionText(fontString, owner, icon, anchor, x, y)
   end
 end
 
-local function TexturePath(value)
-  if value == "DEFAULT" or value == "FLAT" then return "Interface\\Buttons\\WHITE8x8" end
-  if value == "GLAZE" then return "Interface\\RaidFrame\\Raid-Bar-Hp-Fill" end
-  return value or "Interface\\TargetingFrame\\UI-StatusBar"
-end
-
 local oppositePoints = {
   LEFT = "RIGHT", RIGHT = "LEFT", TOP = "BOTTOM", BOTTOM = "TOP",
   TOPLEFT = "BOTTOMRIGHT", TOPRIGHT = "BOTTOMLEFT",
@@ -212,10 +207,10 @@ function Region:StyleFallback(aura, isPreview, state)
     fallback.icon:SetAllPoints()
   else
     fallback.bar:Show()
-    fallback.bar:SetStatusBarTexture(TexturePath(display.barTexture))
+    fallback.bar:SetStatusBarTexture(Media:ResolveStatusBarTexture(display.barTexture))
     fallback.bar:SetOrientation(display.orientation or "HORIZONTAL")
     if fallback.bar.SetRotatesTexture then
-      fallback.bar:SetRotatesTexture((display.orientation or "HORIZONTAL") ~= "VERTICAL")
+      fallback.bar:SetRotatesTexture((display.orientation or "HORIZONTAL") == "VERTICAL")
     end
     if fallback.bar.SetReverseFill then fallback.bar:SetReverseFill(display.reverse == true) end
     local remaining = isPreview and state and state.progressType == "timed"
@@ -515,9 +510,9 @@ function Region:StyleButton(aura)
     button.background:Hide()
   else
     button.bar:Show()
-    button.bar:SetStatusBarTexture(TexturePath(display.barTexture))
+    button.bar:SetStatusBarTexture(Media:ResolveStatusBarTexture(display.barTexture))
     button.bar:SetOrientation(display.orientation or "HORIZONTAL")
-    if button.bar.SetRotatesTexture then button.bar:SetRotatesTexture((display.orientation or "HORIZONTAL") ~= "VERTICAL") end
+    if button.bar.SetRotatesTexture then button.bar:SetRotatesTexture((display.orientation or "HORIZONTAL") == "VERTICAL") end
     if button.bar.SetReverseFill then button.bar:SetReverseFill(display.reverse == true) end
     button.bar:SetStatusBarColor(display.color.r, display.color.g, display.color.b, display.color.a or 1)
     button.background:SetShown(display.showBackground ~= false)

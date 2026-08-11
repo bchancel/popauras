@@ -1,0 +1,30 @@
+## Interface: 120100
+## Title: PopAuras Options
+## Notes: Load-on-demand configuration editor for PopAuras
+## Author: Popabeast-Sargeras
+## Version: 12.1.6
+## Dependencies: PopAuras
+## LoadOnDemand: 1
+
+Bootstrap.lua
+EditorDesign.lua
+TexturePicker.lua
+SoundPicker.lua
+
+UI\AuraTree.lua
+UI\ExportWindow.lua
+UI\Toolbar.lua
+UI\CreateAuraDialog.lua
+UI\NewAuraPanel.lua
+UI\Panels\DisplayPanel.lua
+UI\Panels\TriggerPanel.lua
+UI\Panels\ConditionsPanel.lua
+UI\Panels\ActionsPanel.lua
+UI\Panels\LoadPanel.lua
+UI\Panels\PositionPanel.lua
+UI\Panels\GroupPanel.lua
+UI\Panels\ImportExportPanel.lua
+UI\Panels\InterruptTrackerDisplayPanel.lua
+UI\MainWindow.lua
+
+Ready.lua

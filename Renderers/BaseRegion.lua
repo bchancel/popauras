@@ -11,6 +11,27 @@ local GLOW_PADDING_RATIO = 0.18
 local GLOW_MIN_PADDING = 8
 local GLOW_OUTER_TEXCOORD = { 0.00781250, 0.50781250, 0.27734375, 0.52734375 }
 local GLOW_PULSE_TEXCOORD = { 0.00781250, 0.50781250, 0.53515625, 0.78515625 }
+local DEFAULT_GLOW_COLOR = { r = 1.00, g = 0.82, b = 0.08, a = 1.00 }
+
+local function ApplyBuiltInGlowColor(glow, color)
+  if not glow then return end
+  color = type(color) == "table" and color or DEFAULT_GLOW_COLOR
+  local r = tonumber(color.r) or DEFAULT_GLOW_COLOR.r
+  local g = tonumber(color.g) or DEFAULT_GLOW_COLOR.g
+  local b = tonumber(color.b) or DEFAULT_GLOW_COLOR.b
+  local a = tonumber(color.a)
+  if a == nil then a = DEFAULT_GLOW_COLOR.a end
+  if glow.outerGlow then glow.outerGlow:SetVertexColor(r, g, b, 0.78 * a) end
+  if glow.outerGlowPulse then glow.outerGlowPulse:SetVertexColor(r, g, b, a) end
+end
+
+local function PrepareTintableGlowTexture(texture)
+  if not texture then return end
+  -- IconAlert is authored with a warm color. Desaturating it first turns the
+  -- source into a luminance mask so SetVertexColor can tint it to any chosen
+  -- hue without multiplying some channels down to near-black.
+  texture:SetDesaturated(true)
+end
 
 local function CleanupLegacyGlow(frame)
   if frame and frame.spellActivationAlert and ActionButton_HideOverlayGlow then
@@ -110,13 +131,14 @@ local function UpdateBuiltInGlowLayout(frame)
   glow:SetFrameLevel(frame:GetFrameLevel())
 end
 
-local function EnsureBuiltInGlow(frame)
+local function EnsureBuiltInGlow(frame, color)
   if not frame then
     return nil
   end
 
   local glow = frame._popAurasBuiltInGlow
   if glow then
+    ApplyBuiltInGlowColor(glow, color)
     UpdateBuiltInGlowLayout(frame)
     return glow
   end
@@ -129,14 +151,15 @@ local function EnsureBuiltInGlow(frame)
   glow.outerGlow:SetTexture(GLOW_TEXTURE)
   glow.outerGlow:SetTexCoord(unpack(GLOW_OUTER_TEXCOORD))
   glow.outerGlow:SetBlendMode("ADD")
-  glow.outerGlow:SetVertexColor(1.00, 0.86, 0.20, 0.78)
+  PrepareTintableGlowTexture(glow.outerGlow)
 
   glow.outerGlowPulse = glow:CreateTexture(nil, "OVERLAY")
   glow.outerGlowPulse:SetAllPoints()
   glow.outerGlowPulse:SetTexture(GLOW_TEXTURE)
   glow.outerGlowPulse:SetTexCoord(unpack(GLOW_PULSE_TEXCOORD))
   glow.outerGlowPulse:SetBlendMode("ADD")
-  glow.outerGlowPulse:SetVertexColor(1.00, 0.95, 0.35, 1.00)
+  PrepareTintableGlowTexture(glow.outerGlowPulse)
+  ApplyBuiltInGlowColor(glow, color)
   glow.outerGlowPulse:SetAlpha(0.18)
 
   glow.pulse = glow.outerGlowPulse:CreateAnimationGroup()
@@ -178,8 +201,8 @@ local function StopBuiltInGlow(frame)
   glow:Hide()
 end
 
-local function StartBuiltInGlow(frame)
-  local glow = EnsureBuiltInGlow(frame)
+local function StartBuiltInGlow(frame, color)
+  local glow = EnsureBuiltInGlow(frame, color)
   if not glow then
     return
   end
@@ -318,7 +341,7 @@ function BaseRegion:ApplyFrameLayer(aura, frame, overlay)
   end
 end
 
-local function SetAuraGlow(frame, shouldGlow)
+local function SetAuraGlow(frame, shouldGlow, color)
   if not frame then
     return
   end
@@ -327,9 +350,10 @@ local function SetAuraGlow(frame, shouldGlow)
     if frame._popAurasGlowShown ~= true then
       CleanupLegacyGlow(frame)
       StopBuiltInGlow(frame)
-      StartBuiltInGlow(frame)
+      StartBuiltInGlow(frame, color)
       frame._popAurasGlowShown = true
     elseif frame._popAurasBuiltInGlow then
+      ApplyBuiltInGlowColor(frame._popAurasBuiltInGlow, color)
       UpdateBuiltInGlowLayout(frame)
     end
   elseif frame._popAurasGlowShown == true or frame._popAurasBuiltInGlow or frame.spellActivationAlert then
@@ -339,8 +363,8 @@ local function SetAuraGlow(frame, shouldGlow)
   end
 end
 
-function BaseRegion:SetGlow(frame, shouldGlow)
-  SetAuraGlow(frame, shouldGlow == true)
+function BaseRegion:SetGlow(frame, shouldGlow, color)
+  SetAuraGlow(frame, shouldGlow == true, color)
 end
 
 function BaseRegion:SetUnitFrameGlow(frame, shouldGlow)
@@ -397,7 +421,8 @@ function BaseRegion:ApplyCommonAppearance(aura, frame, state, glowTarget, active
     SetAuraGlow(frame, false)
   end
   frame._popAurasGlowTarget = resolvedGlowTarget
-  SetAuraGlow(resolvedGlowTarget, shouldGlow)
+  SetAuraGlow(resolvedGlowTarget, shouldGlow,
+    aura and aura.display and aura.display.activeGlowColor)
 end
 
 function BaseRegion:Release()

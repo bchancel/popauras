@@ -7,6 +7,7 @@ local EMPTY = {}
 local GLOBAL_REFRESH_EVENTS = {
   PLAYER_ENTERING_WORLD = true,
   PLAYER_EQUIPMENT_CHANGED = true,
+  PLAYER_LEVEL_UP = true,
   PLAYER_TALENT_UPDATE = true,
   PLAYER_SPECIALIZATION_CHANGED = true,
   ACTIVE_PLAYER_SPECIALIZATION_CHANGED = true,
@@ -19,6 +20,7 @@ local GLOBAL_REFRESH_EVENTS = {
   PLAYER_REGEN_DISABLED = true,
   PLAYER_REGEN_ENABLED = true,
   ZONE_CHANGED_NEW_AREA = true,
+  GROUP_ROSTER_UPDATE = true,
   ENCOUNTER_START = true,
   ENCOUNTER_END = true,
 }
@@ -51,12 +53,14 @@ local function ProfileFinish(bucket, startedAt)
   end
 end
 
-local function BuildProvidersByEvent()
+local function BuildProvidersByEvent(activeProviderTypes)
   local providersByEvent = {}
-  for _, provider in pairs(ns.providers or EMPTY) do
-    for _, event in ipairs(provider.events or EMPTY) do
-      providersByEvent[event] = providersByEvent[event] or {}
-      providersByEvent[event][#providersByEvent[event] + 1] = provider
+  for providerKey, provider in pairs(ns.providers or EMPTY) do
+    if not activeProviderTypes or activeProviderTypes[providerKey] == true then
+      for _, event in ipairs(provider.events or EMPTY) do
+        providersByEvent[event] = providersByEvent[event] or {}
+        providersByEvent[event][#providersByEvent[event] + 1] = provider
+      end
     end
   end
   return providersByEvent
@@ -91,18 +95,7 @@ function Events:InitializeEventFrame()
   local frame = CreateFrame("Frame")
   self.frame = frame
   self.unsupportedEvents = {}
-
-  for event in pairs(self.providersByEvent or EMPTY) do
-    if not RegisterTrackedEvent(frame, event) then
-      self.unsupportedEvents[event] = true
-    end
-  end
-
-  for event in pairs(GLOBAL_REFRESH_EVENTS) do
-    if not RegisterTrackedEvent(frame, event) then
-      self.unsupportedEvents[event] = true
-    end
-  end
+  self.registeredEvents = {}
 
   frame:SetScript("OnEvent", function(_, event, ...)
     local eventBucket = string.format("event:%s", tostring(event or "UNKNOWN"))
@@ -180,11 +173,61 @@ function Events:InitializeEventFrame()
   end)
 end
 
-function Events:Initialize()
-  if self.frame then
+function Events:RebuildSubscriptions(snapshot)
+  if not self.frame then
     return
   end
 
-  self.providersByEvent = BuildProvidersByEvent()
+  snapshot = snapshot or (ns.FeatureInventory and ns.FeatureInventory:GetSnapshot()) or nil
+  local activeProviderTypes = snapshot and snapshot.providerTypes or nil
+  self.providersByEvent = BuildProvidersByEvent(activeProviderTypes)
+
+  local desiredEvents = {}
+  for event in pairs(self.providersByEvent or EMPTY) do
+    desiredEvents[event] = true
+  end
+  if snapshot then
+    for event in pairs(snapshot.loadEvents or EMPTY) do
+      desiredEvents[event] = true
+    end
+  else
+    for event in pairs(GLOBAL_REFRESH_EVENTS) do
+      desiredEvents[event] = true
+    end
+  end
+
+  for event in pairs(self.registeredEvents or EMPTY) do
+    if not desiredEvents[event] then
+      self.frame:UnregisterEvent(event)
+      self.registeredEvents[event] = nil
+    end
+  end
+  for event in pairs(desiredEvents) do
+    if not self.registeredEvents[event] and not self.unsupportedEvents[event] then
+      if RegisterTrackedEvent(self.frame, event) then
+        self.registeredEvents[event] = true
+      else
+        self.unsupportedEvents[event] = true
+      end
+    end
+  end
+end
+
+function Events:GetSubscriptionStats()
+  local eventCount, providerCount = 0, 0
+  for _ in pairs(self.registeredEvents or EMPTY) do eventCount = eventCount + 1 end
+  for _ in pairs((ns.FeatureInventory and ns.FeatureInventory:GetSnapshot().providerTypes) or EMPTY) do
+    providerCount = providerCount + 1
+  end
+  return { registeredEvents = eventCount, activeProviderTypes = providerCount }
+end
+
+function Events:Initialize(snapshot)
+  if self.frame then
+    self:RebuildSubscriptions(snapshot)
+    return
+  end
+
   self:InitializeEventFrame()
+  self:RebuildSubscriptions(snapshot)
 end

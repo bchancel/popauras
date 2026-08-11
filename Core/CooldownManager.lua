@@ -24,6 +24,12 @@ Manager.viewerNames = {
 
 local EMPTY = {}
 
+local function IsDemanded()
+  return not ns.FeatureInventory
+    or not ns.FeatureInventory.IsRequired
+    or ns.FeatureInventory:IsRequired("needsCooldownManager")
+end
+
 local function AddUnique(list, seen, value)
   value = Safe:Number(value)
   if value and value >= 0 and not seen[value] then
@@ -133,6 +139,7 @@ function Manager:Invalidate()
 end
 
 function Manager:GetOnUseEquipSlotCooldownIDs(equipSlot)
+  self:EnsureActive(true)
   equipSlot = Safe:Number(equipSlot)
   if not equipSlot or equipSlot <= 0 then return {} end
   self:EnsureCatalog()
@@ -174,6 +181,7 @@ function Manager:FindOnUseEquipSlotFrame(equipSlot, forceRefresh)
 end
 
 function Manager:GetCooldownIDsForSpellID(spellID)
+  self:EnsureActive(true)
   spellID = Safe:Number(spellID)
   if not spellID or spellID <= 0 then return {} end
   self:EnsureCatalog()
@@ -184,6 +192,7 @@ function Manager:GetCooldownIDsForSpellID(spellID)
 end
 
 function Manager:GetDirectCooldownIDsForSpellID(spellID)
+  self:EnsureActive(true)
   spellID = Safe:Number(spellID)
   if not spellID or spellID <= 0 then return {} end
   self:EnsureCatalog()
@@ -198,6 +207,7 @@ function Manager:FindCooldownIDForSpellID(spellID)
 end
 
 function Manager:GetCooldownInfo(cooldownID)
+  self:EnsureActive(true)
   cooldownID = Safe:Number(cooldownID)
   if not cooldownID or cooldownID <= 0 then return nil end
   self:EnsureCatalog()
@@ -230,6 +240,7 @@ local function CollectFrames(manager, node, cooldownID, result, visited)
 end
 
 function Manager:FindFramesByCooldownID(cooldownID, forceRefresh)
+  self:EnsureActive(true)
   cooldownID = Safe:Number(cooldownID)
   if not cooldownID or cooldownID <= 0 then return {} end
   if forceRefresh ~= true and self.frameCache[cooldownID] then
@@ -316,6 +327,7 @@ end
 -- Their public aura-instance ID can be used to request an opaque Blizzard
 -- DurationObject without reading restricted aura records or scalar timing.
 function Manager:FindAuraStateSource(spellIDs, requestedUnit, forceRefresh)
+  self:EnsureActive(true)
   return FindAuraSource(self, spellIDs, requestedUnit, forceRefresh, IsAuraStateFrame)
 end
 
@@ -323,6 +335,7 @@ end
 -- directly into another StatusBar. Keep that narrower contract for native
 -- aura regions and for the final fallback when no DurationObject is available.
 function Manager:FindAuraDisplaySource(spellIDs, requestedUnit, forceRefresh)
+  self:EnsureActive(true)
   return FindAuraSource(self, spellIDs, requestedUnit, forceRefresh, IsAuraDisplayFrame)
 end
 
@@ -435,6 +448,9 @@ function Manager:GetDesiredHiddenIDs()
 end
 
 function Manager:ApplyVisibilityOverrides()
+  if not self.active and not self:EnsureActive(false) then
+    return
+  end
   if self.applyingVisibilityOverrides then return end
   self.applyingVisibilityOverrides = true
   local desired = self:GetDesiredHiddenIDs()
@@ -453,6 +469,7 @@ function Manager:ApplyVisibilityOverrides()
 end
 
 function Manager:ScheduleVisibilityOverrideSync()
+  if not self.active and not IsDemanded() then return end
   if self.visibilitySyncPending then return end
   self.visibilitySyncPending = true
   C_Timer.After(0, function()
@@ -462,6 +479,7 @@ function Manager:ScheduleVisibilityOverrideSync()
 end
 
 function Manager:ScheduleAuraSourceSync()
+  if not self.active and not IsDemanded() then return end
   if self.auraSourceSyncPending then return end
   self.auraSourceSyncPending = true
   C_Timer.After(0, function()
@@ -474,6 +492,7 @@ function Manager:ScheduleAuraSourceSync()
 end
 
 function Manager:ScheduleTrinketSourceSync()
+  if not self.active and not IsDemanded() then return end
   if self.trinketSourceSyncPending then return end
   self.trinketSourceSyncPending = true
   C_Timer.After(0, function()
@@ -496,12 +515,25 @@ end
 function Manager:GetCacheStats()
   local frameCount, catalogCount = 0, 0
   for _, frames in pairs(self.frameCache) do frameCount = frameCount + #frames end
-  self:EnsureCatalog()
-  for _ in pairs(self.cooldownInfo) do catalogCount = catalogCount + 1 end
-  return { frameCacheEntries = frameCount, auraStateEntries = 0, hookedFrameEntries = 0, catalogEntries = catalogCount }
+  if self.active then
+    self:EnsureCatalog()
+    for _ in pairs(self.cooldownInfo) do catalogCount = catalogCount + 1 end
+  end
+  return {
+    active = self.active == true,
+    frameCacheEntries = frameCount,
+    auraStateEntries = 0,
+    hookedFrameEntries = 0,
+    catalogEntries = catalogCount,
+  }
 end
 
-function Manager:Initialize()
+function Manager:EnsureActive(force)
+  if self.active then return true end
+  if self.activating then return true end
+  if force ~= true and not IsDemanded() then return false end
+
+  self.activating = true
   self:RestoreAllHiddenFrames()
   self:Invalidate()
   self:EnsureCatalog()
@@ -525,4 +557,15 @@ function Manager:Initialize()
     end)
     self.eventFrame = frame
   end
+  self.active = true
+  self.activating = false
+  return true
+end
+
+function Manager:IsActive()
+  return self.active == true
+end
+
+function Manager:Initialize()
+  return self:EnsureActive(true)
 end

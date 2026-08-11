@@ -265,6 +265,9 @@ local function GetBarInsets(display, iconShown, iconSize, paddingX)
 end
 
 function InterruptTrackerRegion:New(aura)
+  if ns.InterruptTracker and ns.InterruptTracker.EnsureInitialized then
+    ns.InterruptTracker:EnsureInitialized(true)
+  end
   local instance = setmetatable({}, { __index = self })
   instance.frame = BaseRegion:CreateFrame(aura)
   instance.frame:SetClipsChildren(true)

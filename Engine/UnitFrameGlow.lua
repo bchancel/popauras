@@ -332,8 +332,8 @@ local function CollectDandersFrames(targetUnitId, results)
 end
 
 local function CollectEllesmereUIFrames(targetUnitId, results)
-  -- EllesmereUI's standalone unit-frame module exports its embedded oUF
-  -- instance. The object registry contains every frame actually spawned for
+  -- This standalone unit-frame module exports its embedded oUF instance. The
+  -- object registry contains every frame actually spawned for
   -- player, target, focus, pet, target-of-target, focus-target, and boss units.
   local ellesmereUF = _G.EUIStandaloneUnitFramesUF
   if type(ellesmereUF) == "table" then

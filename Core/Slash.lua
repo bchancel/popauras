@@ -19,7 +19,14 @@ local function WriteChatLines(lines)
   end
 end
 
-local function OpenMainWindow(editorMode, activeTab)
+local function OpenMainWindow(editorMode, activeTab, toggle)
+  if ns.OptionsLoader and ns.OptionsLoader.EnsureLoaded then
+    local loaded, reason = ns.OptionsLoader:EnsureLoaded()
+    if not loaded then
+      WriteChatLine(string.format("|cffff4444PopAuras:|r Could not load options: %s", tostring(reason)))
+      return false
+    end
+  end
   if editorMode then
     ns.db.ui.editorMode = editorMode
   end
@@ -27,11 +34,14 @@ local function OpenMainWindow(editorMode, activeTab)
     ns.db.ui.activeTab = activeTab
   end
 
-  if not ns.ui.MainWindow.frame or not ns.ui.MainWindow.frame:IsShown() then
+  if toggle then
+    ns.ui.MainWindow:Toggle()
+  elseif not ns.ui.MainWindow.frame or not ns.ui.MainWindow.frame:IsShown() then
     ns.ui.MainWindow:Toggle()
   else
     ns.ui.MainWindow:RefreshSelection()
   end
+  return true
 end
 
 local function EnsureDeferredOpenFrame()
@@ -40,8 +50,8 @@ local function EnsureDeferredOpenFrame()
   end
 
   local frame = CreateFrame("Frame")
-  frame:RegisterEvent("PLAYER_REGEN_ENABLED")
   frame:SetScript("OnEvent", function()
+    frame:UnregisterEvent("PLAYER_REGEN_ENABLED")
     local pending = Slash.pendingOpenRequest
     if not pending then
       return
@@ -55,7 +65,7 @@ local function EnsureDeferredOpenFrame()
 end
 
 local function QueueOpenAfterCombat(editorMode, activeTab)
-  EnsureDeferredOpenFrame()
+  EnsureDeferredOpenFrame():RegisterEvent("PLAYER_REGEN_ENABLED")
   Slash.pendingOpenRequest = {
     editorMode = editorMode or "config",
     activeTab = activeTab,
@@ -91,6 +101,36 @@ local function GetMemoryReportLine()
   )
 end
 
+local function YesNo(value)
+  return value == true and "yes" or "no"
+end
+
+local function GetArchitectureReportLine()
+  local snapshot = ns.FeatureInventory and ns.FeatureInventory:GetSnapshot() or {}
+  local eventStats = ns.Events and ns.Events.GetSubscriptionStats and ns.Events:GetSubscriptionStats() or {}
+  local optionsLoaded = false
+  if C_AddOns and C_AddOns.IsAddOnLoaded then
+    optionsLoaded = C_AddOns.IsAddOnLoaded("PopAuras_Options") == true
+  end
+
+  return string.format(
+    "Architecture: configured=%d providers=%d events=%d | native=%s cdm=%s alerts=%s interrupts=%s watchers=%d correlation=%s sharePump=%s options=%s",
+    tonumber(snapshot.configuredAuraCount or 0) or 0,
+    tonumber(eventStats.activeProviderTypes or snapshot.providerTypeCount or 0) or 0,
+    tonumber(eventStats.registeredEvents or 0) or 0,
+    YesNo(ns.NativeAuras and ns.NativeAuras.IsActive and ns.NativeAuras:IsActive()),
+    YesNo(ns.CooldownManager and ns.CooldownManager.IsActive and ns.CooldownManager:IsActive()),
+    YesNo(ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.IsActive and ns.BlizzardSpellAlerts:IsActive()),
+    YesNo(ns.InterruptTracker and ns.InterruptTracker.IsActive and ns.InterruptTracker:IsActive()),
+    tonumber(ns.InterruptTracker and ns.InterruptTracker.GetWatcherCount
+      and ns.InterruptTracker:GetWatcherCount() or 0) or 0,
+    YesNo(ns.InterruptTracker and ns.InterruptTracker.IsCorrelationDriverArmed
+      and ns.InterruptTracker:IsCorrelationDriverArmed()),
+    YesNo(ns.ShareLinks and ns.ShareLinks.sendPump and ns.ShareLinks.sendPump:IsShown()),
+    YesNo(optionsLoaded)
+  )
+end
+
 local function GetPerfReportLines()
   local lines = {}
   if ns.Profiler and ns.Profiler.GetSummaryLines then
@@ -99,6 +139,7 @@ local function GetPerfReportLines()
     end
   end
   lines[#lines + 1] = GetMemoryReportLine()
+  lines[#lines + 1] = GetArchitectureReportLine()
   return lines
 end
 
@@ -419,13 +460,13 @@ local function HandleSlashCommand(msg)
     return
   end
   if InCombatLockdown and InCombatLockdown() then
-    if ns.ui.MainWindow and ns.ui.MainWindow.IsOpen and not ns.ui.MainWindow:IsOpen() then
-      QueueOpenAfterCombat("config", ns.db and ns.db.ui and ns.db.ui.activeTab or nil)
-    else
+    if ns.ui.MainWindow and ns.ui.MainWindow.IsOpen and ns.ui.MainWindow:IsOpen() then
       ns.ui.MainWindow:Toggle()
+    else
+      QueueOpenAfterCombat("config", ns.db and ns.db.ui and ns.db.ui.activeTab or nil)
     end
   else
-    ns.ui.MainWindow:Toggle()
+    OpenMainWindow("config", ns.db and ns.db.ui and ns.db.ui.activeTab or nil, true)
   end
 end
 

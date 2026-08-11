@@ -218,7 +218,8 @@ function ShareLinks:QueueOutgoingTransfer(target, shareKey, encoded, auraName)
     #encoded,
     totalParts,
     tostring(ComputePayloadChecksum(encoded))))
-  self:EnsureSendPump()
+  local sendPump = self:EnsureSendPump()
+  sendPump:Show()
   self:UpdateTransferProgress("Queued Aura Transfer",
     string.format("%s -> %s", tostring(auraName or "Aura"), tostring(target or "player")),
     0,
@@ -304,7 +305,7 @@ end
 
 function ShareLinks:EnsureSendPump()
   if self.sendPump then
-    return
+    return self.sendPump
   end
 
   local frame = CreateFrame("Frame")
@@ -316,8 +317,13 @@ function ShareLinks:EnsureSendPump()
     end
     accumulated = 0
     ShareLinks:ProcessSendQueue()
+    if #ShareLinks.sendQueue == 0 then
+      frame:Hide()
+    end
   end)
+  frame:Hide()
   self.sendPump = frame
+  return frame
 end
 
 local function ShowImportString(encoded, owner)
@@ -325,29 +331,40 @@ local function ShowImportString(encoded, owner)
     return
   end
 
-  ns.db.ui.editorMode = "global_import"
-  ns.db.ui.activeTab = "import_export"
-  ns.db.ui.selectedAuraId = nil
+  local function ShowInOptions()
+    ns.db.ui.editorMode = "global_import"
+    ns.db.ui.activeTab = "import_export"
+    ns.db.ui.selectedAuraId = nil
 
-  if ns.ui.MainWindow then
-    if not ns.ui.MainWindow.frame then
-      ns.ui.MainWindow:Create()
+    if ns.ui.MainWindow then
+      if not ns.ui.MainWindow.frame then
+        ns.ui.MainWindow:Create()
+      end
+      if ns.ui.MainWindow.frame and not ns.ui.MainWindow.frame:IsShown() then
+        ns.ui.MainWindow.frame:Show()
+      end
+      if ns.ui.MainWindow.Refresh then
+        ns.ui.MainWindow:Refresh()
+      end
     end
-    if ns.ui.MainWindow.frame and not ns.ui.MainWindow.frame:IsShown() then
-      ns.ui.MainWindow.frame:Show()
+
+    local panel = ns.panels and ns.panels.ImportExportPanel or nil
+    if panel and panel.SetImportText then
+      panel:SetImportText(encoded, true)
     end
-    if ns.ui.MainWindow.Refresh then
-      ns.ui.MainWindow:Refresh()
-    end
+
+    WriteChatLine(string.format("|cff66ccffPopAuras:|r Loaded shared import%s. Review it on the Import/Export tab, then choose Import.",
+      owner and owner ~= "" and (" from " .. owner) or ""))
   end
 
-  local panel = ns.panels and ns.panels.ImportExportPanel or nil
-  if panel and panel.SetImportText then
-    panel:SetImportText(encoded, true)
+  if ns.OptionsLoader and ns.OptionsLoader.Run then
+    local opened, reason = ns.OptionsLoader:Run(ShowInOptions)
+    if not opened and reason ~= "queued" then
+      WriteChatLine(string.format("|cffff4444PopAuras:|r Could not load options: %s", tostring(reason)))
+    end
+  else
+    ShowInOptions()
   end
-
-  WriteChatLine(string.format("|cff66ccffPopAuras:|r Loaded shared import%s. Review it on the Import/Export tab, then choose Import.",
-    owner and owner ~= "" and (" from " .. owner) or ""))
 end
 
 local function ApplySharedImport(encoded, owner)

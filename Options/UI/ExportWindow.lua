@@ -1,7 +1,6 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
-local Fonts = ns.util.Fonts
 local Theme = ns.util.Theme
 
 local ExportWindow = {}
@@ -46,7 +45,7 @@ function ExportWindow:Create()
   end)
 
   frame.title = frame.header:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.title, 16, "")
+  Theme.ApplyTypography(frame.title, "sectionTitle")
   frame.title:SetPoint("LEFT", 16, 0)
   frame.title:SetText("Export All Auras")
   Theme.SetText(frame.title, "text")
@@ -56,7 +55,7 @@ function ExportWindow:Create()
   end)
   frame.closeButton:SetPoint("RIGHT", -9, 0)
   Theme.StyleButton(frame.closeButton, "ghost")
-  Fonts.Apply(frame.closeButton:GetFontString(), 14, "")
+  Theme.ApplyTypography(frame.closeButton:GetFontString(), "controlEmphasis")
 
   frame.instructions = Frames.CreateLabel(
     frame,

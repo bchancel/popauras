@@ -1,10 +1,16 @@
+# v12.1.6
+- Added architecture and performance counters to `/pa perf report`
+- Split the configuration editor into the bundled, load-on-demand `PopAuras_Options` addon
+- Reduced startup and idle overhead by loading only the components and events required by enabled auras
+- Added a searchable visual bar texture picker with built-in and installed media textures
+
 # v12.1.5
 - Simplified UI Options
 - Removed unsupported nameplate buff filtering options
 - Instance and Encounter Information available on the Load Tab
 
 # v12.1.4
-- Add additional unit frame support: DandersFrames, EllesmereUI Unit Frames, EllesmereUI Raid and Party Frames, Midnight Simple Unit Frames, VuhDo
+- Expanded support for third-party unit and raid frames
 
 # v12.1.3
 - Reskinned the configuration UI for a cleaner, more fluid experience

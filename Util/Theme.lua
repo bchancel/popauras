@@ -21,6 +21,8 @@ Theme.colors = {
   surfaceRaised = { 0.082, 0.150, 0.190, 0.99 },
   surfaceHover = { 0.070, 0.190, 0.245, 1.00 },
   surfacePressed = { 0.035, 0.230, 0.340, 1.00 },
+  rowOdd = { 0.045, 0.082, 0.105, 0.92 },
+  rowEven = { 0.055, 0.105, 0.135, 0.92 },
   accentSoft = { 0.025, 0.210, 0.315, 0.96 },
   accent = { 0.035, 0.610, 0.875, 1.00 },
   accentBright = { 0.210, 0.790, 1.000, 1.00 },
@@ -31,12 +33,107 @@ Theme.colors = {
   textSecondary = { 0.725, 0.790, 0.835, 1.00 },
   textMuted = { 0.500, 0.590, 0.660, 1.00 },
   textAccent = { 0.250, 0.740, 0.950, 1.00 },
-  groupAccent = { 0.340, 0.860, 0.560, 1.00 },
+  groupAccent = { 0.250, 0.740, 0.950, 1.00 },
   success = { 0.025, 0.360, 0.310, 1.00 },
   successBorder = { 0.070, 0.760, 0.640, 1.00 },
   danger = { 0.310, 0.055, 0.070, 0.92 },
   dangerBorder = { 0.760, 0.180, 0.200, 1.00 },
 }
+
+Theme.primaryFont = "Fonts\\ARIALN.TTF"
+
+Theme.typography = {
+  micro = { size = 9, outline = "" },
+  caption = { size = 11, outline = "" },
+  bodySmall = { size = 12, outline = "" },
+  body = { size = 13, outline = "" },
+  controlSmall = { size = 12, outline = "" },
+  control = { size = 13, outline = "" },
+  controlEmphasis = { size = 14, outline = "" },
+  cardTitle = { size = 14, outline = "OUTLINE" },
+  sectionTitle = { size = 17, outline = "" },
+  panelTitle = { size = 24, outline = "" },
+  windowTitle = { size = 22, outline = "" },
+  brand = { size = 14, outline = "" },
+  glyphSmall = { size = 13, outline = "OUTLINE" },
+  glyph = { size = 15, outline = "OUTLINE" },
+  glyphLarge = { size = 22, outline = "OUTLINE" },
+  illustration = { size = 32, outline = "OUTLINE" },
+  hero = { size = 36, outline = "OUTLINE" },
+  mono = { size = 11, outline = "", file = "Fonts\\ARIALN.TTF" },
+}
+
+Theme.layout = {
+  pixel = 1,
+  panelPadding = 28,
+  panelGap = 14,
+  sectionGap = 12,
+  sectionHeaderHeight = 30,
+  compactSectionHeaderHeight = 28,
+  rowHeight = 46,
+  controlHeight = 28,
+  fieldGap = 4,
+  columnGap = 28,
+  contentInset = 12,
+  dropdownLabelOffsetX = -14,
+  dropdownLabelOffsetY = -2,
+  standardInputWidth = 120,
+  standardDropdownWidth = 180,
+  standardContentWidth = 720,
+  scrollBarInset = 26,
+  wheelStep = 42,
+  sidebarWidth = 340,
+  toolbarHeight = 52,
+  primaryTabHeight = 38,
+  secondaryTabHeight = 32,
+  auraRowHeight = 40,
+  auraRowStep = 46,
+}
+
+function Theme.ApplyTypography(fontString, role, outlineOverride)
+  if not fontString then
+    return
+  end
+  local definition = Theme.typography[role or "body"] or Theme.typography.body
+  Fonts.Apply(
+    fontString,
+    definition.size,
+    outlineOverride == nil and definition.outline or outlineOverride,
+    definition.file or Theme.primaryFont
+  )
+end
+
+function Theme.PixelSetPoint(region, point, relativeTo, relativePoint, x, y)
+  if PixelUtil and PixelUtil.SetPoint then
+    PixelUtil.SetPoint(region, point, relativeTo, relativePoint, x or 0, y or 0)
+  else
+    region:SetPoint(point, relativeTo, relativePoint, x or 0, y or 0)
+  end
+end
+
+function Theme.PixelSetSize(region, width, height)
+  if PixelUtil and PixelUtil.SetSize then
+    PixelUtil.SetSize(region, width, height)
+  else
+    region:SetSize(width, height)
+  end
+end
+
+function Theme.PixelSetHeight(region, height)
+  if PixelUtil and PixelUtil.SetHeight then
+    PixelUtil.SetHeight(region, height)
+  else
+    region:SetHeight(height)
+  end
+end
+
+function Theme.PixelSetWidth(region, width)
+  if PixelUtil and PixelUtil.SetWidth then
+    PixelUtil.SetWidth(region, width)
+  else
+    region:SetWidth(width)
+  end
+end
 
 local buttonStyles = {
   secondary = {
@@ -168,7 +265,7 @@ end
 function Theme.CreateAccentLine(parent, height, color)
   local line = parent:CreateTexture(nil, "ARTWORK")
   line:SetTexture(WHITE_TEXTURE)
-  line:SetHeight(height or 2)
+  Theme.PixelSetHeight(line, height or 2)
   Theme.SetTexture(line, color or "accent")
   return line
 end
@@ -578,6 +675,14 @@ function Theme.StyleDropdown(dropdown, styleKey)
     dropdown._popAurasArrow:SetText("v")
   end
 
+  if dropdown.Text then
+    dropdown.Text:ClearAllPoints()
+    dropdown.Text:SetPoint("LEFT", dropdown, "LEFT", 20, 1)
+    dropdown.Text:SetPoint("RIGHT", dropdown, "RIGHT", -38, 1)
+    dropdown.Text:SetJustifyH("LEFT")
+    dropdown.Text:SetWordWrap(false)
+  end
+
   ApplyDropdownState(dropdown, false)
   if button and not dropdown._popAurasDropdownHooks then
     dropdown._popAurasDropdownHooks = true
@@ -595,13 +700,18 @@ local function StyleScrollButton(button, label)
     return
   end
 
+  HideTextureRegions(button)
+  button:SetSize(14, 14)
   button:SetNormalTexture(WHITE_TEXTURE)
   button:SetPushedTexture(WHITE_TEXTURE)
   button:SetHighlightTexture(WHITE_TEXTURE, "ADD")
 
+  button:GetNormalTexture():SetAlpha(1)
+  button:GetPushedTexture():SetAlpha(1)
   Theme.SetTexture(button:GetNormalTexture(), "surfaceRaised")
   Theme.SetTexture(button:GetPushedTexture(), "surfacePressed")
   local highlight = button:GetHighlightTexture()
+  highlight:SetAlpha(1)
   local accent = Theme.GetColor("accent")
   highlight:SetVertexColor(accent[1], accent[2], accent[3], 0.28)
 
@@ -632,6 +742,18 @@ function Theme.StyleScrollFrame(scrollFrame)
     return
   end
 
+  scrollBar:SetWidth(14)
+  HideRegion(scrollBar.Track)
+
+  if not scrollBar._popAurasTrack then
+    scrollBar._popAurasTrack = scrollBar:CreateTexture(nil, "BACKGROUND")
+    scrollBar._popAurasTrack:SetTexture(WHITE_TEXTURE)
+    scrollBar._popAurasTrack:SetPoint("TOP", 0, -15)
+    scrollBar._popAurasTrack:SetPoint("BOTTOM", 0, 15)
+    scrollBar._popAurasTrack:SetWidth(4)
+  end
+  Theme.SetTexture(scrollBar._popAurasTrack, "control")
+
   if scrollBar.Background then
     scrollBar.Background:SetTexture(WHITE_TEXTURE)
     Theme.SetTexture(scrollBar.Background, "canvas")
@@ -644,6 +766,23 @@ function Theme.StyleScrollFrame(scrollFrame)
     Theme.SetTexture(thumb, "accent")
   end
 
-  StyleScrollButton(scrollBar.ScrollUpButton or scrollBar.UpButton, "^")
-  StyleScrollButton(scrollBar.ScrollDownButton or scrollBar.DownButton, "v")
+  local upButton = scrollBar.ScrollUpButton or scrollBar.UpButton
+  local downButton = scrollBar.ScrollDownButton or scrollBar.DownButton
+  if (not upButton or not downButton) and scrollBar.GetChildren then
+    local buttons = {}
+    for _, child in ipairs({ scrollBar:GetChildren() }) do
+      if child and child.GetObjectType and child:GetObjectType() == "Button" then
+        buttons[#buttons + 1] = child
+      end
+    end
+    if #buttons >= 2 then
+      table.sort(buttons, function(left, right)
+        return (left:GetTop() or 0) > (right:GetTop() or 0)
+      end)
+      upButton = upButton or buttons[1]
+      downButton = downButton or buttons[#buttons]
+    end
+  end
+  StyleScrollButton(upButton, "^")
+  StyleScrollButton(downButton, "v")
 end

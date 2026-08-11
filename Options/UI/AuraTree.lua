@@ -1,7 +1,6 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
-local Fonts = ns.util.Fonts
 local Theme = ns.util.Theme
 
 local AuraTree = {}
@@ -615,7 +614,7 @@ function AuraTree:Create(parent)
   Theme.StyleSurface(frame.titleBar, "transparent", "transparent")
 
   frame.searchLabel = Frames.CreateLabel(frame.titleBar, "FILTER", "GameFontNormalSmall")
-  Fonts.Apply(frame.searchLabel, 9, "OUTLINE")
+  Theme.ApplyTypography(frame.searchLabel, "micro", "OUTLINE")
   frame.searchLabel:SetPoint("LEFT", 2, 0)
   Theme.SetText(frame.searchLabel, "textMuted")
 
@@ -672,7 +671,7 @@ function AuraTree:Create(parent)
   frame.collapseButton:SetPoint("BOTTOMLEFT", 0, 6)
   frame.collapseButton:SetPoint("BOTTOMRIGHT", -2, 6)
   Theme.StyleButton(frame.collapseButton, "ghost")
-  Fonts.Apply(frame.collapseButton:GetFontString(), 11, "")
+  Theme.ApplyTypography(frame.collapseButton:GetFontString(), "controlSmall")
 
   frame.dragProxy = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
   frame.dragProxy:SetSize(150, 24)
@@ -680,7 +679,7 @@ function AuraTree:Create(parent)
   frame.dragProxy:SetFrameLevel(100)
   Theme.StyleSurface(frame.dragProxy, "surfaceHover", "borderFocus")
   frame.dragProxy.text = frame.dragProxy:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.dragProxy.text, 12, "OUTLINE")
+  Theme.ApplyTypography(frame.dragProxy.text, "control", "OUTLINE")
   frame.dragProxy.text:SetPoint("CENTER")
   Theme.SetText(frame.dragProxy.text, "text")
   frame.dragProxy:Hide()
@@ -722,7 +721,7 @@ function AuraTree:Refresh()
     end
 
     local header = Frames.CreateLabel(content, "", "GameFontNormal")
-    Fonts.Apply(header, 10, "")
+    Theme.ApplyTypography(header, "caption")
     Theme.SetText(header, "textAccent")
     header.line = Theme.CreateAccentLine(content, 1, "border")
     self.frame.sectionHeaders[i] = header
@@ -749,7 +748,7 @@ function AuraTree:Refresh()
       return self.frame.rows[i]
     end
     local row = CreateFrame("Frame", nil, content, "BackdropTemplate")
-    row:SetSize(272, 40)
+    row:SetSize(272, Theme.layout.auraRowHeight)
     row:SetFrameStrata("FULLSCREEN_DIALOG")
     row:SetFrameLevel(self.frame:GetFrameLevel() + 40)
     row:EnableMouse(false)
@@ -763,7 +762,7 @@ function AuraTree:Refresh()
     row.button:EnableMouse(true)
     Theme.StyleSurface(row.button, "transparent", "transparent")
     row.button.text = row.button:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(row.button.text, 12, "")
+    Theme.ApplyTypography(row.button.text, "control")
     row.button.text:SetPoint("TOPLEFT", 12, -5)
     row.button.text:SetPoint("TOPRIGHT", -8, -5)
     row.button.text:SetJustifyH("LEFT")
@@ -774,7 +773,7 @@ function AuraTree:Refresh()
     row.button.text:SetShadowColor(0, 0, 0, 0.55)
 
     row.button.kindText = row.button:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(row.button.kindText, 10, "")
+    Theme.ApplyTypography(row.button.kindText, "caption")
     row.button.kindText:SetPoint("BOTTOMLEFT", 12, 5)
     row.button.kindText:SetPoint("BOTTOMRIGHT", -8, 5)
     row.button.kindText:SetJustifyH("LEFT")
@@ -886,7 +885,7 @@ function AuraTree:Refresh()
     })
     row.expandButton.text = row.expandButton:CreateFontString(nil, "OVERLAY")
     row.expandButton.Text = row.expandButton.text
-    Fonts.Apply(row.expandButton.text, 13, "")
+    Theme.ApplyTypography(row.expandButton.text, "glyphSmall", "")
     row.expandButton.text:SetPoint("CENTER")
     row.expandButton:SetPoint("LEFT", row.button, "RIGHT", 2, 0)
     row.expandButton:SetScript("OnClick", function(selfButton)
@@ -916,7 +915,7 @@ function AuraTree:Refresh()
     })
     row.upButton.text = row.upButton:CreateFontString(nil, "OVERLAY")
     row.upButton.Text = row.upButton.text
-    Fonts.Apply(row.upButton.text, 10, "")
+    Theme.ApplyTypography(row.upButton.text, "caption")
     row.upButton.text:SetPoint("CENTER")
     row.upButton.text:SetText("")
     CreateActionIcon(row.upButton, "up")
@@ -951,7 +950,7 @@ function AuraTree:Refresh()
     })
     row.downButton.text = row.downButton:CreateFontString(nil, "OVERLAY")
     row.downButton.Text = row.downButton.text
-    Fonts.Apply(row.downButton.text, 10, "")
+    Theme.ApplyTypography(row.downButton.text, "caption")
     row.downButton.text:SetPoint("CENTER")
     row.downButton.text:SetText("")
     CreateActionIcon(row.downButton, "down")
@@ -986,7 +985,7 @@ function AuraTree:Refresh()
     })
     row.duplicateButton.text = row.duplicateButton:CreateFontString(nil, "OVERLAY")
     row.duplicateButton.Text = row.duplicateButton.text
-    Fonts.Apply(row.duplicateButton.text, 10, "")
+    Theme.ApplyTypography(row.duplicateButton.text, "caption")
     row.duplicateButton.text:SetPoint("CENTER")
     row.duplicateButton.text:SetText("")
     CreateActionIcon(row.duplicateButton, "copy")
@@ -1021,7 +1020,7 @@ function AuraTree:Refresh()
     })
     row.deleteButton.text = row.deleteButton:CreateFontString(nil, "OVERLAY")
     row.deleteButton.Text = row.deleteButton.text
-    Fonts.Apply(row.deleteButton.text, 10, "")
+    Theme.ApplyTypography(row.deleteButton.text, "caption")
     row.deleteButton.text:SetPoint("CENTER")
     row.deleteButton.text:SetText("")
     CreateActionIcon(row.deleteButton, "trash")
@@ -1217,7 +1216,7 @@ function AuraTree:Refresh()
     row.downButton:SetAlpha(contentAlpha)
     row.duplicateButton:SetAlpha(contentAlpha)
     row.deleteButton:SetAlpha(contentAlpha)
-    yOffset = yOffset + 46
+    yOffset = yOffset + Theme.layout.auraRowStep
 
   end
 

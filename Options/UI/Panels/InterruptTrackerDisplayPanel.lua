@@ -1,7 +1,6 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
-local Fonts = ns.util.Fonts
 local Anchors = ns.util.Anchors
 local Colors = ns.util.Colors
 local Theme = ns.util.Theme
@@ -62,65 +61,21 @@ local function GetSelectedAura()
 end
 
 local function CreateSection(parent, title, y, height)
-  local section = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-  Theme.StyleSurface(section, "transparent", "transparent")
-  section.insetLeft = 0
-  section.insetRight = 0
-  section:SetPoint("TOPLEFT", 0, y)
-  section:SetPoint("TOPRIGHT", 0, y)
-  section:SetHeight(height)
-
-  section.header = CreateFrame("Frame", nil, section, "BackdropTemplate")
-  section.header:SetPoint("TOPLEFT", 1, -1)
-  section.header:SetPoint("TOPRIGHT", -1, -1)
-  section.header:SetHeight(28)
-  Theme.StyleSurface(section.header, "surfaceRaised", "border")
-  section.header:Hide()
-
-  section.title = Frames.CreateLabel(section.header, title, "GameFontNormal")
-  section.title:SetPoint("LEFT", 10, 0)
-  Theme.SetText(section.title, "text")
-  section.expandedHeight = height
-  return section
+  return Frames.CreateSectionCard(parent, title, y, height, {
+    headerHeight = Theme.layout.compactSectionHeaderHeight,
+  })
 end
 
 local function CreateLabeledInput(parent, label, x, y, width)
-  local widget = {}
-  widget.label = Frames.CreateLabel(parent, label, "GameFontNormalSmall")
-  widget.label:SetPoint("TOPLEFT", x, y)
-  widget.input = Frames.CreateInput(parent, width or 120, 22)
-  widget.input:SetPoint("TOPLEFT", widget.label, "BOTTOMLEFT", 0, -4)
-  return widget
+  return Frames.CreateLabeledInput(parent, label, x, y, width)
 end
 
 local function CreateLabeledDropdown(parent, label, x, y, width)
-  local widget = {}
-  widget.label = Frames.CreateLabel(parent, label, "GameFontNormalSmall")
-  widget.label:SetPoint("TOPLEFT", x, y)
-  widget.dropdown = Frames.CreateDropdown(parent, width or 160)
-  widget.dropdown:SetPoint("TOPLEFT", widget.label, "BOTTOMLEFT", -14, -2)
-  return widget
+  return Frames.CreateLabeledDropdown(parent, label, x, y, width or 160)
 end
 
 local function CreateColorSwatch(parent, label, x, y)
-  local widget = {}
-  widget.button = CreateFrame("Button", nil, parent, "BackdropTemplate")
-  widget.button:SetSize(28, 28)
-  widget.button:SetPoint("TOPLEFT", x, y)
-  widget.button:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    edgeSize = 12,
-  })
-  Theme.SetBackdrop(widget.button, "control", "border")
-
-  widget.swatch = widget.button:CreateTexture(nil, "ARTWORK")
-  widget.swatch:SetPoint("TOPLEFT", 4, -4)
-  widget.swatch:SetPoint("BOTTOMRIGHT", -4, 4)
-  widget.swatch:SetTexture("Interface\\Buttons\\WHITE8x8")
-
-  widget.label = Frames.CreateLabel(parent, label, "GameFontNormalSmall")
-  widget.label:SetPoint("LEFT", widget.button, "RIGHT", 8, 0)
+  local widget = Frames.CreateColorSwatch(parent, label, x, y)
   widget.color = { r = 1, g = 1, b = 1, a = 1 }
   return widget
 end
@@ -467,7 +422,7 @@ function Panel:LayoutSectionTabs()
   for _, entry in ipairs(self.frame.sectionEntries) do
     local tab = self.frame.sectionTabs[entry.key]
     tab:ClearAllPoints()
-    tab:SetSize(tabWidth, 32)
+    tab:SetSize(tabWidth, Theme.layout.secondaryTabHeight)
     if previous then
       tab:SetPoint("TOPLEFT", previous, "TOPRIGHT", 0, 0)
     else
@@ -596,6 +551,7 @@ function Panel:Create(parent)
   frame.content = CreateFrame("Frame", nil, frame.scroll)
   frame.content:SetSize(724, 640)
   frame.scroll:SetScrollChild(frame.content)
+  Frames.ApplyPanelCanvas(frame.content)
   frame:SetScript("OnSizeChanged", function(selfFrame, width)
     frame.content:SetWidth(math.max(724, (tonumber(width) or selfFrame:GetWidth() or 0) - 28))
     if Panel.frame == frame and frame.sectionEntries then
@@ -656,7 +612,7 @@ function Panel:Create(parent)
       Panel:SetActiveSection(sectionKey)
       Panel:UpdateControlStates()
     end)
-    Fonts.Apply(tab:GetFontString(), 11, "")
+    Theme.ApplyTypography(tab:GetFontString(), "controlSmall")
     Theme.StyleTab(tab, false)
     frame.sectionTabs[entry.key] = tab
   end

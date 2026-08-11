@@ -799,6 +799,9 @@ function Panel:ApplyTriggerType(triggerType)
     ns.TriggerBase:InvalidateProviderCaches("trinket_cooldown")
     ns.TriggerBase:InvalidateProviderCaches("spell_cast_event")
   end
+  if ns.FeatureInventory and ns.FeatureInventory.ScheduleRebuild then
+    ns.FeatureInventory:ScheduleRebuild()
+  end
 
   ns.runtime:RefreshAura(aura.id)
   if ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
@@ -1086,6 +1089,9 @@ function Panel:ApplyCurrent()
     ns.TriggerBase:InvalidateProviderCaches("aura_list")
     ns.TriggerBase:InvalidateProviderCaches("trinket_cooldown")
     ns.TriggerBase:InvalidateProviderCaches("spell_cast_event")
+  end
+  if ns.FeatureInventory and ns.FeatureInventory.ScheduleRebuild then
+    ns.FeatureInventory:ScheduleRebuild()
   end
   ns.runtime:RefreshAura(aura.id)
   if ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then

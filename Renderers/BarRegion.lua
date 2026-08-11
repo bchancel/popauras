@@ -6,12 +6,17 @@ local Colors = ns.util.Colors
 local Spells = ns.util.Spells
 local Safe = ns.SafeValues
 local Duration = ns.Duration
+local Media = ns.util.Media
 
 local BarRegion = {}
 ns.renderers.BarRegion = BarRegion
 
 local DEFAULT_TEXT_COLOR = { r = 1, g = 1, b = 1, a = 1 }
 local ACTIVE_DURATION_COLOR = { r = 1.00, g = 0.82, b = 0.08, a = 1 }
+
+local function GetActiveGlowColor(aura)
+  return aura and aura.display and aura.display.activeGlowColor or ACTIVE_DURATION_COLOR
+end
 
 local STATUS_BAR_DIRECTION = Enum and Enum.StatusBarTimerDirection or nil
 local STATUS_BAR_INTERPOLATION = Enum and Enum.StatusBarInterpolation or nil
@@ -61,9 +66,18 @@ local function CreateActiveBuffBorder(parent)
   return border
 end
 
-local function SetActiveBuffBorder(border, enabled, parent)
+local function SetActiveBuffBorder(border, enabled, parent, color)
   if not border then return end
   if enabled then
+    color = type(color) == "table" and color or ACTIVE_DURATION_COLOR
+    for _, texture in ipairs({ border.top, border.bottom, border.left, border.right }) do
+      texture:SetColorTexture(
+        tonumber(color.r) or ACTIVE_DURATION_COLOR.r,
+        tonumber(color.g) or ACTIVE_DURATION_COLOR.g,
+        tonumber(color.b) or ACTIVE_DURATION_COLOR.b,
+        color.a == nil and 1 or (tonumber(color.a) or 1)
+      )
+    end
     border:SetFrameStrata(parent:GetFrameStrata())
     border:SetFrameLevel(parent:GetFrameLevel() + 10)
     border:Show()
@@ -76,20 +90,6 @@ local function SetActiveBuffBorder(border, enabled, parent)
     end
     border:Hide()
   end
-end
-
-local function GetTexturePath(textureKey)
-  local textures = {
-    DEFAULT = "Interface\\Buttons\\WHITE8x8",
-    FLAT = "Interface\\Buttons\\WHITE8x8",
-    GLAZE = "Interface\\RaidFrame\\Raid-Bar-Hp-Fill",
-    BLIZZARD = "Interface\\TargetingFrame\\UI-StatusBar",
-    CAST = "Interface\\TargetingFrame\\UI-StatusBar",
-  }
-  if textureKey == "Interface\\TARGETINGFRAME\\UI-StatusBar" or textureKey == "Interface\\TargetingFrame\\UI-StatusBar" then
-    return textures.FLAT
-  end
-  return textures[textureKey] or textureKey or textures.DEFAULT
 end
 
 function BarRegion:New(aura)
@@ -428,7 +428,7 @@ function BarRegion:Update(aura, state)
   -- exact AuraContainer slot is unavailable, ask the exact CDM source for its
   -- public active state instead of requiring raw aura presence first.
   local activeDurationRequested = state.activeGlowStyle == "ACTIVE_DURATION"
-    and not nativeActiveDuration and state.show and state.active == true
+    and not nativeActiveDuration and state.show
   local activeBuffTimer, activeDurationDebug
   if activeDurationRequested then
     activeBuffTimer, activeDurationDebug = self:GetCDMActiveDurationTimer(state)
@@ -479,10 +479,10 @@ function BarRegion:Update(aura, state)
     ns.TimerPresenter:SetCompletionTimer(self.timerCooldown, timerState.durationObject, aura.id)
   end
   local orientation = aura.display.orientation or "HORIZONTAL"
-  self.bar:SetStatusBarTexture(GetTexturePath(aura.display.barTexture))
+  self.bar:SetStatusBarTexture(Media:ResolveStatusBarTexture(aura.display.barTexture))
   self.bar:SetOrientation(orientation)
   if self.bar.SetRotatesTexture then
-    self.bar:SetRotatesTexture(orientation ~= "VERTICAL")
+    self.bar:SetRotatesTexture(orientation == "VERTICAL")
   end
   if self.bar.SetReverseFill then
     self.bar:SetReverseFill(aura.display.reverse == true)
@@ -513,10 +513,11 @@ function BarRegion:Update(aura, state)
   local glowTarget = aura.display.icon and self.iconHolder or self.frame
   local activeGlowOverride
   if state.activeBuffGlow == true then
-    activeGlowOverride = state.activeGlowStyle == "OUTER_GLOW" and state.active == true and state.activeBuff == true or false
+    activeGlowOverride = state.activeGlowStyle == "OUTER_GLOW" and state.activeBuff == true or false
     SetActiveBuffBorder(self.activeBuffBorder,
-      state.activeGlowStyle == "INNER_GLOW" and state.show and state.active == true and state.activeBuff == true,
-      self.frame)
+      state.activeGlowStyle == "INNER_GLOW" and state.show and state.activeBuff == true,
+      self.frame,
+      GetActiveGlowColor(aura))
   else
     SetActiveBuffBorder(self.activeBuffBorder, false, self.frame)
   end

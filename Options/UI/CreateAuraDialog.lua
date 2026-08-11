@@ -1,7 +1,6 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
-local Fonts = ns.util.Fonts
 local Theme = ns.util.Theme
 
 local dialog = {}
@@ -133,7 +132,7 @@ function dialog:Create()
 
   frame.headerText = Frames.CreateLabel(frame.header, "Create Aura", "GameFontNormalLarge")
   frame.headerText:SetPoint("LEFT", 12, 0)
-  Fonts.Apply(frame.headerText, 16, "OUTLINE")
+  Theme.ApplyTypography(frame.headerText, "sectionTitle", "OUTLINE")
   Theme.SetText(frame.headerText, "text")
 
   frame.closeButton = Frames.CreateButton(frame.header, "x", 26, 24, function()
@@ -163,7 +162,7 @@ function dialog:Create()
   end)
   frame.cancelButton:SetPoint("BOTTOMRIGHT", -144, 18)
   Frames.StyleSecondaryButton(frame.cancelButton)
-  Fonts.Apply(frame.cancelButton:GetFontString(), 14, "OUTLINE")
+  Theme.ApplyTypography(frame.cancelButton:GetFontString(), "controlEmphasis", "OUTLINE")
 
   frame.createButton = Frames.CreateButton(frame, "Create", 120, 28, function()
     if not IsPresetEnabled(frame.pendingPreset) then
@@ -186,7 +185,7 @@ function dialog:Create()
   end)
   frame.createButton:SetPoint("BOTTOMRIGHT", -18, 18)
   Frames.StylePrimaryButton(frame.createButton)
-  Fonts.Apply(frame.createButton:GetFontString(), 14, "OUTLINE")
+  Theme.ApplyTypography(frame.createButton:GetFontString(), "controlEmphasis", "OUTLINE")
 
   frame.nameInput:SetScript("OnEnterPressed", function(selfInput)
     selfInput:ClearFocus()

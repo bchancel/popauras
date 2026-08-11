@@ -2,7 +2,7 @@
 ## Title: PopAuras
 ## Notes: Midnight 12.1 addon focused on reliable bars and icons
 ## Author: Popabeast-Sargeras
-## Version: 12.1.5
+## Version: 12.1.6
 ## X-Curse-Project-ID: 1510249
 ## SavedVariables: PopAurasDB
 ## OptionalDeps: Blizzard_AuraContainer, Blizzard_CooldownViewer
@@ -16,10 +16,10 @@ Util\Tables.lua
 Util\Strings.lua
 Util\Colors.lua
 Util\Fonts.lua
+Util\Media.lua
 Util\Theme.lua
 Util\Anchors.lua
 Util\Frames.lua
-Util\SoundPicker.lua
 Data\SpellAuraAliases.lua
 Util\Spells.lua
 Util\Items.lua
@@ -43,6 +43,8 @@ Core\ShareLinks.lua
 Core\VersionCheck.lua
 Core\BlizzardAuraFrames.lua
 Core\BlizzardSpellAlerts.lua
+Core\FeatureInventory.lua
+Core\OptionsLoader.lua
 
 Engine\RuntimeStore.lua
 Engine\LoadEvaluator.lua
@@ -81,22 +83,6 @@ Renderers\DynamicGroupRegion.lua
 Renderers\MultiStateRegion.lua
 
 Engine\TriggerEngine.lua
-
-UI\AuraTree.lua
-UI\ExportWindow.lua
-UI\Toolbar.lua
-UI\CreateAuraDialog.lua
-UI\NewAuraPanel.lua
-UI\Panels\DisplayPanel.lua
-UI\Panels\TriggerPanel.lua
-UI\Panels\ConditionsPanel.lua
-UI\Panels\ActionsPanel.lua
-UI\Panels\LoadPanel.lua
-UI\Panels\PositionPanel.lua
-UI\Panels\GroupPanel.lua
-UI\Panels\ImportExportPanel.lua
-UI\Panels\InterruptTrackerDisplayPanel.lua
-UI\MainWindow.lua
 
 Core\Events.lua
 Core\Slash.lua

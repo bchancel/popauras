@@ -1464,6 +1464,9 @@ function Panel:ApplyCurrent()
   self.frame.equippedItemInput:SetText(aura.load.equippedItemId > 0 and tostring(aura.load.equippedItemId) or aura.load.equippedItemName or "")
   self.frame.equippedItemResolved:SetText(GetEquippedItemResolvedText(aura.load.equippedItemId, aura.load.equippedItemName))
   self.frame.savedLoadoutHint:SetText(BuildSavedLoadoutHint(aura.load))
+  if ns.FeatureInventory and ns.FeatureInventory.ScheduleRebuild then
+    ns.FeatureInventory:ScheduleRebuild()
+  end
   ns.runtime:RefreshAura(aura.id)
 end
 
@@ -1834,6 +1837,7 @@ function Panel:Create(parent)
   frame.content = CreateFrame("Frame", nil, frame.scroll)
   frame.content:SetSize(760, 900)
   frame.scroll:SetScrollChild(frame.content)
+  Frames.ApplyPanelCanvas(frame.content)
   frame.conditionsRoot = CreateFrame("Frame", nil, frame.content)
   frame.conditionsRoot:SetAllPoints(frame.content)
 
@@ -2189,24 +2193,35 @@ function Panel:Create(parent)
   end)
 
   frame.instanceInfoEvents = CreateFrame("Frame", nil, frame)
-  for _, event in ipairs({
+  local instanceInfoEventNames = {
     "PLAYER_ENTERING_WORLD",
     "ZONE_CHANGED_NEW_AREA",
     "ENCOUNTER_START",
     "ENCOUNTER_END",
-  }) do
-    frame.instanceInfoEvents:RegisterEvent(event)
+  }
+  local function SetInstanceInfoEventsEnabled(enabled)
+    frame.instanceInfoEvents:UnregisterAllEvents()
+    if enabled then
+      for _, event in ipairs(instanceInfoEventNames) do
+        frame.instanceInfoEvents:RegisterEvent(event)
+      end
+    end
   end
   frame.instanceInfoEvents:SetScript("OnEvent", function()
-    if not frame:IsShown() then
-      return
-    end
     Panel:RefreshInstanceInformation()
     local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
     if aura and aura.enabled ~= false then
       Panel:RefreshSpecSection(aura)
     end
   end)
+  frame.instanceInfoEvents:SetScript("OnShow", function()
+    SetInstanceInfoEventsEnabled(true)
+    Panel:RefreshInstanceInformation()
+  end)
+  frame.instanceInfoEvents:SetScript("OnHide", function()
+    SetInstanceInfoEventsEnabled(false)
+  end)
+  SetInstanceInfoEventsEnabled(frame:IsShown())
 
   return frame
 end

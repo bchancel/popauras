@@ -51,6 +51,15 @@ function NativeAuras:Initialize()
   return self.available
 end
 
+function NativeAuras:EnsureActive()
+  self:Initialize()
+  return self.available == true
+end
+
+function NativeAuras:IsActive()
+  return self.initialized == true
+end
+
 function NativeAuras:IsAvailable()
   if not self.initialized then self:Initialize() end
   return self.available == true

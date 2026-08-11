@@ -3,8 +3,17 @@ local _, ns = ...
 local Frames = {}
 ns.util.Frames = Frames
 
-local Fonts = ns.util.Fonts
 local Theme = ns.util.Theme
+local Layout = Theme.layout
+
+local function GetTemplateTypographyRole(template)
+  template = tostring(template or "")
+  if template:find("Large", 1, true) then return "sectionTitle" end
+  if template:find("Small", 1, true) then return "caption" end
+  if template:find("Highlight", 1, true) then return "body" end
+  if template:find("Disable", 1, true) then return "bodySmall" end
+  return "control"
+end
 
 function Frames.SetExplicitBounds(region, owner, width, height)
   if not region or not owner then return end
@@ -73,11 +82,12 @@ function Frames.MakeMovable(frame, onStop)
   end)
 end
 
-function Frames.CreateLabel(parent, text, template)
+function Frames.CreateLabel(parent, text, template, typographyRole)
   template = template or "GameFontNormal"
   local label = parent:CreateFontString(nil, "OVERLAY", template)
   label:SetJustifyH("LEFT")
   label:SetText(text or "")
+  Theme.ApplyTypography(label, typographyRole or GetTemplateTypographyRole(template))
   if template:find("Disable", 1, true) then
     Theme.SetText(label, "textMuted")
   elseif template:find("Highlight", 1, true) then
@@ -90,10 +100,10 @@ end
 
 function Frames.CreateButton(parent, text, width, height, onClick)
   local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
-  button:SetSize(width or 120, height or 22)
+  Theme.PixelSetSize(button, width or 120, height or Layout.controlHeight)
   button.Text = button:CreateFontString(nil, "OVERLAY")
   button.Text:SetPoint("CENTER")
-  Fonts.Apply(button.Text, 12, "")
+  Theme.ApplyTypography(button.Text, "control")
   button.Text:SetJustifyH("CENTER")
   button.Text:SetJustifyV("MIDDLE")
   function button:SetText(value)
@@ -118,7 +128,7 @@ function Frames.StyleSecondaryButton(button)
   if button.GetFontString then
     local fontString = button:GetFontString()
     if fontString then
-      Fonts.Apply(fontString, 12, "")
+      Theme.ApplyTypography(fontString, "control")
     end
   end
 end
@@ -131,7 +141,7 @@ function Frames.StylePrimaryButton(button)
   if button.GetFontString then
     local fontString = button:GetFontString()
     if fontString then
-      Fonts.Apply(fontString, 16, "")
+      Theme.ApplyTypography(fontString, "sectionTitle")
     end
   end
 end
@@ -144,7 +154,7 @@ function Frames.StyleSuccessButton(button)
   if button.GetFontString then
     local fontString = button:GetFontString()
     if fontString then
-      Fonts.Apply(fontString, 14, "")
+      Theme.ApplyTypography(fontString, "controlEmphasis")
     end
   end
 end
@@ -157,7 +167,7 @@ function Frames.StyleDangerButton(button)
   if button.GetFontString then
     local fontString = button:GetFontString()
     if fontString then
-      Fonts.Apply(fontString, 14, "")
+      Theme.ApplyTypography(fontString, "controlEmphasis")
     end
   end
 end
@@ -271,8 +281,9 @@ end
 function Frames.CreateInput(parent, width, height)
   local input = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
   input:SetAutoFocus(false)
-  input:SetSize(width or 120, height or 20)
+  Theme.PixelSetSize(input, width or Layout.standardInputWidth, height or Layout.controlHeight)
   input:SetTextInsets(6, 6, 0, 0)
+  Theme.ApplyTypography(input, "control")
   Theme.StyleEditBox(input)
   return input
 end
@@ -295,13 +306,14 @@ function Frames.CreateCheckbox(parent, labelText)
     text:SetText(labelText or "")
     check.Text = text
   end
+  Theme.ApplyTypography(text, "control")
   Theme.StyleCheckbox(check)
   return check
 end
 
 function Frames.CreateToggle(parent)
   local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-  check:SetSize(42, 22)
+  Theme.PixelSetSize(check, 42, Layout.controlHeight)
   if check.Text then
     check.Text:SetText("")
     check.Text:Hide()
@@ -315,6 +327,7 @@ function Frames.CreateLabeledToggle(parent, labelText)
   local text = check:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   text:SetPoint("LEFT", check, "RIGHT", 8, 0)
   text:SetText(labelText or "")
+  Theme.ApplyTypography(text, "control")
   Theme.SetText(text, "textSecondary")
   check.Text = text
   return check
@@ -322,10 +335,10 @@ end
 
 function Frames.CreateSectionHeader(parent, titleText, width)
   local header = CreateFrame("Frame", nil, parent)
-  header:SetSize(width or 700, 22)
+  Theme.PixelSetSize(header, width or 700, Layout.controlHeight)
 
   header.title = header:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(header.title, 11, "")
+  Theme.ApplyTypography(header.title, "controlSmall")
   header.title:SetPoint("LEFT", 0, 0)
   header.title:SetText(string.upper(titleText or ""))
   Theme.SetText(header.title, "groupAccent")
@@ -338,9 +351,10 @@ end
 
 function Frames.CreateDropdown(parent, width, initializer)
   local frame = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
-  UIDropDownMenu_SetWidth(frame, width or 140)
+  UIDropDownMenu_SetWidth(frame, width or Layout.standardDropdownWidth)
   UIDropDownMenu_Initialize(frame, initializer)
   Theme.StyleDropdown(frame)
+  if frame.Text then Theme.ApplyTypography(frame.Text, "control") end
   return frame
 end
 
@@ -352,23 +366,24 @@ function Frames.CreateScrollPanel(parent, options)
 
   local scroll = CreateFrame("ScrollFrame", nil, host, "UIPanelScrollFrameTemplate")
   scroll:SetPoint("TOPLEFT", options.leftInset or 0, -(options.topInset or 0))
-  scroll:SetPoint("BOTTOMRIGHT", -(options.rightInset or 26), options.bottomInset or 0)
+  scroll:SetPoint("BOTTOMRIGHT", -(options.rightInset or Layout.scrollBarInset), options.bottomInset or 0)
   scroll:EnableMouseWheel(true)
   scroll:SetScript("OnMouseWheel", function(selfScroll, delta)
     local current = selfScroll:GetVerticalScroll() or 0
     local maximum = selfScroll:GetVerticalScrollRange() or 0
-    selfScroll:SetVerticalScroll(math.max(0, math.min(maximum, current - (delta * (options.wheelStep or 42)))))
+    selfScroll:SetVerticalScroll(math.max(0, math.min(maximum, current - (delta * (options.wheelStep or Layout.wheelStep)))))
   end)
   Theme.StyleScrollFrame(scroll)
 
   local content = CreateFrame("Frame", nil, scroll)
-  content:SetSize(options.contentWidth or 720, options.contentHeight or 720)
+  content:SetSize(options.contentWidth or Layout.standardContentWidth, options.contentHeight or Layout.standardContentWidth)
   scroll:SetScrollChild(content)
+  if Frames.ApplyPanelCanvas then Frames.ApplyPanelCanvas(content) end
 
   local function UpdateContentSize(_, width, height)
     width = tonumber(width) or host:GetWidth() or 0
     height = tonumber(height) or host:GetHeight() or 0
-    local availableWidth = math.max(options.minimumContentWidth or 1, width - (options.rightInset or 26))
+    local availableWidth = math.max(options.minimumContentWidth or 1, width - (options.rightInset or Layout.scrollBarInset))
     content:SetWidth(availableWidth)
     if options.fillHeight then
       content:SetHeight(math.max(options.contentHeight or 1, height))
@@ -384,10 +399,10 @@ end
 
 function Frames.CreateSelectorButton(parent, width, height)
   local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
-  button:SetSize(width or 180, height or 24)
+  Theme.PixelSetSize(button, width or Layout.standardDropdownWidth, height or Layout.rowHeight)
 
   button.Text = button:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(button.Text, 12, "OUTLINE")
+  Theme.ApplyTypography(button.Text, "control", "OUTLINE")
   button.Text:SetPoint("LEFT", 10, 0)
   button.Text:SetPoint("RIGHT", -24, 0)
   button.Text:SetJustifyH("LEFT")
@@ -417,5 +432,5 @@ function Frames.SetDropdownValue(dropdown, value, label)
 end
 
 function Frames.ApplyTitle(fontString)
-  Fonts.Apply(fontString, 18, "")
+  Theme.ApplyTypography(fontString, "panelTitle")
 end

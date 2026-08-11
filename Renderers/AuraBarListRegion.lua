@@ -5,6 +5,7 @@ local Colors = ns.util.Colors
 local Fonts = ns.util.Fonts
 local Frames = ns.util.Frames
 local UnitAuraList = ns.util.UnitAuraList
+local Media = ns.util.Media
 
 local Region = {}
 ns.renderers.AuraBarListRegion = Region
@@ -56,16 +57,6 @@ local function GetTrigger(aura)
   return aura and type(aura.triggers) == "table" and aura.triggers[1] or {}
 end
 
-local function GetTexturePath(textureKey)
-  local textures = {
-    DEFAULT = "Interface\\Buttons\\WHITE8x8",
-    FLAT = "Interface\\Buttons\\WHITE8x8",
-    GLAZE = "Interface\\RaidFrame\\Raid-Bar-Hp-Fill",
-    BLIZZARD = "Interface\\TargetingFrame\\UI-StatusBar",
-  }
-  return textures[textureKey] or textureKey or textures.DEFAULT
-end
-
 local function PositionText(fontString, owner, icon, anchor, x, y)
   fontString:ClearAllPoints()
   if anchor == "ICON" and icon then
@@ -96,7 +87,7 @@ local function StyleButton(button, aura)
   Frames.SetExplicitBounds(button.cooldown, button, width, height)
   Frames.SetExplicitBounds(button.presentation, button, width, height)
 
-  button.bar:SetStatusBarTexture(GetTexturePath(display.barTexture))
+  button.bar:SetStatusBarTexture(Media:ResolveStatusBarTexture(display.barTexture))
   button.bar:SetOrientation(orientation)
   button.bar:SetStatusBarColor(
     display.color and display.color.r or 0.1,

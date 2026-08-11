@@ -3,8 +3,13 @@ Set-StrictMode -Version Latest
 
 $root = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $toc = Join-Path $root "PopAuras.toc"
+$optionsRoot = Join-Path $root "Options"
+$optionsToc = Join-Path $optionsRoot "PopAuras_Options.toc"
 if (-not (Test-Path -LiteralPath $toc -PathType Leaf)) {
     throw "Missing PopAuras.toc"
+}
+if (-not (Test-Path -LiteralPath $optionsToc -PathType Leaf)) {
+    throw "Missing bundled PopAuras_Options.toc"
 }
 
 $missing = @()
@@ -18,12 +23,32 @@ if ($missing.Count -gt 0) {
     throw "TOC references missing files: $($missing -join ', ')"
 }
 
+$missingOptions = @()
+Get-Content -LiteralPath $optionsToc | ForEach-Object {
+    $entry = $_.Trim()
+    if ($entry -match '\.lua$' -and -not (Test-Path -LiteralPath (Join-Path $optionsRoot $entry) -PathType Leaf)) {
+        $missingOptions += $entry
+    }
+}
+if ($missingOptions.Count -gt 0) {
+    throw "Options TOC references missing files: $($missingOptions -join ', ')"
+}
+
 $tocText = Get-Content -LiteralPath $toc -Raw
+$optionsTocText = Get-Content -LiteralPath $optionsToc -Raw
 if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
     throw "PopAuras.toc is not targeting PTR interface 120100"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.5\s*$') {
-    throw "PopAuras.toc version is not aligned to release 12.1.5"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.6\s*$' -or
+    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.6\s*$') {
+    throw "Core and options metadata are not aligned to release 12.1.6"
+}
+if ($optionsTocText -notmatch '(?m)^## LoadOnDemand:\s*1\s*$' -or
+    $optionsTocText -notmatch '(?m)^## Dependencies:\s*PopAuras\s*$') {
+    throw "PopAuras_Options is not a load-on-demand companion of PopAuras"
+}
+if ($tocText -match '(?m)^UI\\.*\.lua\s*$') {
+    throw "Editor Lua is still listed in the base PopAuras TOC"
 }
 
 $forbiddenPatterns = @(
@@ -382,11 +407,11 @@ $nameplateAuraRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\
 $nameplateConstantsText = Get-Content -LiteralPath (Join-Path $root "Core\Constants.lua") -Raw
 $nameplateTriggerEngineText = Get-Content -LiteralPath (Join-Path $root "Engine\TriggerEngine.lua") -Raw
 $nameplateProviderText = Get-Content -LiteralPath (Join-Path $root "Triggers\AuraProvider.lua") -Raw
-$nameplateLoadPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\LoadPanel.lua") -Raw
-$nameplateNewAuraPanelText = Get-Content -LiteralPath (Join-Path $root "UI\NewAuraPanel.lua") -Raw
-$nameplateCreateDialogText = Get-Content -LiteralPath (Join-Path $root "UI\CreateAuraDialog.lua") -Raw
-$nameplateTriggerPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\TriggerPanel.lua") -Raw
-$nameplateDisplayPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\DisplayPanel.lua") -Raw
+$nameplateLoadPanelText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\Panels\LoadPanel.lua") -Raw
+$nameplateNewAuraPanelText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\NewAuraPanel.lua") -Raw
+$nameplateCreateDialogText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\CreateAuraDialog.lua") -Raw
+$nameplateTriggerPanelText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\Panels\TriggerPanel.lua") -Raw
+$nameplateDisplayPanelText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\Panels\DisplayPanel.lua") -Raw
 $nameplateAnchorsText = Get-Content -LiteralPath (Join-Path $root "Util\Anchors.lua") -Raw
 if ($tocText.IndexOf('Renderers\NameplateAuraRegion.lua') -lt 0 -or
     $nameplateConstantsText -notmatch 'feature_nameplate_buffs\s*=\s*true' -or
@@ -568,8 +593,11 @@ if ($runtimeStoreText -notmatch 'trinketTopSoundFile' -or
     throw "Dual trinket entries do not have independent sound transitions"
 }
 
-$displayPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\DisplayPanel.lua") -Raw
-$triggerPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\TriggerPanel.lua") -Raw
+$displayPanelText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\Panels\DisplayPanel.lua") -Raw
+$triggerPanelText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\Panels\TriggerPanel.lua") -Raw
+$editorDesignText = Get-Content -LiteralPath (Join-Path $optionsRoot "EditorDesign.lua") -Raw
+$texturePickerText = Get-Content -LiteralPath (Join-Path $optionsRoot "TexturePicker.lua") -Raw
+$mediaText = Get-Content -LiteralPath (Join-Path $root "Util\Media.lua") -Raw
 foreach ($label in @('Trinket 1 (Top)', 'Trinket 2 (Bottom)')) {
     if ($displayPanelText -notmatch [regex]::Escape($label)) {
         throw "Dual trinket sound UI is missing '$label'"
@@ -582,9 +610,45 @@ if ($displayPanelText -notmatch 'function Panel:SetActiveSection' -or
 }
 if ($displayPanelText -notmatch 'frame\.summary:Hide\(\)' -or
     $displayPanelText -notmatch 'frame\.hint:Hide\(\)' -or
-    $displayPanelText -notmatch 'box\.header:Hide\(\)' -or
-    $displayPanelText -notmatch 'box\.bodyTop:Hide\(\)') {
-    throw "Display configuration still exposes redundant summary or section chrome"
+    $displayPanelText -notmatch 'Frames\.CreateSectionCard' -or
+    $editorDesignText -notmatch 'section\.rowBands' -or
+    $editorDesignText -notmatch 'string\.upper\(title') {
+    throw "Display configuration is missing its unified section-card treatment"
+}
+if ($tocText.IndexOf('Util\Media.lua') -lt 0 -or
+    $tocText.IndexOf('Util\Media.lua') -gt $tocText.IndexOf('Util\Theme.lua') -or
+    $optionsTocText.IndexOf('TexturePicker.lua') -lt 0 -or
+    $optionsTocText.IndexOf('TexturePicker.lua') -gt $optionsTocText.IndexOf('UI\Panels\DisplayPanel.lua')) {
+    throw "The centralized media catalogue or texture picker is missing from a safe TOC position"
+}
+if ($mediaText -notmatch 'function Media:ResolveStatusBarTexture' -or
+    $mediaText -notmatch 'function Media:GetStatusBarTextureOptions' -or
+    $mediaText -notmatch 'LibSharedMedia-3\.0' -or
+    $mediaText -notmatch 'EllesmereUI\\\\Media\\\\textures' -or
+    $mediaText -notmatch 'blinkii-diamonds' -or
+    $mediaText -notmatch 'kringel-window') {
+    throw "The bar texture catalogue no longer covers built-in, EllesmereUI, and SharedMedia sources"
+}
+if ($texturePickerText -notmatch 'Search textures' -or
+    $texturePickerText -notmatch 'row\.preview:SetTexture' -or
+    $displayPanelText -notmatch 'TexturePicker:Toggle' -or
+    $displayPanelText -notmatch 'GetStatusBarTextureOptions' -or
+    $displayPanelText -notmatch 'dropdown\.Button:EnableMouse\(false\)' -or
+    $displayPanelText -notmatch 'barTexturePickerHitBox:RegisterForClicks\("LeftButtonUp"\)') {
+    throw "The Display editor no longer exposes the searchable visual texture picker"
+}
+$textureRenderers = @($barRegionText, $nativeAuraRegionText, $activeDurationNativeText, $auraBarListRegionText)
+foreach ($rendererText in $textureRenderers) {
+    if ($rendererText -notmatch 'Media:ResolveStatusBarTexture' -or
+        $rendererText -match 'local function (GetTexturePath|TexturePath)') {
+        throw "A bar renderer bypasses the centralized texture resolver"
+    }
+}
+foreach ($verticalRendererText in @($barRegionText, $nativeAuraRegionText, $activeDurationNativeText)) {
+    if ($verticalRendererText -notmatch 'SetRotatesTexture\([^\r\n]*==\s*"VERTICAL"\)' -or
+        $verticalRendererText -match 'SetRotatesTexture\([^\r\n]*~=\s*"VERTICAL"\)') {
+        throw "A vertical bar renderer uses the inverted texture-rotation rule"
+    }
 }
 if ($displayPanelText -notmatch 'trigger\.type\s*~=\s*"death_alert"') {
     throw "Death Alert auras still expose the redundant Display sound category"
@@ -611,7 +675,7 @@ if ($displayPanelText -notmatch 'Out-of-Stacks Color' -or
 }
 if ($displayPanelText -notmatch 'Show cooldown while charges remain' -or
     $displayPanelText -notmatch 'CreateLabeledToggle\([\s\S]{0,100}"Show cooldown while charges remain"' -or
-    $displayPanelText -notmatch 'chargeCooldownCheck:SetPoint\("TOPLEFT", 12, -448\)' -or
+    $displayPanelText -notmatch 'chargeCooldownCheck:SetPoint\("TOPLEFT", 12, -516\)' -or
     $displayPanelText -notmatch 'trigger\.showChargeCooldown\s*=\s*frame\.chargeCooldownCheck:GetChecked' -or
     $triggerPanelText -match 'Show cooldown while charges remain') {
     throw "The partial-charge cooldown option is not owned exclusively by Display"
@@ -621,7 +685,7 @@ if ($displayPanelText -match 'showAuraWindow|Show CDM aura/proc' -or
     $defaultsText -match 'showAuraWindow') {
     throw "The unused CDM aura/proc option is still exposed or initialized"
 }
-$loadPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\LoadPanel.lua") -Raw
+$loadPanelText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\Panels\LoadPanel.lua") -Raw
 if ($loadPanelText -notmatch '"Instance Information"' -or
     $loadPanelText -notmatch 'GetInstanceInfo' -or
     $loadPanelText -notmatch 'C_EncounterJournal\.GetInstanceForGameMap' -or
@@ -679,7 +743,7 @@ if ($constantsText -notmatch 'DB_VERSION\s*=\s*5' -or
     throw "Removed Communication auras do not have a saved-variable migration"
 }
 
-$mainWindowText = Get-Content -LiteralPath (Join-Path $root "UI\MainWindow.lua") -Raw
+$mainWindowText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\MainWindow.lua") -Raw
 if ($mainWindowText -notmatch 'GetAddOnMetadata' -or
     $mainWindowText -notmatch 'sidebarBuild:SetText\(version') {
     throw "Main window title does not include addon version metadata"
@@ -738,8 +802,8 @@ if ($mainWindowText -notmatch 'addToGroupDropdown' -or
     $mainWindowText -notmatch 'Theme\.StyleDropdown\(frame\.addToGroupDropdown,\s*"success"\)') {
     throw "Standalone auras do not expose a loaded-first Add to Group header menu"
 }
-$toolbarText = Get-Content -LiteralPath (Join-Path $root "UI\Toolbar.lua") -Raw
-$exportWindowText = Get-Content -LiteralPath (Join-Path $root "UI\ExportWindow.lua") -Raw
+$toolbarText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\Toolbar.lua") -Raw
+$exportWindowText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\ExportWindow.lua") -Raw
 if ($toolbarText -notmatch 'OpenGlobalImport\(\)' -or
     $toolbarText -notmatch 'ExportWindow:ShowAll\(\)' -or
     $toolbarText -notmatch 'CreateTransferIcon\(frame\.importButton,\s*"down"\)' -or
@@ -757,13 +821,13 @@ if ($exportWindowText -match 'CopyToClipboard' -or
     $exportWindowText -notmatch 'HighlightText\(\)') {
     throw "Export All does not use the standalone restriction-safe copy window"
 }
-if ($tocText.IndexOf('UI\ExportWindow.lua') -lt 0 -or
-    $tocText.IndexOf('UI\ExportWindow.lua') -gt $tocText.IndexOf('UI\Toolbar.lua')) {
+if ($optionsTocText.IndexOf('UI\ExportWindow.lua') -lt 0 -or
+    $optionsTocText.IndexOf('UI\ExportWindow.lua') -gt $optionsTocText.IndexOf('UI\Toolbar.lua')) {
     throw "Standalone Export All window is not loaded before the toolbar"
 }
 
 $importText = Get-Content -LiteralPath (Join-Path $root "Data\Import.lua") -Raw
-$importPanelText = Get-Content -LiteralPath (Join-Path $root "UI\Panels\ImportExportPanel.lua") -Raw
+$importPanelText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\Panels\ImportExportPanel.lua") -Raw
 if ($importText -notmatch 'name = primaryAura' -or
     $importPanelText -notmatch 'Confirm Import' -or
     $importPanelText -notmatch 'Successfully imported' -or
@@ -772,7 +836,7 @@ if ($importText -notmatch 'name = primaryAura' -or
 }
 
 $registryText = Get-Content -LiteralPath (Join-Path $root "Core\Registry.lua") -Raw
-$auraTreeText = Get-Content -LiteralPath (Join-Path $root "UI\AuraTree.lua") -Raw
+$auraTreeText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\AuraTree.lua") -Raw
 if ($registryText -notmatch 'function Registry:CountDescendants' -or
     $auraTreeText -notmatch 'CountDescendants' -or
     $auraTreeText -notmatch 'Deleting the group will permanently delete') {
@@ -804,9 +868,113 @@ if ($auraTreeText -notmatch 'row\.groupIndicator' -or
 }
 if ($auraTreeText -notmatch 'row:SetPoint\("TOPLEFT",\s*indent,\s*-yOffset\)' -or
     $auraTreeText -notmatch 'row:SetWidth\(rowWidth\)' -or
-    $auraTreeText -notmatch 'row:SetSize\(272,\s*40\)' -or
-    $auraTreeText -notmatch 'yOffset\s*=\s*yOffset\s*\+\s*46') {
+    $auraTreeText -notmatch 'row:SetSize\(272,\s*Theme\.layout\.auraRowHeight\)' -or
+    $auraTreeText -notmatch 'yOffset\s*=\s*yOffset\s*\+\s*Theme\.layout\.auraRowStep') {
     throw "Aura cards are missing full-row child indentation or compact vertical spacing"
+}
+if ($displayPanelText -notmatch 'CreateLabeledToggle\(frame\.canvasSection, "Glow When Active"\)' -or
+    $displayPanelText -notmatch 'CreateLabeledDropdown\(frame\.canvasSection, "Glow Type"' -or
+    $displayPanelText -notmatch 'CreateColorSwatch\(frame\.canvasSection, "Glow Color"' -or
+    $displayPanelText -notmatch 'glowWhenActiveCheck:SetPoint\("TOPLEFT", 12, -372\)' -or
+    $displayPanelText -notmatch 'reverseCheck:SetPoint\("TOPLEFT", 12, -408\)' -or
+    $displayPanelText -notmatch 'selectedActiveGlowStyle ~= "ACTIVE_DURATION"' -or
+    $displayPanelText -notmatch 'WireColor\(frame\.activeGlowColorWrap' -or
+    $displayPanelText -notmatch 'InvalidateProviderCaches\("spell_cooldown"\)' -or
+    $defaultsText -notmatch 'activeGlowColor\s*=') {
+    throw "Spell Cooldown bars are missing the progressive active-glow toggle, type, or color controls"
+}
+if ($barRegionText -notmatch 'GetActiveGlowColor\(aura\)' -or
+    $barRegionText -notmatch 'SetActiveBuffBorder\([\s\S]{0,220}GetActiveGlowColor\(aura\)' -or
+    $baseRegionText -notmatch 'ApplyBuiltInGlowColor' -or
+    $baseRegionText -notmatch 'SetDesaturated\(true\)' -or
+    $baseRegionText -notmatch 'activeGlowColor') {
+    throw "Configured glow colors no longer reach both inner and outer glow renderers"
+}
+if ($barRegionText -notmatch 'activeGlowOverride\s*=\s*state\.activeGlowStyle == "OUTER_GLOW" and state\.activeBuff == true' -or
+    $barRegionText -notmatch 'state\.activeGlowStyle == "INNER_GLOW" and state\.show and state\.activeBuff == true' -or
+    $barRegionText -match 'activeDurationRequested\s*=[\s\S]{0,140}state\.active\s*==\s*true') {
+    throw "Active buff appearance is incorrectly gated by the spell cooldown state"
+}
+
+$featureInventoryText = Get-Content -LiteralPath (Join-Path $root "Core\FeatureInventory.lua") -Raw
+$optionsLoaderText = Get-Content -LiteralPath (Join-Path $root "Core\OptionsLoader.lua") -Raw
+$cooldownManagerText = Get-Content -LiteralPath (Join-Path $root "Core\CooldownManager.lua") -Raw
+$spellAlertsText = Get-Content -LiteralPath (Join-Path $root "Core\BlizzardSpellAlerts.lua") -Raw
+$interruptTrackerText = Get-Content -LiteralPath (Join-Path $root "Core\InterruptTracker.lua") -Raw
+$shareLinksText = Get-Content -LiteralPath (Join-Path $root "Core\ShareLinks.lua") -Raw
+$pkgmetaText = Get-Content -LiteralPath (Join-Path $root ".pkgmeta") -Raw
+if ($featureInventoryText -notmatch 'function FeatureInventory:BuildSnapshot' -or
+    $featureInventoryText -notmatch 'aura\.enabled\s*~=\s*false' -or
+    $featureInventoryText -notmatch 'function FeatureInventory:ScheduleRebuild' -or
+    $registryText -notmatch 'FeatureInventory:ScheduleRebuild') {
+    throw "Saved configuration is not maintaining a coalesced, enabled-feature demand inventory"
+}
+if ($eventsText -notmatch 'function Events:RebuildSubscriptions' -or
+    $eventsText -notmatch 'frame:UnregisterEvent\(event\)' -or
+    $eventsText -notmatch 'snapshot\.providerTypes' -or
+    $eventsText -notmatch 'snapshot\.loadEvents') {
+    throw "The central event router is no longer demand-driven"
+}
+if ($cooldownManagerText -notmatch 'function Manager:EnsureActive' -or
+    $spellAlertsText -notmatch 'function Manager:EnsureActive' -or
+    $interruptTrackerText -notmatch 'function Tracker:EnsureInitialized' -or
+    $featureInventoryText -notmatch 'NativeAuras:EnsureActive') {
+    throw "An optional runtime manager is missing its activation-only lifecycle"
+}
+if ($interruptTrackerText -notmatch 'ArmCorrelationDriver\s*=\s*function' -or
+    $interruptTrackerText -notmatch 'selfFrame:SetScript\("OnUpdate",\s*nil\)' -or
+    $shareLinksText -notmatch 'sendPump:Show\(\)' -or
+    $shareLinksText -notmatch 'frame:Hide\(\)') {
+    throw "A transient OnUpdate driver no longer self-disarms"
+}
+if ($loadPanelText -notmatch 'SetInstanceInfoEventsEnabled\(true\)' -or
+    $loadPanelText -notmatch 'SetInstanceInfoEventsEnabled\(false\)' -or
+    $loadPanelText -notmatch 'UnregisterAllEvents\(\)') {
+    throw "The Load editor panel keeps instance events registered while hidden"
+}
+if ($optionsLoaderText -notmatch 'C_AddOns\.LoadAddOn,\s*"PopAuras_Options"' -or
+    $optionsLoaderText -notmatch 'PLAYER_REGEN_ENABLED' -or
+    $pkgmetaText -notmatch '(?m)^\s*PopAuras/Options:\s*PopAuras_Options\s*$' -or
+    $tocText -match '(?m)^Util\\SoundPicker\.lua\s*$') {
+    throw "The editor is not packaged and loaded as a combat-safe companion addon"
+}
+if ($optionsTocText.IndexOf('Bootstrap.lua') -lt 0 -or
+    $optionsTocText.IndexOf('Bootstrap.lua') -gt $optionsTocText.IndexOf('EditorDesign.lua') -or
+    $optionsTocText.IndexOf('Ready.lua') -lt $optionsTocText.IndexOf('UI\MainWindow.lua')) {
+    throw "PopAuras_Options namespace or readiness files are in an unsafe load order"
+}
+if ($themeText -notmatch 'Theme\.typography' -or
+    $themeText -notmatch 'Theme\.layout' -or
+    $themeText -notmatch 'function Theme\.ApplyTypography' -or
+    $themeText -notmatch 'function Theme\.PixelSetSize') {
+    throw "The shared editor typography, layout, or pixel-alignment tokens are missing"
+}
+foreach ($builder in @('CreateSectionCard', 'CreateLabeledInput', 'CreateLabeledDropdown', 'CreateColorSwatch', 'CreateFieldRow', 'CreateTwoColumnRow')) {
+    if ($editorDesignText -notmatch ("function Frames\." + [regex]::Escape($builder))) {
+        throw "Editor design builder '$builder' is missing"
+    }
+}
+$directEditorFontCall = Get-ChildItem -LiteralPath (Join-Path $optionsRoot "UI") -Recurse -Filter *.lua |
+    Select-String -Pattern 'Fonts\.Apply|:SetFont\(' | Select-Object -First 1
+if ($directEditorFontCall) {
+    throw "Editor typography bypasses Theme.ApplyTypography at $($directEditorFontCall.Path):$($directEditorFontCall.LineNumber)"
+}
+
+function Get-TocLuaByteCount {
+    param([string]$TocPath, [string]$BasePath)
+    $total = 0L
+    Get-Content -LiteralPath $TocPath | ForEach-Object {
+        $entry = $_.Trim()
+        if ($entry -match '\.lua$') {
+            $total += (Get-Item -LiteralPath (Join-Path $BasePath $entry)).Length
+        }
+    }
+    return $total
+}
+$baseLuaBytes = Get-TocLuaByteCount -TocPath $toc -BasePath $root
+$optionsLuaBytes = Get-TocLuaByteCount -TocPath $optionsToc -BasePath $optionsRoot
+if (($optionsLuaBytes / ($baseLuaBytes + $optionsLuaBytes)) -lt 0.405) {
+    throw "The load-on-demand editor split defers less than the audited 40.5% startup target"
 }
 
 & (Join-Path $root "deploy.ps1") -WhatIf

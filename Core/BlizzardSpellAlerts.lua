@@ -5,6 +5,12 @@ ns.BlizzardSpellAlerts = Manager
 
 Manager.suppressedSpellIDs = Manager.suppressedSpellIDs or {}
 
+local function IsDemanded()
+  return not ns.FeatureInventory
+    or not ns.FeatureInventory.IsRequired
+    or ns.FeatureInventory:IsRequired("needsSpellAlerts")
+end
+
 local ACTION_BUTTON_PREFIXES = {
   { prefix = "ActionButton", count = 12 },
   { prefix = "MultiBarBottomLeftButton", count = 12 },
@@ -276,6 +282,9 @@ function Manager:QueueSuppress(spellID)
 end
 
 function Manager:Sync()
+  if not self.active and not self:EnsureActive(false) then
+    return
+  end
   LearnVisibleOverlays()
   self.suppressedSpellIDs = self:GetDesiredSpellIDs()
   for spellID in pairs(self.suppressedSpellIDs or {}) do
@@ -283,24 +292,35 @@ function Manager:Sync()
   end
 end
 
-function Manager:Initialize()
+function Manager:EnsureActive(force)
+  if self.active then return true end
+  if force ~= true and not IsDemanded() then return false end
   self.suppressedSpellIDs = self.suppressedSpellIDs or {}
-  if self.eventFrame then
-    return
+  if not self.eventFrame then
+    local frame = CreateFrame("Frame")
+    frame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_SHOW")
+    frame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+    frame:SetScript("OnEvent", function(_, _, spellID)
+      spellID = SafeSpellID(spellID)
+      if spellID ~= 0 then
+        LearnSpellID(spellID)
+        self.suppressedSpellIDs = self:GetDesiredSpellIDs()
+      end
+      if spellID ~= 0 and self.suppressedSpellIDs and self.suppressedSpellIDs[spellID] then
+        self:QueueSuppress(spellID)
+      end
+    end)
+    self.eventFrame = frame
   end
+  self.active = true
+  self:Sync()
+  return true
+end
 
-  local frame = CreateFrame("Frame")
-  frame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_SHOW")
-  frame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
-  frame:SetScript("OnEvent", function(_, _, spellID)
-    spellID = SafeSpellID(spellID)
-    if spellID ~= 0 then
-      LearnSpellID(spellID)
-      self.suppressedSpellIDs = self:GetDesiredSpellIDs()
-    end
-    if spellID ~= 0 and self.suppressedSpellIDs and self.suppressedSpellIDs[spellID] then
-      self:QueueSuppress(spellID)
-    end
-  end)
-  self.eventFrame = frame
+function Manager:IsActive()
+  return self.active == true
+end
+
+function Manager:Initialize()
+  return self:EnsureActive(true)
 end

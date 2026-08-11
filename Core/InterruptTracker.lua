@@ -17,6 +17,7 @@ local signalTape = {}
 local signalSeq = 0
 local needsCorrelation = false
 local lastCorrelateAt = 0
+local ArmCorrelationDriver
 
 local SIGNAL_RETENTION = 0.35
 local CORRELATE_INTERVAL = 0.04
@@ -100,6 +101,9 @@ local function PushSignal(kind, unit)
     consumed = false,
   }
   needsCorrelation = true
+  if ArmCorrelationDriver then
+    ArmCorrelationDriver()
+  end
 end
 
 local function PruneSignalTape(now)
@@ -982,6 +986,21 @@ local function CorrelateSignals()
   needsCorrelation = false
 end
 
+ArmCorrelationDriver = function()
+  local frame = Tracker.eventFrame
+  if not frame or Tracker.correlationDriverArmed then
+    return
+  end
+  Tracker.correlationDriverArmed = true
+  frame:SetScript("OnUpdate", function(selfFrame)
+    CorrelateSignals()
+    if not needsCorrelation then
+      selfFrame:SetScript("OnUpdate", nil)
+      Tracker.correlationDriverArmed = false
+    end
+  end)
+end
+
 function Tracker:HandleMessage(prefix, message, sender)
   if prefix ~= PREFIX or type(message) ~= "string" then
     return
@@ -1211,12 +1230,6 @@ function Tracker:InitializeEventFrame()
   frame:SetScript("OnEvent", function(_, event, ...)
     Tracker:HandleEvent(event, ...)
   end)
-  frame:SetScript("OnUpdate", function()
-    if needsCorrelation then
-      CorrelateSignals()
-    end
-  end)
-
   if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
     C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
   end
@@ -1230,14 +1243,18 @@ function Tracker:InitializeEventFrame()
   end)
 end
 
-function Tracker:Initialize()
+function Tracker:EnsureInitialized(force)
   if self.eventFrame then
-    return
+    return true
+  end
+  if force ~= true and ns.FeatureInventory and ns.FeatureInventory.IsRequired
+      and not ns.FeatureInventory:IsRequired("needsInterruptTracker") then
+    return false
   end
 
   if not (IsLoggedIn and IsLoggedIn()) then
     if self.startupFrame then
-      return
+      return true
     end
 
     local startupFrame = CreateFrame("Frame")
@@ -1248,13 +1265,35 @@ function Tracker:Initialize()
       Tracker:InitializeEventFrame()
     end)
     self.startupFrame = startupFrame
-    return
+    return true
   end
 
   self:InitializeEventFrame()
+  return self.eventFrame ~= nil
+end
+
+function Tracker:IsActive()
+  return self.eventFrame ~= nil or self.startupFrame ~= nil
+end
+
+function Tracker:IsCorrelationDriverArmed()
+  return self.correlationDriverArmed == true
+end
+
+function Tracker:GetWatcherCount()
+  local count = self.mobFrame and 1 or 0
+  for _ in pairs(self.nameplateFrames or {}) do
+    count = count + 1
+  end
+  return count
+end
+
+function Tracker:Initialize()
+  return self:EnsureInitialized(true)
 end
 
 function Tracker:GetEntries(aura)
+  self:EnsureInitialized(true)
   local now = GetTime()
   local disabledSpells = aura and aura.interrupt and aura.interrupt.disabledSpells or nil
   local entries = {}

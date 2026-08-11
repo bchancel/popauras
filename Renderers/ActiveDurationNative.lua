@@ -5,6 +5,7 @@ local _, ns = ...
 -- Lua only configures a verified spell-ID filter and presentation widgets.
 local Controller = {}
 ns.renderers.ActiveDurationNative = Controller
+local Media = ns.util.Media
 
 local EMPTY_CANDIDATE_FILTERS = { includeSpellIDs = {} }
 local decimalFormatters = {}
@@ -22,21 +23,6 @@ local function GetDecimalFormatter(decimals)
   } })
   decimalFormatters[decimals] = formatter
   return formatter
-end
-
-local function GetTexturePath(textureKey)
-  local textures = {
-    DEFAULT = "Interface\\Buttons\\WHITE8x8",
-    FLAT = "Interface\\Buttons\\WHITE8x8",
-    GLAZE = "Interface\\RaidFrame\\Raid-Bar-Hp-Fill",
-    BLIZZARD = "Interface\\TargetingFrame\\UI-StatusBar",
-    CAST = "Interface\\TargetingFrame\\UI-StatusBar",
-  }
-  if textureKey == "Interface\\TARGETINGFRAME\\UI-StatusBar"
-    or textureKey == "Interface\\TargetingFrame\\UI-StatusBar" then
-    return textures.FLAT
-  end
-  return textures[textureKey] or textureKey or textures.DEFAULT
 end
 
 local oppositePoints = {
@@ -78,10 +64,10 @@ function Controller:InitializeButton(button)
 
   button.bar = CreateFrame("StatusBar", nil, button)
   button.bar:SetAllPoints()
-  button.bar:SetStatusBarTexture(GetTexturePath(display.barTexture))
+  button.bar:SetStatusBarTexture(Media:ResolveStatusBarTexture(display.barTexture))
   button.bar:SetOrientation(display.orientation or "HORIZONTAL")
   if button.bar.SetRotatesTexture then
-    button.bar:SetRotatesTexture((display.orientation or "HORIZONTAL") ~= "VERTICAL")
+    button.bar:SetRotatesTexture((display.orientation or "HORIZONTAL") == "VERTICAL")
   end
   if button.bar.SetReverseFill then button.bar:SetReverseFill(display.reverse == true) end
   button.bar:SetStatusBarColor(1.00, 0.82, 0.08, 1.00)

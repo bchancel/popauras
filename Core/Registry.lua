@@ -19,6 +19,9 @@ function Registry:MarkDirty()
   if ns.runtime and ns.runtime.MarkMissingRegionsDirty then
     ns.runtime:MarkMissingRegionsDirty()
   end
+  if ns.FeatureInventory and ns.FeatureInventory.ScheduleRebuild then
+    ns.FeatureInventory:ScheduleRebuild()
+  end
 end
 
 function Registry:GetAuras()

@@ -1,7 +1,6 @@
 local _, ns = ...
 
 local Frames = ns.util.Frames
-local Fonts = ns.util.Fonts
 local Theme = ns.util.Theme
 
 local Toolbar = {}
@@ -45,7 +44,7 @@ end
 
 function Toolbar:Create(parent)
   local frame = CreateFrame("Frame", nil, parent)
-  frame:SetHeight(52)
+  frame:SetHeight(Theme.layout.toolbarHeight)
 
   frame.newButton = Frames.CreateButton(frame, "+  New Aura", 140, 36, function()
     ns.ui.MainWindow:OpenNewAuraPicker()
@@ -53,7 +52,7 @@ function Toolbar:Create(parent)
   frame.newButton:SetPoint("TOPLEFT", 0, 0)
   frame.newButton:SetWidth(140)
   StylePrimaryButton(frame.newButton)
-  Fonts.Apply(frame.newButton:GetFontString(), 12, "")
+  Theme.ApplyTypography(frame.newButton:GetFontString(), "control")
 
   frame.importButton = Frames.CreateButton(frame, "Import", 74, 36, function()
     ns.ui.MainWindow:OpenGlobalImport()
@@ -61,7 +60,7 @@ function Toolbar:Create(parent)
   frame.importButton:SetPoint("TOPLEFT", frame.newButton, "TOPRIGHT", 6, 0)
   frame.importButton:SetWidth(74)
   StyleSecondaryButton(frame.importButton)
-  Fonts.Apply(frame.importButton:GetFontString(), 10, "")
+  Theme.ApplyTypography(frame.importButton:GetFontString(), "caption")
   CreateTransferIcon(frame.importButton, "down")
 
   frame.exportButton = Frames.CreateButton(frame, "Export", 74, 36, function()
@@ -72,11 +71,11 @@ function Toolbar:Create(parent)
   frame.exportButton:SetPoint("TOPLEFT", frame.importButton, "TOPRIGHT", 6, 0)
   frame.exportButton:SetPoint("RIGHT", frame, "RIGHT", 0, 0)
   StyleSecondaryButton(frame.exportButton)
-  Fonts.Apply(frame.exportButton:GetFontString(), 10, "")
+  Theme.ApplyTypography(frame.exportButton:GetFontString(), "caption")
   CreateTransferIcon(frame.exportButton, "up")
 
   frame.contextLabel = frame:CreateFontString(nil, "OVERLAY")
-  Fonts.Apply(frame.contextLabel, 10, "OUTLINE")
+  Theme.ApplyTypography(frame.contextLabel, "caption", "OUTLINE")
   frame.contextLabel:SetPoint("RIGHT", 0, 0)
   frame.contextLabel:SetText("MIDNIGHT  •  RETAIL 12.1")
   Theme.SetText(frame.contextLabel, "textMuted")

@@ -85,6 +85,7 @@ Defaults.display = {
   glow = false,
   glowWhenActive = false,
   activeGlowStyle = "NONE",
+  activeGlowColor = { r = 1.00, g = 0.82, b = 0.08, a = 1.00 },
   showName = true,
   showTimer = true,
   showStacks = true,
