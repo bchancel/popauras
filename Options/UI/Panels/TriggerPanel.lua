@@ -281,17 +281,11 @@ local function UpdateTrinketTriggerLayout(frame, isTrinketCooldown, showGrowth)
   frame.trinketGrowthLabel:SetPoint("TOPLEFT", frame.trinketTopCheck, "BOTTOMLEFT", 0, -8)
   frame.trinketGrowthDropDown:ClearAllPoints()
   frame.trinketGrowthDropDown:SetPoint("TOPLEFT", frame.trinketGrowthLabel, "BOTTOMLEFT", -14, -4)
-  frame.trinketGlowCheck:ClearAllPoints()
-  if showGrowth then
-    frame.trinketGlowCheck:SetPoint("LEFT", frame.trinketGrowthDropDown, "RIGHT", 4, 0)
-  else
-    frame.trinketGlowCheck:SetPoint("TOPLEFT", frame.trinketTopCheck, "BOTTOMLEFT", 0, -6)
-  end
   frame.trinketIgnoreLabel:ClearAllPoints()
   if showGrowth then
     frame.trinketIgnoreLabel:SetPoint("TOPLEFT", frame.trinketGrowthDropDown, "BOTTOMLEFT", 14, -8)
   else
-    frame.trinketIgnoreLabel:SetPoint("TOPLEFT", frame.trinketGlowCheck, "BOTTOMLEFT", 0, -10)
+    frame.trinketIgnoreLabel:SetPoint("TOPLEFT", frame.trinketTopCheck, "BOTTOMLEFT", 0, -10)
   end
   frame.trinketIgnoreInput:ClearAllPoints()
   frame.trinketIgnoreInput:SetPoint("TOPLEFT", frame.trinketIgnoreLabel, "BOTTOMLEFT", 0, -6)
@@ -833,7 +827,6 @@ function Panel:ApplyCurrent()
   if trigger.type == "trinket_cooldown" then
     trigger.trinketTop = frame.trinketTopCheck:GetChecked() == true
     trigger.trinketBottom = frame.trinketBottomCheck:GetChecked() == true
-    trigger.glowWhileActive = frame.trinketGlowCheck:GetChecked() == true
     trigger.trinketGrowth = UIDropDownMenu_GetSelectedValue(frame.trinketGrowthDropDown) or trigger.trinketGrowth or "DOWN"
     trigger.ignoredTrinkets = TrimmedText(frame.trinketIgnoreInput:GetText())
   end
@@ -1200,7 +1193,6 @@ function Panel:Create(parent)
   frame.trinketBottomCheck = Frames.CreateCheckbox(frame, "Bottom Trinket Slot")
   frame.trinketGrowthLabel = Frames.CreateLabel(frame, "Grow Direction", "GameFontNormal")
   frame.trinketGrowthDropDown = Frames.CreateDropdown(frame, 140)
-  frame.trinketGlowCheck = Frames.CreateCheckbox(frame, "Glow While Active")
   frame.trinketIgnoreLabel = Frames.CreateLabel(frame, "Ignored Trinkets", "GameFontNormal")
   frame.trinketIgnoreInput = Frames.CreateInput(frame, 360, 24)
   frame.trinketIgnoreHint = Frames.CreateLabel(
@@ -1215,7 +1207,6 @@ function Panel:Create(parent)
   frame.trinketBottomCheck:Hide()
   frame.trinketGrowthLabel:Hide()
   frame.trinketGrowthDropDown:Hide()
-  frame.trinketGlowCheck:Hide()
   frame.trinketIgnoreLabel:Hide()
   frame.trinketIgnoreInput:Hide()
   frame.trinketIgnoreHint:Hide()
@@ -1822,7 +1813,6 @@ function Panel:Create(parent)
   frame.chatExactCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.trinketTopCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.trinketBottomCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
-  frame.trinketGlowCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraCastByMeCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraAliveOnlyCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
   frame.auraIgnoreNPCsCheck:SetScript("OnClick", function() Panel:ApplyCurrent() end)
@@ -2008,13 +1998,11 @@ function Panel:Refresh(aura)
   self.frame.trinketBottomCheck:SetShown(isTrinketCooldown)
   self.frame.trinketGrowthLabel:SetShown(showTrinketGrowth)
   self.frame.trinketGrowthDropDown:SetShown(showTrinketGrowth)
-  self.frame.trinketGlowCheck:SetShown(isTrinketCooldown)
   self.frame.trinketIgnoreLabel:SetShown(isTrinketCooldown)
   self.frame.trinketIgnoreInput:SetShown(isTrinketCooldown)
   self.frame.trinketIgnoreHint:SetShown(isTrinketCooldown)
   self.frame.trinketTopCheck:SetChecked(trigger.trinketTop ~= false)
   self.frame.trinketBottomCheck:SetChecked(trigger.trinketBottom ~= false)
-  self.frame.trinketGlowCheck:SetChecked(trigger.glowWhileActive == true)
   SetDropdownValue(self.frame.trinketGrowthDropDown, trigger.trinketGrowth or "DOWN", function()
     return trinketGrowthValues
   end)

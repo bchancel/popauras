@@ -275,9 +275,6 @@ local function ApplyTriggerTypeDefaults(trigger)
     if trigger.trinketBottom == nil then
       trigger.trinketBottom = true
     end
-    if trigger.glowWhileActive == nil then
-      trigger.glowWhileActive = false
-    end
     if trigger.trinketGrowth ~= "UP" and trigger.trinketGrowth ~= "LEFT" and trigger.trinketGrowth ~= "RIGHT" then
       trigger.trinketGrowth = "DOWN"
     end
@@ -483,6 +480,12 @@ function Defaults:ApplyAuraDefaults(aura)
   end
   local hasNameplateAuraTrigger = false
   for _, trigger in ipairs(aura.triggers) do
+    if trigger.type == "trinket_cooldown" and trigger.glowWhileActive == true then
+      -- Older builds stored this appearance choice on the trigger. Display now
+      -- owns it; migrate both saved variables and imported legacy auras here.
+      aura.display.glowWhenActive = true
+    end
+    trigger.glowWhileActive = nil
     self:ApplyTriggerDefaults(trigger)
     hasNameplateAuraTrigger = hasNameplateAuraTrigger
       or (trigger.type == "aura" and trigger.unit == "nameplate")
@@ -586,7 +589,6 @@ function Defaults:NewAura(kind, triggerType)
     elseif triggerType == "trinket_cooldown" then
       aura.triggers[1].trinketTop = true
       aura.triggers[1].trinketBottom = true
-      aura.triggers[1].glowWhileActive = false
       aura.triggers[1].trinketGrowth = "DOWN"
       aura.triggers[1].ignoredTrinkets = ""
       aura.triggers[1].cooldownMatch = "cooldown"

@@ -87,6 +87,13 @@ local function ShouldPlayReadySound(previousState, nextState)
   return nextReady == true and previousReady ~= true
 end
 
+local function ShouldPlaySoundForMode(soundMode, previousState, nextState)
+  if soundMode == "ready" then
+    return ShouldPlayReadySound(previousState, nextState)
+  end
+  return ShouldPlayActivationSound(previousState, nextState)
+end
+
 local DUAL_TRINKET_SOUNDS = {
   { key = "trinket_slot_13", field = "trinketTopSoundFile" },
   { key = "trinket_slot_14", field = "trinketBottomSoundFile" },
@@ -131,9 +138,7 @@ local function PlayDualTrinketSounds(aura, display, previousState, nextState)
     local nextEntry = FindStateEntry(nextState, config.key)
     local previousEntry = FindStateEntry(previousState, config.key)
     local soundFile = display[config.field]
-    local shouldPlay = soundMode == "ready"
-      and ShouldPlayReadySound(previousEntry, nextEntry)
-      or ShouldPlayActivationSound(previousEntry, nextEntry)
+    local shouldPlay = ShouldPlaySoundForMode(soundMode, previousEntry, nextEntry)
     if shouldPlay and IsConfiguredSound(soundFile) and ns.Interrupts and ns.Interrupts.PlaySound then
       ns.Interrupts:PlaySound(soundFile, display.soundChannel or "Master")
     end
@@ -153,9 +158,7 @@ local function PlayAuraActivationSound(aura, previousState, nextState)
     return
   end
   local soundMode = display.soundMode == "ready" and "ready" or "activate"
-  local shouldPlay = soundMode == "ready"
-    and ShouldPlayReadySound(previousState, nextState)
-    or ShouldPlayActivationSound(previousState, nextState)
+  local shouldPlay = ShouldPlaySoundForMode(soundMode, previousState, nextState)
   if not shouldPlay then
     return
   end

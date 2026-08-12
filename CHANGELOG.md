@@ -1,3 +1,9 @@
+# v12.1.7
+- Fixed radial cooldown swipes rendering across horizontal and vertical buff bars instead of across the full bar
+- Fixed **Play On Ready** sounds also playing when a trinket was used
+- Moved **Glow While Trinket Buff Active** to the Display menu and fixed its Retail 12.1 active-buff detection
+- Fixed the ready-text option for persistent cooldown and trinket trackers and moved it beside the ready appearance settings
+
 # v12.1.6
 - Added architecture and performance counters to `/pa perf report`
 - Split the configuration editor into the bundled, load-on-demand `PopAuras_Options` addon

@@ -12,8 +12,11 @@ local provider = ns.TriggerBase:CreateProvider("trinket_cooldown", {
 })
 
 local Safe = ns.SafeValues
+local Spells = ns.util.Spells
 local TOP_TRINKET_SLOT = INVSLOT_TRINKET1 or 13
 local BOTTOM_TRINKET_SLOT = INVSLOT_TRINKET2 or 14
+
+provider.cooldownAuraDisplayState = setmetatable({}, { __mode = "k" })
 
 local function SafeNumber(value)
   return Safe:Number(value)
@@ -139,9 +142,118 @@ function provider:WatchCooldownFrame(cooldown)
     return
   end
   cooldown._popAurasTrinketWatch = true
-  hooksecurefunc(cooldown, "SetUseAuraDisplayTime", function()
+  hooksecurefunc(cooldown, "SetUseAuraDisplayTime", function(owner, useAuraDisplayTime)
+    local active = SafeBoolean(useAuraDisplayTime)
+    if active ~= nil then
+      provider.cooldownAuraDisplayState[owner] = active
+    end
     provider:ScheduleRefresh()
   end)
+end
+
+local function AddUniqueSpellID(target, seen, value)
+  local spellID = SafeNumber(value)
+  if not spellID or spellID <= 0 or seen[spellID] then return end
+  seen[spellID] = true
+  target[#target + 1] = spellID
+end
+
+local function AddRelatedSpellIDs(target, seen, value)
+  local spellID = SafeNumber(value)
+  if not spellID or spellID <= 0 then return end
+  AddUniqueSpellID(target, seen, spellID)
+  if Spells and Spells.GetAuraSpellIDs then
+    for _, auraSpellID in ipairs(Spells:GetAuraSpellIDs(spellID)) do
+      AddUniqueSpellID(target, seen, auraSpellID)
+    end
+  end
+end
+
+local function GetTrinketAuraSpellIDs(manager, cooldownIDs)
+  local result, seen = {}, {}
+  if not manager or not manager.GetCooldownInfo then return result end
+  for _, cooldownID in ipairs(cooldownIDs or {}) do
+    local info = manager:GetCooldownInfo(cooldownID)
+    if type(info) == "table" and not Safe:IsSecret(info) then
+      AddRelatedSpellIDs(result, seen, info.spellID)
+      AddRelatedSpellIDs(result, seen, info.overrideSpellID)
+      local linkedSpellIDs = info.linkedSpellIDs
+      if type(linkedSpellIDs) == "table" and not Safe:IsSecret(linkedSpellIDs) then
+        for _, linkedSpellID in ipairs(linkedSpellIDs) do
+          AddRelatedSpellIDs(result, seen, linkedSpellID)
+        end
+      end
+    end
+  end
+  return result
+end
+
+local function ReadCDMAuraActive(manager, spellIDs)
+  if not manager or not manager.FindAuraStateSource or #spellIDs == 0 then
+    return nil, "cdm-aura-unavailable"
+  end
+  local source = manager:FindAuraStateSource(spellIDs, "player", false)
+  if not source or type(source.IsActive) ~= "function" then
+    return nil, "cdm-aura-missing"
+  end
+  local ok, active = pcall(source.IsActive, source)
+  active = ok and SafeBoolean(active) or nil
+  if active ~= nil then
+    return active, "cdm-aura"
+  end
+  return nil, "cdm-aura-restricted"
+end
+
+local function ReadCooldownAuraPresentation(frame, cooldown)
+  local signals = {
+    { value = cooldown and provider.cooldownAuraDisplayState[cooldown], source = "aura-display-hook" },
+    { value = frame and frame.cooldownUseAuraDisplayTime, source = "frame-aura-display" },
+    { value = cooldown and cooldown.cooldownUseAuraDisplayTime, source = "cooldown-aura-display" },
+    { value = frame and frame.wasSetFromAura, source = "frame-aura-source" },
+  }
+  for _, signal in ipairs(signals) do
+    local active = SafeBoolean(signal.value)
+    if active == true then
+      return true, signal.source
+    end
+  end
+
+  local auraInstanceID = frame and SafeNumber(frame.auraInstanceID) or nil
+  if auraInstanceID and auraInstanceID > 0 then
+    return true, "frame-aura-instance"
+  end
+
+  for _, signal in ipairs(signals) do
+    local active = SafeBoolean(signal.value)
+    if active == false then
+      return false, signal.source
+    end
+  end
+
+  if cooldown and type(cooldown.GetUseAuraDisplayTime) == "function" then
+    local ok, active = pcall(cooldown.GetUseAuraDisplayTime, cooldown)
+    active = ok and SafeBoolean(active) or nil
+    if active ~= nil then
+      return active, "legacy-aura-display"
+    end
+  end
+
+  return nil, "aura-display-unavailable"
+end
+
+local function ResolveTrinketEffectActive(manager, spellIDs, frame, cooldown)
+  -- Prefer the public active-state boolean on Blizzard's tracked buff source.
+  -- If that source is absent, use the Cooldown widget's presentation toggle;
+  -- its hook captures the non-secret boolean without reading aura records.
+  local cdmActive, cdmSource = ReadCDMAuraActive(manager, spellIDs)
+  if cdmActive ~= nil then return cdmActive, true, cdmSource end
+
+  local presentationActive, presentationSource = ReadCooldownAuraPresentation(frame, cooldown)
+  if presentationActive ~= nil then
+    return presentationActive, true, presentationSource
+  end
+
+  return false, false, cdmSource .. "+" .. presentationSource
 end
 
 function provider:FindCDMFrame(equipSlot)
@@ -210,19 +322,20 @@ function provider:BuildSlotEntry(trigger, aura, equipSlot, slotLabel, ignoredIDs
 
   local frame, cooldownID = self:FindCDMFrame(equipSlot)
   local cdmOnCooldown
-  local effectActive = false
+  local cooldown
   if frame then
     local okActive, active = pcall(frame.IsOnCooldown, frame)
     cdmOnCooldown = okActive and SafeBoolean(active) or nil
-    local okCooldown, cooldown = pcall(frame.GetCooldownFrame, frame)
-    if okCooldown and cooldown then
+    local okCooldown, resolvedCooldown = pcall(frame.GetCooldownFrame, frame)
+    if okCooldown and resolvedCooldown then
+      cooldown = resolvedCooldown
       self:WatchCooldownFrame(cooldown)
-      if type(cooldown.GetUseAuraDisplayTime) == "function" then
-        local okEffect, usingAuraDisplay = pcall(cooldown.GetUseAuraDisplayTime, cooldown)
-        effectActive = okEffect and SafeBoolean(usingAuraDisplay) == true or false
-      end
     end
   end
+  local auraSpellIDs = GetTrinketAuraSpellIDs(manager, cooldownIDs)
+  local effectActive, effectKnown, effectSource = ResolveTrinketEffectActive(
+    manager, auraSpellIDs, frame, cooldown)
+  local glowEnabled = aura and aura.display and aura.display.glowWhenActive == true
 
   local onCooldown = cdmOnCooldown
   if onCooldown == nil then
@@ -252,8 +365,12 @@ function provider:BuildSlotEntry(trigger, aura, equipSlot, slotLabel, ignoredIDs
     source = "trinket_cooldown",
     availability = "available",
     trinketEffectActive = effectActive,
-    glow = trigger.glowWhileActive == true and effectActive,
+    glow = glowEnabled and effectActive,
     statusText = effectActive and "Active" or (isReady and "Ready" or "Cooldown"),
+    debugExtra = string.format(
+      "slot=%d effect=%s known=%s signal=%s displayGlow=%s auraIDs=%d frame=%s",
+      equipSlot, tostring(effectActive), tostring(effectKnown), tostring(effectSource),
+      tostring(glowEnabled), #auraSpellIDs, tostring(frame ~= nil)),
   })
 end
 

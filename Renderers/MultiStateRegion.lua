@@ -52,6 +52,10 @@ end
 local function BuildChildAura(aura, key)
   local display = ns.util.Tables.DeepCopy(aura.display or {})
   display.showOnRaidFrames = false
+  -- A trinket entry's generic active state means "on cooldown". Its glow is
+  -- supplied explicitly by TrinketCooldownProvider while the CDM aura source
+  -- is active, so the generic display glow must not also consume that state.
+  display.glowWhenActive = false
   return {
     id = aura.id,
     regionKey = tostring(aura.id) .. "_" .. tostring(key),

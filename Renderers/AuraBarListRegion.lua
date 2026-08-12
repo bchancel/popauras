@@ -84,7 +84,6 @@ local function StyleButton(button, aura)
   local orientation = display.orientation or "HORIZONTAL"
   button:SetSize(width, height)
   Frames.SetExplicitBounds(button.bar, button, width, height)
-  Frames.SetExplicitBounds(button.cooldown, button, width, height)
   Frames.SetExplicitBounds(button.presentation, button, width, height)
 
   button.bar:SetStatusBarTexture(Media:ResolveStatusBarTexture(display.barTexture))
@@ -111,6 +110,9 @@ local function StyleButton(button, aura)
   button.icon:SetPoint(oppositePoints[anchor] or "CENTER", button, anchor,
     tonumber(display.iconOffsetX or 0) or 0, tonumber(display.iconOffsetY or 0) or 0)
   button.icon:SetShown(display.icon ~= false)
+  button.cooldown:ClearAllPoints()
+  button.cooldown:SetPoint("TOPLEFT", button.icon, "TOPLEFT", 0, 0)
+  button.cooldown:SetPoint("BOTTOMRIGHT", button.icon, "BOTTOMRIGHT", 0, 0)
 
   button.nameText:SetShown(display.showName == true)
   button.timerText:SetShown(display.showTimer == true)
@@ -129,13 +131,17 @@ local function StyleButton(button, aura)
   ApplyRotation(button.timerText, display.timerRotation)
   ApplyRotation(button.countText, display.stacksRotation)
 
-  -- Keep the duration host available even when the radial swipe is disabled.
-  -- Blizzard owns its shown state after SetDurationCooldown binds it, which
-  -- lets the child background exist for timed auras but disappear entirely
-  -- for zero/infinite-duration auras without addon-side duration inspection.
-  if button.cooldown.SetDrawSwipe then button.cooldown:SetDrawSwipe(display.swipe == true) end
-  if button.cooldown.SetDrawEdge then button.cooldown:SetDrawEdge(display.iconCooldownEdge == true) end
-  if button.cooldown.SetDrawBling then button.cooldown:SetDrawBling(display.iconCooldownBling == true) end
+  -- SetDurationCooldown securely owns the duration. Keep its radial artwork
+  -- constrained to the icon; stretching a Cooldown widget across a bar makes
+  -- its rectangular swipe/background obscure the unfilled bar area.
+  local showIconCooldown = display.icon ~= false and display.swipe == true
+  if button.cooldown.SetDrawSwipe then button.cooldown:SetDrawSwipe(showIconCooldown) end
+  if button.cooldown.SetDrawEdge then
+    button.cooldown:SetDrawEdge(showIconCooldown and display.iconCooldownEdge == true)
+  end
+  if button.cooldown.SetDrawBling then
+    button.cooldown:SetDrawBling(showIconCooldown and display.iconCooldownBling == true)
+  end
 
   local direction = Enum and Enum.StatusBarTimerDirection and (
     display.reverse == true and Enum.StatusBarTimerDirection.ElapsedTime
@@ -159,10 +165,11 @@ function Region:InitializeNativeButton(button)
 
   button.icon = button:CreateTexture(nil, "ARTWORK")
   button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-  button.cooldown:SetAllPoints()
   button.cooldown:EnableMouse(false)
-  button.cooldown:SetFrameLevel(button:GetFrameLevel())
-  button.background = button.cooldown:CreateTexture(nil, "BACKGROUND", nil, -8)
+  button.cooldown:SetFrameLevel(button:GetFrameLevel() + 2)
+  -- The full-row background follows Blizzard's duration StatusBar. Permanent
+  -- auras can suppress the bar without coupling it to radial cooldown art.
+  button.background = button.bar:CreateTexture(nil, "BACKGROUND")
   button.background:SetAllPoints()
   button.background:SetTexture("Interface\\Buttons\\WHITE8x8")
   button.bar:SetFrameLevel(button:GetFrameLevel() + 1)
@@ -188,7 +195,19 @@ local function NativeSignature(options)
 end
 
 local function PresentationStyleSignature(display)
-  return tostring(display and display.swipe == true)
+  display = display or {}
+  local color = display.color or {}
+  local background = display.backgroundColor or {}
+  return table.concat({
+    tostring(display.swipe == true), tostring(display.icon ~= false),
+    tostring(display.iconMatchBarSize == true), tostring(display.iconSize),
+    tostring(display.iconAnchor), tostring(display.iconOffsetX), tostring(display.iconOffsetY),
+    tostring(display.iconCooldownEdge == true), tostring(display.iconCooldownBling == true),
+    tostring(display.barTexture or "FLAT"),
+    tostring(color.r), tostring(color.g), tostring(color.b), tostring(color.a),
+    tostring(display.showBackground ~= false),
+    tostring(background.r), tostring(background.g), tostring(background.b), tostring(background.a),
+  }, "|")
 end
 
 local function LayoutSignature(display)

@@ -39,8 +39,8 @@ $optionsTocText = Get-Content -LiteralPath $optionsToc -Raw
 if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
     throw "PopAuras.toc is not targeting PTR interface 120100"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.6\s*$' -or
-    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.6\s*$') {
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.7\s*$' -or
+    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.7\s*$') {
     throw "Core and options metadata are not aligned to release 12.1.6"
 }
 if ($optionsTocText -notmatch '(?m)^## LoadOnDemand:\s*1\s*$' -or
@@ -167,6 +167,13 @@ if ($nativeAuraRegionText -notmatch 'initializeFrame\s*=\s*function\(button\) se
 if ($nativeAuraRegionText -notmatch 'SetHideCountdownNumbers\(true\)') {
     throw "Native aura cooldown still exposes Blizzard's duplicate countdown numbers"
 }
+if ($nativeAuraRegionText -match 'SetExplicitBounds\(button\.cooldown' -or
+    $nativeAuraRegionText -notmatch 'button\.cooldown:SetPoint\("TOPLEFT", button\.icon, "TOPLEFT"' -or
+    $nativeAuraRegionText -notmatch 'button\.cooldown:SetPoint\("BOTTOMRIGHT", button\.icon, "BOTTOMRIGHT"' -or
+    $nativeAuraRegionText -match 'button\.cooldown:SetShown\(' -or
+    $nativeAuraRegionText -notmatch 'SetDrawSwipe\(showIconCooldown\)') {
+    throw "Native aura radial cooldown artwork is not isolated to the bar icon"
+}
 if ($nativeAuraRegionText -notmatch 'presentation:CreateFontString') {
     throw "Native aura text is not parented to the presentation overlay"
 }
@@ -249,6 +256,11 @@ if ($runtimeStoreText -notmatch 'function RuntimeStore:RefreshNativeAuraSources'
 if ($runtimeStoreText -notmatch 'function RuntimeStore:ScheduleGroupLayoutRefresh') {
     throw "Runtime store cannot coalesce native child visibility relayouts"
 }
+if ($runtimeStoreText -notmatch 'local function ShouldPlaySoundForMode' -or
+    $runtimeStoreText -notmatch 'if soundMode == "ready" then[\s\S]*?return ShouldPlayReadySound' -or
+    $runtimeStoreText -match 'soundMode == "ready"\s*[\r\n]+\s*and ShouldPlayReadySound[\s\S]*?or ShouldPlayActivationSound') {
+    throw "Ready-mode sounds can fall through to activation transitions"
+}
 
 $spellAuraAliasesPath = Join-Path $root "Data\SpellAuraAliases.lua"
 $spellAuraAliasesText = Get-Content -LiteralPath $spellAuraAliasesPath -Raw
@@ -330,6 +342,12 @@ if ($auraBarListRegionText -notmatch 'SetExplicitBounds\(button\.bar') {
 if ($auraBarListRegionText -notmatch 'SetExplicitBounds\(button\.presentation') {
     throw "Aura-list text does not use an explicitly bounded presentation overlay"
 }
+if ($auraBarListRegionText -match 'SetExplicitBounds\(button\.cooldown, button, width, height\)' -or
+    $auraBarListRegionText -notmatch 'button\.cooldown:SetPoint\("TOPLEFT", button\.icon' -or
+    $auraBarListRegionText -notmatch 'button\.background\s*=\s*button\.bar:CreateTexture' -or
+    $auraBarListRegionText -match 'button\.background\s*=\s*button\.cooldown:CreateTexture') {
+    throw "Aura-list radial cooldown artwork is not isolated to the icon from the full-row bar background"
+}
 if ($auraBarListRegionText -notmatch 'fontString:SetPoint\("CENTER", icon, "CENTER"') {
     throw "Aura-list ICON text anchors are not attached to the icon"
 }
@@ -365,10 +383,11 @@ if ($auraBarListRegionText -notmatch 'initializeFrame\s*=\s*function\(button\) s
     $auraBarListRegionText -notmatch 'local inCombat\s*=\s*InCombatLockdown') {
     throw "Aura-list buttons are not initialized and suppressed through the combat-safe native container path"
 }
-if ($auraBarListRegionText -notmatch 'button\.background\s*=\s*button\.cooldown:CreateTexture' -or
+if ($auraBarListRegionText -notmatch 'button\.background\s*=\s*button\.bar:CreateTexture' -or
+    $auraBarListRegionText -notmatch 'SetDurationBar\(button\.bar' -or
     $auraBarListRegionText -match 'button\.cooldown:SetShown\(display\.swipe' -or
-    $auraBarListRegionText -notmatch 'SetDrawSwipe\(display\.swipe\s*==\s*true\)') {
-    throw "Aura-list backgrounds are not gated by Blizzard's native duration presentation"
+    $auraBarListRegionText -notmatch 'SetDrawSwipe\(showIconCooldown\)') {
+    throw "Aura-list backgrounds and radial swipes are not separated across Blizzard's duration bar and icon cooldown presentation"
 }
 if ($auraBarListRegionText -notmatch 'PresentationStyleSignature' -or
     $auraBarListRegionText -notmatch 'function Region:RetireNativeContainer[\s\S]*?self:SetNativeSuppressed\(true\)' -or
@@ -566,10 +585,15 @@ if ($trinketProviderText -notmatch 'INVSLOT_TRINKET1' -or
     $trinketProviderText -notmatch 'GetInventoryItemCooldown') {
     throw "Trinket cooldown provider does not track both equipped trinket slots"
 }
-if ($trinketProviderText -notmatch 'GetUseAuraDisplayTime' -or
+if ($trinketProviderText -notmatch 'FindAuraStateSource' -or
+    $trinketProviderText -notmatch 'source\.IsActive' -or
+    $trinketProviderText -notmatch 'SetUseAuraDisplayTime", function\(owner, useAuraDisplayTime\)' -or
+    $trinketProviderText -notmatch 'cooldownAuraDisplayState\[owner\]\s*=\s*active' -or
+    $trinketProviderText -notmatch 'aura\.display\.glowWhenActive\s*==\s*true' -or
+    $trinketProviderText -match 'trigger\.glowWhileActive' -or
     $trinketProviderText -match 'C_UnitAuras' -or
     $trinketProviderText -match 'GetAuraData') {
-    throw "Trinket active-effect glow is not using the CDM presentation boolean boundary"
+    throw "Trinket active-effect glow is not using the live CDM active/presentation boolean boundary"
 }
 if ($trinketProviderText -notmatch 'ignoredTrinkets' -or
     $trinketProviderText -notmatch 'entries\s*=\s*entries') {
@@ -577,6 +601,9 @@ if ($trinketProviderText -notmatch 'ignoredTrinkets' -or
 }
 
 $multiStateRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\MultiStateRegion.lua") -Raw
+if ($multiStateRegionText -notmatch 'display\.glowWhenActive\s*=\s*false') {
+    throw "Trinket multi-state entries still allow generic cooldown-active glow"
+}
 if ($multiStateRegionText -notmatch 'GetLayoutRegions' -or
     $multiStateRegionText -notmatch 'layoutOrder') {
     throw "Independent trinket entries do not participate in group layouts"
@@ -714,10 +741,15 @@ if ($triggerPanelText -notmatch '\{\s*value\s*=\s*"shortest_first",\s*label\s*=\
     $triggerPanelText -match 'Target Debuff Filter|Only Mine|Mine \+ Non-Player') {
     throw "Buffs and Debuffs is missing its modern native sort/filter editor or still exposes retired caster filters"
 }
-foreach ($label in @('Trinket Cooldown', 'Top Trinket Slot', 'Bottom Trinket Slot', 'Grow Direction', 'Glow While Active', 'Ignored Trinkets')) {
+foreach ($label in @('Trinket Cooldown', 'Top Trinket Slot', 'Bottom Trinket Slot', 'Grow Direction', 'Ignored Trinkets')) {
     if ($triggerPanelText -notmatch [regex]::Escape($label)) {
         throw "Trinket trigger UI is missing '$label'"
     }
+}
+if ($displayPanelText -notmatch '"Glow While Trinket Buff Active"' -or
+    $triggerPanelText -match 'trinketGlowCheck' -or
+    $defaultsText -notmatch 'trigger\.glowWhileActive\s*==\s*true[\s\S]{0,240}aura\.display\.glowWhenActive\s*=\s*true') {
+    throw "Trinket active-buff glow is not owned by Display or its legacy trigger setting is not migrated"
 }
 if ($triggerPanelText -notmatch 'trinketGrowthValues' -or
     $multiStateRegionText -notmatch 'trigger\.trinketGrowth') {

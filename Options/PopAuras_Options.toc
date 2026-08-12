@@ -2,7 +2,7 @@
 ## Title: PopAuras Options
 ## Notes: Load-on-demand configuration editor for PopAuras
 ## Author: Popabeast-Sargeras
-## Version: 12.1.6
+## Version: 12.1.7
 ## Dependencies: PopAuras
 ## LoadOnDemand: 1
 

@@ -478,7 +478,7 @@ function Region:InitializeButton(button)
   button.background:SetAllPoints()
   button.background:SetTexture("Interface\\Buttons\\WHITE8x8")
   button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-  button.cooldown:SetAllPoints()
+  button.cooldown:SetFrameLevel(button:GetFrameLevel() + 2)
   button.cooldown:EnableMouse(false)
   if button.cooldown.SetHideCountdownNumbers then
     button.cooldown:SetHideCountdownNumbers(true)
@@ -500,7 +500,6 @@ function Region:StyleButton(aura)
   local height = tonumber(display.height or aura.position and aura.position.height or 56) or 56
   button:SetSize(width, height)
   Frames.SetExplicitBounds(button.bar, button, width, height)
-  Frames.SetExplicitBounds(button.cooldown, button, width, height)
   Frames.SetExplicitBounds(button.presentation, button, width, height)
 
   if aura.kind == "icon" then
@@ -530,6 +529,10 @@ function Region:StyleButton(aura)
     button.icon:SetShown(display.icon ~= false)
   end
 
+  button.cooldown:ClearAllPoints()
+  button.cooldown:SetPoint("TOPLEFT", button.icon, "TOPLEFT", 0, 0)
+  button.cooldown:SetPoint("BOTTOMRIGHT", button.icon, "BOTTOMRIGHT", 0, 0)
+
   button.nameText:SetShown(display.showName == true)
   button.timerText:SetShown(display.showTimer == true)
   button.countText:SetShown(display.showStacks == true)
@@ -548,10 +551,10 @@ function Region:StyleButton(aura)
   ApplyRotation(button.countText, display.stacksRotation)
   if button.icon.SetDesaturated then button.icon:SetDesaturated(display.desaturate == true) end
 
-  if button.cooldown.SetDrawSwipe then button.cooldown:SetDrawSwipe(display.swipe == true) end
-  if button.cooldown.SetDrawEdge then button.cooldown:SetDrawEdge(display.iconCooldownEdge == true) end
-  if button.cooldown.SetDrawBling then button.cooldown:SetDrawBling(display.iconCooldownBling == true) end
-  button.cooldown:SetShown(aura.kind == "icon" and display.swipe == true)
+  local showIconCooldown = display.swipe == true and (aura.kind == "icon" or display.icon ~= false)
+  if button.cooldown.SetDrawSwipe then button.cooldown:SetDrawSwipe(showIconCooldown) end
+  if button.cooldown.SetDrawEdge then button.cooldown:SetDrawEdge(showIconCooldown and display.iconCooldownEdge == true) end
+  if button.cooldown.SetDrawBling then button.cooldown:SetDrawBling(showIconCooldown and display.iconCooldownBling == true) end
 
   local direction = Enum and Enum.StatusBarTimerDirection and (
     display.reverse == true and Enum.StatusBarTimerDirection.ElapsedTime

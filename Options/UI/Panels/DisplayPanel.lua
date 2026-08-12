@@ -648,12 +648,15 @@ function Panel:UpdateControlStates()
   local trigger = GetSelectedTrigger(aura)
   local supportsNoStacksColor = trigger and trigger.type == "spell_cooldown" and kind == "bar"
   local supportsActiveGlowStyle = trigger and trigger.type == "spell_cooldown" and kind == "bar"
+  local supportsDisplayActiveGlow = trigger
+    and not isGroup and not isText and not isAuraBarList and not isNameplateAura
   local activeGlowEnabled = frame.glowWhenActiveCheck:GetChecked() == true
   local selectedActiveGlowStyle = UIDropDownMenu_GetSelectedValue(frame.activeGlowStyleWrap.dropdown) or "INNER_GLOW"
   local showActiveGlowColor = supportsActiveGlowStyle and activeGlowEnabled
     and selectedActiveGlowStyle ~= "ACTIVE_DURATION"
   local supportsChargeCooldown = trigger and trigger.type == "spell_cooldown" and not isGroup and not isText
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura")
+  local supportsReadyText = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown")
   local showIconCooldownControls = not isGroup and not isText and isIconAura and frame.iconSection.collapsed ~= true
   local showRaidFrameSection = not isGroup and not isText and isIconAura and frame.raidFrameSection:IsShown()
   local showRaidFrameControls = showRaidFrameSection and frame.showOnRaidFramesCheck:GetChecked() == true and frame.raidFrameSection.collapsed ~= true
@@ -668,7 +671,8 @@ function Panel:UpdateControlStates()
     frame.readyColorWrap.button, frame.readyColorWrap.label,
     frame.barTextureWrap.dropdown, frame.barTextureWrap.label,
   }, not isGroup and not isText)
-  SetControlGroupEnabled({ frame.glowWhenActiveCheck }, not isGroup and not isText and not isAuraBarList)
+  SetControlGroupShown({ frame.glowWhenActiveCheck }, supportsDisplayActiveGlow)
+  SetControlGroupEnabled({ frame.glowWhenActiveCheck }, supportsDisplayActiveGlow)
   SetControlGroupShown({ frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown },
     supportsActiveGlowStyle and activeGlowEnabled)
   SetControlGroupEnabled({ frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown },
@@ -751,8 +755,8 @@ function Panel:UpdateControlStates()
     frame.timerControls.colorWrap.button, frame.timerControls.colorWrap.label,
     frame.timerControls.decimalsWrap.dropdown, frame.timerControls.decimalsWrap.label,
   }, showTimer and not isGroup and not isText)
-  SetControlGroupEnabled({ frame.timerControls.hideReadyCheck },
-    showTimer and not isGroup and not isText and not isAuraBarList and not isNameplateAura)
+  SetControlGroupEnabled({ frame.showReadyTextCheck },
+    showTimer and readyStateEnabled and supportsReadyText and not isGroup and not isText and not isNameplateAura)
 
   SetControlGroupEnabled({
     frame.stacksControls.fontWrap.dropdown, frame.stacksControls.fontWrap.label,
@@ -838,8 +842,8 @@ function Panel:UpdateControlStates()
     frame.timerControls.colorWrap.button, frame.timerControls.colorWrap.label, frame.timerControls.colorWrap.valueText,
     frame.timerControls.decimalsWrap.dropdown, frame.timerControls.decimalsWrap.label,
   }, showTimer and not isGroup and not isText)
-  SetControlGroupShown({ frame.timerControls.hideReadyCheck },
-    showTimer and not isAuraBarList and not isNameplateAura)
+  SetControlGroupShown({ frame.showReadyTextCheck },
+    showTimer and readyStateEnabled and supportsReadyText and not isGroup and not isText and not isNameplateAura)
 
   SetControlGroupShown({
     frame.stacksControls.fontWrap.dropdown, frame.stacksControls.fontWrap.label,
@@ -1048,7 +1052,7 @@ function Panel:ApplyCurrent()
   aura.display.timerOffsetY = CommitNumeric(frame.timerControls.yWrap.input, aura.display.timerOffsetY or 0)
   aura.display.timerColor = Colors.Copy(frame.timerControls.colorWrap.color or aura.display.timerColor)
   aura.display.timerDecimals = tonumber(UIDropDownMenu_GetSelectedValue(frame.timerControls.decimalsWrap.dropdown) or aura.display.timerDecimals or 1) or 1
-  aura.display.hideReadyTimer = frame.timerControls.hideReadyCheck:GetChecked() == true
+  aura.display.hideReadyTimer = frame.showReadyTextCheck:GetChecked() ~= true
 
   aura.display.showStacks = frame.stacksControls.showCheck:GetChecked() == true
   aura.display.stacksFontStyle = UIDropDownMenu_GetSelectedValue(frame.stacksControls.fontWrap.dropdown) or aura.display.stacksFontStyle
@@ -1216,6 +1220,8 @@ function Panel:Create(parent)
   frame.showAlwaysReadyCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Show While Ready")
   frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 12, -336)
   frame.readyColorWrap = CreateColorSwatch(frame.canvasSection, "Ready Color", 220, -336)
+  frame.showReadyTextCheck = Frames.CreateCheckbox(frame.canvasSection, "Show Ready Text")
+  frame.showReadyTextCheck:SetPoint("TOPLEFT", 430, -344)
   frame.barTextureWrap = CreateLabeledDropdown(frame.canvasSection, "Bar Texture", 430, -276, 166, GetBarTextureValues)
   frame.showBackgroundCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Show Background")
   frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -444)
@@ -1457,9 +1463,6 @@ function Panel:Create(parent)
   frame.stacksControls = CreateTwoColumnTextSection(frame.stacksSection, -34, "Stack Count")
   frame.nameplateMaxAurasWrap = CreateLabeledInput(frame.canvasSection, "Maximum Icons per Nameplate", 310, -150, 72)
   frame.timerControls.decimalsWrap = CreateLabeledDropdown(frame.timerSection, "Decimals", 150, -190, 120, { "0", "1", "2" })
-  frame.timerControls.hideReadyCheck = Frames.CreateCheckbox(frame.timerSection, "Hide While Ready")
-  frame.timerControls.hideReadyCheck:SetPoint("TOPLEFT", 310, -218)
-
   RegisterSectionWidgets(frame.canvasSection,
     frame.nameInputWrap.label, frame.nameInputWrap.input,
     frame.widthWrap.label, frame.widthWrap.input,
@@ -1482,6 +1485,7 @@ function Panel:Create(parent)
     frame.activeGlowStyleWrap.label, frame.activeGlowStyleWrap.dropdown,
     frame.activeGlowColorWrap.label, frame.activeGlowColorWrap.button, frame.activeGlowColorWrap.valueText,
     frame.showAlwaysReadyCheck,
+    frame.showReadyTextCheck,
     frame.reverseCheck,
     frame.readyColorWrap.label, frame.readyColorWrap.button, frame.readyColorWrap.valueText,
     frame.barTextureWrap.label, frame.barTextureWrap.dropdown,
@@ -1541,8 +1545,7 @@ function Panel:Create(parent)
     frame.timerControls.xWrap.label, frame.timerControls.xWrap.input,
     frame.timerControls.yWrap.label, frame.timerControls.yWrap.input,
     frame.timerControls.colorWrap.label, frame.timerControls.colorWrap.button, frame.timerControls.colorWrap.valueText,
-    frame.timerControls.decimalsWrap.label, frame.timerControls.decimalsWrap.dropdown,
-    frame.timerControls.hideReadyCheck
+    frame.timerControls.decimalsWrap.label, frame.timerControls.decimalsWrap.dropdown
   )
   RegisterSectionWidgets(frame.stacksSection,
     frame.stacksControls.showCheck,
@@ -1667,7 +1670,7 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.soundReadyCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.nameControls.showCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.timerControls.showCheck, function() Panel:ApplyCurrent() end)
-  self:WireLiveCheckbox(frame.timerControls.hideReadyCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.showReadyTextCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.stacksControls.showCheck, function() Panel:ApplyCurrent() end)
 
   InitDropdownWithCallback(frame.strataWrap.dropdown, strataValues, function() Panel:ApplyCurrent() end)
@@ -1817,6 +1820,8 @@ function Panel:ApplyCanvasLayout(isGroup, isNameplateAura)
   PositionColorSwatch(frame.barColorWrap, 12, -284)
   PositionLabeledDropdown(frame.barTextureWrap, 430, -276)
   PositionColorSwatch(frame.readyColorWrap, 220, -336)
+  frame.showReadyTextCheck:ClearAllPoints()
+  frame.showReadyTextCheck:SetPoint("TOPLEFT", 430, -344)
   frame.glowWhenActiveCheck:ClearAllPoints()
   frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 12, -372)
   PositionLabeledDropdown(frame.activeGlowStyleWrap, 220, -364)
@@ -1978,6 +1983,8 @@ function Panel:Refresh(aura)
   local supportsShowAlways = not isNameplateAura and (
     trigger.type == "spell_cooldown" or trigger.type == "item_cooldown"
       or trigger.type == "trinket_cooldown" or trigger.type == "aura")
+  local supportsReadyText = trigger.type == "spell_cooldown" or trigger.type == "item_cooldown"
+    or trigger.type == "trinket_cooldown"
 
   self.frame.nameInputWrap.input:SetText(aura.name or "")
   self.frame.widthWrap.input:SetText(tostring(aura.display.width or 220))
@@ -2007,6 +2014,10 @@ function Panel:Refresh(aura)
   local savedActiveGlowStyle = aura.display.activeGlowStyle or "NONE"
   local activeGlowEnabled = aura.display.glowWhenActive == true or savedActiveGlowStyle ~= "NONE"
   self.frame.glowWhenActiveCheck:SetChecked(activeGlowEnabled)
+  if self.frame.glowWhenActiveCheck.Text then
+    self.frame.glowWhenActiveCheck.Text:SetText(
+      trigger.type == "trinket_cooldown" and "Glow While Trinket Buff Active" or "Glow When Active")
+  end
   SetDropdown(self.frame.activeGlowStyleWrap.dropdown,
     savedActiveGlowStyle ~= "NONE" and savedActiveGlowStyle or "INNER_GLOW")
   SetColorSwatch(self.frame.activeGlowColorWrap,
@@ -2117,8 +2128,8 @@ function Panel:Refresh(aura)
   self.frame.timerControls.yWrap.input:SetText(tostring(aura.display.timerOffsetY or 0))
   SetColorSwatch(self.frame.timerControls.colorWrap, aura.display.timerColor or { r = 1, g = 1, b = 1, a = 1 })
   SetDropdown(self.frame.timerControls.decimalsWrap.dropdown, tostring(aura.display.timerDecimals or 1))
-  self.frame.timerControls.hideReadyCheck:SetChecked(aura.display.hideReadyTimer == true)
-  self.frame.timerControls.hideReadyCheck:SetShown(not isAuraBarList and not isNameplateAura)
+  self.frame.showReadyTextCheck:SetChecked(aura.display.hideReadyTimer ~= true)
+  self.frame.showReadyTextCheck:SetShown(supportsReadyText and not isAuraBarList and not isNameplateAura)
 
   self.frame.stacksControls.showCheck:SetChecked(aura.display.showStacks == true)
   SetDropdown(self.frame.stacksControls.fontWrap.dropdown, aura.display.stacksFontStyle or "FRIZQT_OUTLINE")
@@ -2204,6 +2215,8 @@ function Panel:Refresh(aura)
   self.frame.readyColorWrap.label:SetShown(showReadyStateOptions)
   self.frame.readyColorWrap.button:SetShown(showReadyStateOptions)
   self.frame.readyColorWrap.valueText:SetShown(showReadyStateOptions)
+  self.frame.showReadyTextCheck:SetShown(showReadyStateOptions and supportsReadyText
+    and aura.display.showTimer == true)
   self.frame.barTextureWrap.label:SetShown(not isGroup and not isText and not isNameplateAura)
   self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText and not isNameplateAura)
   self.frame.showBackgroundCheck:SetShown(true)

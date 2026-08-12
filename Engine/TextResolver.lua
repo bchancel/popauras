@@ -91,11 +91,17 @@ function TextResolver:GetTimerText(state, aura, remainingFromObject)
   end
   local readyState = self:IsReadyState(state, remainingFromObject)
 
+  -- An explicit request to hide ready text must win over the ready appearance.
+  -- Cooldown trackers still need readyLook to remain visible while ready.
+  if readyState and display.hideReadyTimer then
+    return ""
+  end
+
   if display.readyLook and readyState then
     return display.readyText or "Ready"
   end
 
-  if readyState and (display.hideReadyTimer or ShouldHideReadyTimerByDefault(state)) then
+  if readyState and ShouldHideReadyTimerByDefault(state) then
     return ""
   end
 
