@@ -419,6 +419,11 @@ function Region:BindCDMSource(source, cooldownID)
   self.cdmSourceBar = nil
   self.cdmSourceDuration = nil
   self.cdmSourceApplications = nil
+  if self.currentAura and self.currentAura.display
+      and self.currentAura.display.hideCDMIcon == true
+      and ns.CooldownManager and ns.CooldownManager.ScheduleVisibilityOverrideSync then
+    ns.CooldownManager:ScheduleVisibilityOverrideSync()
+  end
   if not source or not cooldownID then
     self.cdmMode = false
     return
@@ -669,6 +674,11 @@ function Region:Update(aura, state)
   local isPreview = state and state.source == "preview"
   local loadMatched = not state or state.loadMatched ~= false
   self.loadMatched = loadMatched
+  if ns.runtime and ns.runtime.SetNativeAuraSourceUnit then
+    ns.runtime:SetNativeAuraSourceUnit(
+      self,
+      loadMatched and not isPreview and trigger and (trigger.unit or "player") or nil)
+  end
   if state and state.source == "preview" then
     self:BindCDMSource(nil, nil)
     self:SetLayoutVisible(true)
@@ -803,6 +813,9 @@ end
 
 function Region:Release()
   self.loadMatched = false
+  if ns.runtime and ns.runtime.SetNativeAuraSourceUnit then
+    ns.runtime:SetNativeAuraSourceUnit(self, nil)
+  end
   self:SetLayoutVisible(false)
   self.currentFallbackState = nil
   if self.currentAura then ns.runtime:UnregisterTimedRegion(self.currentAura.id) end

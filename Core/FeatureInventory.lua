@@ -190,9 +190,6 @@ function FeatureInventory:ApplyDemand(snapshot)
   end
   if snapshot.needsCooldownManager and ns.CooldownManager and ns.CooldownManager.EnsureActive then
     ns.CooldownManager:EnsureActive(true)
-    if ns.CooldownManager.ScheduleVisibilityOverrideSync then
-      ns.CooldownManager:ScheduleVisibilityOverrideSync()
-    end
   end
   if snapshot.needsSpellAlerts and ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.EnsureActive then
     ns.BlizzardSpellAlerts:EnsureActive(true)
@@ -205,6 +202,18 @@ function FeatureInventory:ApplyDemand(snapshot)
   end
   if ns.Events and ns.Events.RebuildSubscriptions then
     ns.Events:RebuildSubscriptions(snapshot)
+  end
+  -- Configuration changes rebuild demand asynchronously. Reconcile every
+  -- manager once after that rebuild so turning an option off also restores the
+  -- Blizzard-owned presentation it previously suppressed.
+  if ns.CooldownManager and ns.CooldownManager.ScheduleVisibilityOverrideSync then
+    ns.CooldownManager:ScheduleVisibilityOverrideSync()
+  end
+  if ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.ScheduleSync then
+    ns.BlizzardAuraFrames:ScheduleSync()
+  end
+  if ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.ScheduleSync then
+    ns.BlizzardSpellAlerts:ScheduleSync()
   end
 end
 

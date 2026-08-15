@@ -9,6 +9,9 @@ local provider = ns.TriggerBase:CreateProvider("trinket_cooldown", {
     "COOLDOWN_VIEWER_DATA_LOADED",
     "COOLDOWN_VIEWER_TABLE_HOTFIXED",
   },
+  unitEvents = {
+    UNIT_AURA = { "player" },
+  },
 })
 
 local Safe = ns.SafeValues

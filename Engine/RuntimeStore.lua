@@ -2,6 +2,7 @@ local _, ns = ...
 
 local RuntimeStore = {}
 ns.runtime = RuntimeStore
+local EMPTY = {}
 
 RuntimeStore.states = {}
 RuntimeStore.presentations = {}
@@ -12,6 +13,9 @@ RuntimeStore.timedRegions = {}
 RuntimeStore.timedStateAuras = {}
 RuntimeStore.timerElapsed = 0
 RuntimeStore.missingRegionsDirty = true
+RuntimeStore.managerSyncFingerprints = {}
+RuntimeStore.nativeAuraRegionsByUnit = {}
+RuntimeStore.nativeAuraUnitByRegion = setmetatable({}, { __mode = "k" })
 
 local TIMED_UPDATE_INTERVAL = 0.05
 
@@ -187,23 +191,51 @@ function RuntimeStore:GetRegionByAuraId(auraId)
   return self.regions[auraId]
 end
 
+function RuntimeStore:SetNativeAuraSourceUnit(region, unit)
+  if not region then return end
+  local previousUnit = self.nativeAuraUnitByRegion[region]
+  if previousUnit == unit then return end
+
+  if previousUnit then
+    local previousSet = self.nativeAuraRegionsByUnit[previousUnit]
+    if previousSet then
+      previousSet[region] = nil
+      if next(previousSet) == nil then self.nativeAuraRegionsByUnit[previousUnit] = nil end
+    end
+  end
+
+  self.nativeAuraUnitByRegion[region] = nil
+  if type(unit) ~= "string" or unit == "" then return end
+  local regionSet = self.nativeAuraRegionsByUnit[unit]
+  if not regionSet then
+    regionSet = setmetatable({}, { __mode = "k" })
+    self.nativeAuraRegionsByUnit[unit] = regionSet
+  end
+  regionSet[region] = true
+  self.nativeAuraUnitByRegion[region] = unit
+end
+
 function RuntimeStore:RefreshNativeAuraContainers(unit)
   if type(unit) ~= "string" or unit == "" then
     return
   end
 
-  for _, region in pairs(self.regions) do
+  local profileStart = ProfileStart("runtime:native_container_refresh")
+  for region in pairs(self.nativeAuraRegionsByUnit[unit] or EMPTY) do
     if region and region.RefreshNativeUnit then
       region:RefreshNativeUnit(unit)
     end
   end
+  ProfileFinish("runtime:native_container_refresh", profileStart)
 end
 
 function RuntimeStore:RefreshNativeAuraSources(unit)
   if type(unit) ~= "string" or unit == "" then return end
-  for _, region in pairs(self.regions) do
+  local profileStart = ProfileStart("runtime:native_source_refresh")
+  for region in pairs(self.nativeAuraRegionsByUnit[unit] or EMPTY) do
     if region and region.RefreshCDMSource then region:RefreshCDMSource(unit) end
   end
+  ProfileFinish("runtime:native_source_refresh", profileStart)
 end
 
 function RuntimeStore:RefreshGroupLayouts(parentId)
@@ -348,6 +380,19 @@ function RuntimeStore:ReleaseMissingRegions()
       self.presentations[auraId] = nil
       self.activationOrder[auraId] = nil
       self.timedStateAuras[auraId] = nil
+      local fingerprints = self.managerSyncFingerprints[auraId]
+      if fingerprints then
+        if fingerprints.cdm and ns.CooldownManager and ns.CooldownManager.ScheduleVisibilityOverrideSync then
+          ns.CooldownManager:ScheduleVisibilityOverrideSync()
+        end
+        if fingerprints.auraFrames and ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.ScheduleSync then
+          ns.BlizzardAuraFrames:ScheduleSync()
+        end
+        if fingerprints.spellAlerts and ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.ScheduleSync then
+          ns.BlizzardSpellAlerts:ScheduleSync()
+        end
+        self.managerSyncFingerprints[auraId] = nil
+      end
     end
   end
 
@@ -381,6 +426,106 @@ end
 
 local function GetFlatOrderIndex(indexes, auraId)
   return indexes and indexes[auraId] or math.huge
+end
+
+local function BuildCDMVisibilityFingerprint(aura, state)
+  local display = aura and aura.display or nil
+  if not aura or aura.enabled == false or not display or display.hideCDMIcon ~= true then
+    return nil
+  end
+
+  local effectivelyLoaded = type(state) == "table" and state.loadMatched ~= false
+  local nativeAuraOwnsPresentation = effectivelyLoaded and ns.renderers and ns.renderers.NativeAuraRegion
+    and ns.renderers.NativeAuraRegion:CanHandle(aura) or false
+  local desired = effectivelyLoaded and (state.show == true or nativeAuraOwnsPresentation)
+  local parts = { desired and "1" or "0" }
+  if desired and type(state.entries) == "table" then
+    for _, entry in ipairs(state.entries) do
+      local cooldownID = ns.SafeValues:Number(entry and entry.cooldownID)
+      if entry and entry.show == true and cooldownID and cooldownID > 0 then
+        parts[#parts + 1] = tostring(cooldownID)
+      end
+    end
+  end
+  return table.concat(parts, ":")
+end
+
+local function BuildAuraFrameFingerprint(aura, state)
+  if not aura or aura.enabled == false then return nil end
+  local controlsBuffs, controlsDebuffs = false, false
+  for _, trigger in ipairs(type(aura.triggers) == "table" and aura.triggers or EMPTY) do
+    if trigger and trigger.enabled ~= false and trigger.type == "aura_list" then
+      local sourceValue = ns.util.UnitAuraList and ns.util.UnitAuraList.GetSourceValue
+        and ns.util.UnitAuraList:GetSourceValue(trigger) or nil
+      if sourceValue == "player_buff" and trigger.hideBlizzardBuffs == true then
+        controlsBuffs = true
+      elseif sourceValue == "player_debuff" and trigger.hideBlizzardDebuffs == true then
+        controlsDebuffs = true
+      end
+    end
+  end
+  if not controlsBuffs and not controlsDebuffs then return nil end
+  local active = type(state) == "table" and state.show == true and state.source ~= "preview"
+  return table.concat({
+    controlsBuffs and "b" or "-",
+    controlsDebuffs and "d" or "-",
+    active and "1" or "0",
+  }, ":")
+end
+
+local function BuildSpellAlertFingerprint(aura, state)
+  local display = aura and aura.display or nil
+  if not aura or aura.enabled == false or not display or display.hideBlizzardSpellAlert ~= true then
+    return nil
+  end
+  local loaded = type(state) == "table" and state.loadMatched ~= false
+  local spellID = ns.SafeValues:Number(display.blizzardSpellAlertSpellId) or 0
+  local spellName = type(display.blizzardSpellAlertSpellName) == "string"
+    and display.blizzardSpellAlertSpellName or ""
+  return table.concat({ loaded and "1" or "0", tostring(spellID), spellName }, ":")
+end
+
+function RuntimeStore:UpdateManagerSyncFingerprints(aura, state)
+  if not aura or not aura.id then return end
+  local previous = self.managerSyncFingerprints[aura.id] or EMPTY
+  local currentCDM = BuildCDMVisibilityFingerprint(aura, state)
+  local currentAuraFrames = BuildAuraFrameFingerprint(aura, state)
+  local currentSpellAlerts = BuildSpellAlertFingerprint(aura, state)
+
+  if previous.cdm ~= currentCDM
+      and ns.CooldownManager and ns.CooldownManager.ScheduleVisibilityOverrideSync then
+    ns.CooldownManager:ScheduleVisibilityOverrideSync()
+  end
+  if previous.auraFrames ~= currentAuraFrames
+      and ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.ScheduleSync then
+    ns.BlizzardAuraFrames:ScheduleSync()
+  end
+  if previous.spellAlerts ~= currentSpellAlerts
+      and ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.ScheduleSync then
+    ns.BlizzardSpellAlerts:ScheduleSync()
+  end
+
+  if currentCDM or currentAuraFrames or currentSpellAlerts then
+    local stored = previous ~= EMPTY and previous or {}
+    stored.cdm = currentCDM
+    stored.auraFrames = currentAuraFrames
+    stored.spellAlerts = currentSpellAlerts
+    self.managerSyncFingerprints[aura.id] = stored
+  else
+    self.managerSyncFingerprints[aura.id] = nil
+  end
+end
+
+function RuntimeStore:ScheduleAllManagerSyncs()
+  if ns.CooldownManager and ns.CooldownManager.ScheduleVisibilityOverrideSync then
+    ns.CooldownManager:ScheduleVisibilityOverrideSync()
+  end
+  if ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.ScheduleSync then
+    ns.BlizzardAuraFrames:ScheduleSync()
+  end
+  if ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.ScheduleSync then
+    ns.BlizzardSpellAlerts:ScheduleSync()
+  end
 end
 
 function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
@@ -461,18 +606,10 @@ function RuntimeStore:RefreshAura(auraId, skipVisibilitySync)
 
   self:SetState(auraId, state)
   self:SetPresentation(auraId, state)
+  self:UpdateManagerSyncFingerprints(aura, state)
   local renderProfile = ProfileStart("runtime:render_aura")
   ns.Render:RenderAura(aura, state)
   ProfileFinish("runtime:render_aura", renderProfile)
-  if not skipVisibilitySync and ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
-    ns.CooldownManager:ApplyVisibilityOverrides()
-  end
-  if not skipVisibilitySync and ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Sync then
-    ns.BlizzardAuraFrames:Sync()
-  end
-  if not skipVisibilitySync and ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.Sync then
-    ns.BlizzardSpellAlerts:Sync()
-  end
   ProfileFinish("runtime:refresh_aura", refreshProfile)
 end
 
@@ -556,15 +693,6 @@ function RuntimeStore:RefreshAuras(auraIds, skipVisibilitySync)
     self:RefreshAura(entry.auraId, true)
   end
 
-  if not skipVisibilitySync and ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
-    ns.CooldownManager:ApplyVisibilityOverrides()
-  end
-  if not skipVisibilitySync and ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Sync then
-    ns.BlizzardAuraFrames:Sync()
-  end
-  if not skipVisibilitySync and ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.Sync then
-    ns.BlizzardSpellAlerts:Sync()
-  end
   ProfileFinish("runtime:refresh_batch", refreshProfile)
 end
 
@@ -588,15 +716,7 @@ function RuntimeStore:RefreshAll()
     self:RefreshAura(groupIds[index], true)
   end
 
-  if ns.CooldownManager and ns.CooldownManager.ApplyVisibilityOverrides then
-    ns.CooldownManager:ApplyVisibilityOverrides()
-  end
-  if ns.BlizzardAuraFrames and ns.BlizzardAuraFrames.Sync then
-    ns.BlizzardAuraFrames:Sync()
-  end
-  if ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.Sync then
-    ns.BlizzardSpellAlerts:Sync()
-  end
+  self:ScheduleAllManagerSyncs()
   ProfileFinish("runtime:refresh_all", refreshProfile)
 end
 

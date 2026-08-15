@@ -279,10 +279,24 @@ end
 
 function provider:RebuildIndex()
   self.byUnit, self.allAuraIDs = {}, {}
+  self.eventUnits = {}
+  self.affectedByUnit = {}
+  local allSeen = {}
+  local byUnitSeen = {}
   for _, auraID in ipairs(ns.Registry:GetFlatOrder()) do
     local aura = ns.Registry:GetAura(auraID)
     for _, trigger in ns.TriggerBase:IterateTriggers(aura, "aura") do
-      self.allAuraIDs[#self.allAuraIDs + 1] = auraID
+      if aura and aura.enabled ~= false and not allSeen[auraID] then
+        allSeen[auraID] = true
+        self.allAuraIDs[#self.allAuraIDs + 1] = auraID
+      end
+
+      local unit = trigger.unit or "player"
+      if aura and aura.enabled ~= false and unit ~= "nameplate" then
+        -- Native containers own aura presentation, but PopAuras still needs a
+        -- scoped event for late CDM source binding and target/death invalidation.
+        self.eventUnits[unit] = true
+      end
 
       local nameplateManaged = ns.renderers and ns.renderers.NameplateAuraRegion
         and ns.renderers.NameplateAuraRegion:CanHandle(aura) or false
@@ -303,10 +317,13 @@ function provider:RebuildIndex()
       -- Blizzard's native AuraContainer receives UNIT_AURA directly. Avoid a
       -- second PopAuras evaluation/render pass unless another feature consumes
       -- the logical activation state.
-      if needsLogicalRefresh then
-        local unit = trigger.unit or "player"
+      if aura and aura.enabled ~= false and needsLogicalRefresh then
         self.byUnit[unit] = self.byUnit[unit] or {}
-        self.byUnit[unit][#self.byUnit[unit] + 1] = auraID
+        byUnitSeen[unit] = byUnitSeen[unit] or {}
+        if not byUnitSeen[unit][auraID] then
+          byUnitSeen[unit][auraID] = true
+          self.byUnit[unit][#self.byUnit[unit] + 1] = auraID
+        end
       end
     end
   end
@@ -315,6 +332,38 @@ end
 function provider:InvalidateCaches()
   self.byUnit = nil
   self.allAuraIDs = nil
+  self.eventUnits = nil
+  self.affectedByUnit = nil
+end
+
+function provider:GetUnitEventUnits(event)
+  if event ~= "UNIT_AURA" and event ~= "UNIT_FLAGS" then
+    return false
+  end
+  if not self.eventUnits then self:RebuildIndex() end
+  return self.eventUnits
+end
+
+function provider:GetAffectedAurasForUnit(unit)
+  if not self.byUnit then self:RebuildIndex() end
+  local cached = self.affectedByUnit and self.affectedByUnit[unit]
+  if cached then return cached end
+
+  local result, seen = {}, {}
+  local function add(list)
+    for _, auraID in ipairs(list or EMPTY) do
+      if not seen[auraID] then
+        seen[auraID] = true
+        result[#result + 1] = auraID
+      end
+    end
+  end
+  add(self.byUnit[unit])
+  if unit == "player" or unit:find("^party%d+$") or unit:find("^raid%d+$") then
+    add(self.byUnit.group)
+  end
+  self.affectedByUnit[unit] = result
+  return result
 end
 
 function provider:HandleEvent(event, ...)
@@ -358,15 +407,7 @@ function provider:GetAffectedAuras(event, ...)
     -- if a future client does hide the token, native containers still update
     -- themselves and logical evaluation must wait for a scoped/global event.
     if not unit then return EMPTY end
-    local result, seen = {}, {}
-    local function add(list)
-      for _, auraID in ipairs(list or EMPTY) do
-        if not seen[auraID] then seen[auraID] = true result[#result + 1] = auraID end
-      end
-    end
-    add(self.byUnit[unit])
-    if unit == "player" or unit:find("^party") or unit:find("^raid") then add(self.byUnit.group) end
-    return result
+    return self:GetAffectedAurasForUnit(unit)
   end
   return self.allAuraIDs
 end

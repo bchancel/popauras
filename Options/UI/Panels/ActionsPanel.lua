@@ -106,6 +106,9 @@ function Panel:Create(parent)
     local newAction = Tables.DeepCopy(ns.Defaults.baseAction)
     actions[#actions + 1] = newAction
     ns.db.ui.selectedActionIndex = #actions
+    if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+      ns.TriggerBase:InvalidateProviderCaches("aura")
+    end
     ns.runtime:RefreshAura(aura.id)
     ns.ui.MainWindow:RefreshSelection()
   end)
@@ -124,6 +127,9 @@ function Panel:Create(parent)
     end
     table.remove(actions, index)
     ns.db.ui.selectedActionIndex = math.max(1, math.min(index, #actions))
+    if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+      ns.TriggerBase:InvalidateProviderCaches("aura")
+    end
     ns.runtime:RefreshAura(aura.id)
     ns.ui.MainWindow:RefreshSelection()
   end)

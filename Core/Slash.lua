@@ -114,10 +114,11 @@ local function GetArchitectureReportLine()
   end
 
   return string.format(
-    "Architecture: configured=%d providers=%d events=%d | native=%s cdm=%s alerts=%s interrupts=%s watchers=%d correlation=%s sharePump=%s options=%s",
+    "Architecture: configured=%d providers=%d events=%d unitTrackers=%d | native=%s cdm=%s alerts=%s interrupts=%s watchers=%d correlation=%s sharePump=%s options=%s",
     tonumber(snapshot.configuredAuraCount or 0) or 0,
     tonumber(eventStats.activeProviderTypes or snapshot.providerTypeCount or 0) or 0,
     tonumber(eventStats.registeredEvents or 0) or 0,
+    tonumber(eventStats.unitTrackers or 0) or 0,
     YesNo(ns.NativeAuras and ns.NativeAuras.IsActive and ns.NativeAuras:IsActive()),
     YesNo(ns.CooldownManager and ns.CooldownManager.IsActive and ns.CooldownManager:IsActive()),
     YesNo(ns.BlizzardSpellAlerts and ns.BlizzardSpellAlerts.IsActive and ns.BlizzardSpellAlerts:IsActive()),

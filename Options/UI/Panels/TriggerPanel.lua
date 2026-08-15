@@ -1079,6 +1079,7 @@ function Panel:ApplyCurrent()
   triggers[triggerIndex] = trigger
   aura.triggerOp = UIDropDownMenu_GetSelectedValue(frame.opDropDown) or "AND"
   if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+    ns.TriggerBase:InvalidateProviderCaches("aura")
     ns.TriggerBase:InvalidateProviderCaches("aura_list")
     ns.TriggerBase:InvalidateProviderCaches("trinket_cooldown")
     ns.TriggerBase:InvalidateProviderCaches("spell_cast_event")
@@ -1128,6 +1129,12 @@ function Panel:Create(parent)
     if aura.triggerOp ~= "OR" then
       aura.triggerOp = "AND"
     end
+    if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+      ns.TriggerBase:InvalidateProviderCaches()
+    end
+    if ns.FeatureInventory and ns.FeatureInventory.ScheduleRebuild then
+      ns.FeatureInventory:ScheduleRebuild()
+    end
     ns.runtime:RefreshAura(aura.id)
     ns.ui.MainWindow:RefreshSelection()
   end)
@@ -1142,6 +1149,12 @@ function Panel:Create(parent)
     end
     table.remove(triggers, index)
     ns.db.ui.selectedTriggerIndex = math.max(1, math.min(index, #triggers))
+    if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+      ns.TriggerBase:InvalidateProviderCaches()
+    end
+    if ns.FeatureInventory and ns.FeatureInventory.ScheduleRebuild then
+      ns.FeatureInventory:ScheduleRebuild()
+    end
     ns.runtime:RefreshAura(aura.id)
     ns.ui.MainWindow:RefreshSelection()
   end)

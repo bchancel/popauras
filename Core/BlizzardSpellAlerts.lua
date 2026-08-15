@@ -5,6 +5,19 @@ ns.BlizzardSpellAlerts = Manager
 
 Manager.suppressedSpellIDs = Manager.suppressedSpellIDs or {}
 
+local function ProfileStart(bucket)
+  if ns.Profiler and ns.Profiler.IsEnabled and ns.Profiler:IsEnabled() then
+    return ns.Profiler:Begin(bucket)
+  end
+  return nil
+end
+
+local function ProfileFinish(bucket, startedAt)
+  if startedAt and ns.Profiler and ns.Profiler.Finish then
+    ns.Profiler:Finish(bucket, startedAt)
+  end
+end
+
 local function IsDemanded()
   return not ns.FeatureInventory
     or not ns.FeatureInventory.IsRequired
@@ -282,7 +295,9 @@ function Manager:QueueSuppress(spellID)
 end
 
 function Manager:Sync()
+  local profileStart = ProfileStart("sync:blizzard_spell_alerts")
   if not self.active and not self:EnsureActive(false) then
+    ProfileFinish("sync:blizzard_spell_alerts", profileStart)
     return
   end
   LearnVisibleOverlays()
@@ -290,6 +305,17 @@ function Manager:Sync()
   for spellID in pairs(self.suppressedSpellIDs or {}) do
     self:SuppressSpellAlert(spellID)
   end
+  ProfileFinish("sync:blizzard_spell_alerts", profileStart)
+end
+
+function Manager:ScheduleSync()
+  if not self.active and not IsDemanded() then return end
+  if self.syncPending then return end
+  self.syncPending = true
+  C_Timer.After(0, function()
+    self.syncPending = false
+    self:Sync()
+  end)
 end
 
 function Manager:EnsureActive(force)

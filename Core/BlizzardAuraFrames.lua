@@ -5,6 +5,19 @@ ns.BlizzardAuraFrames = Manager
 
 Manager.frameStates = Manager.frameStates or {}
 
+local function ProfileStart(bucket)
+  if ns.Profiler and ns.Profiler.IsEnabled and ns.Profiler:IsEnabled() then
+    return ns.Profiler:Begin(bucket)
+  end
+  return nil
+end
+
+local function ProfileFinish(bucket, startedAt)
+  if startedAt and ns.Profiler and ns.Profiler.Finish then
+    ns.Profiler:Finish(bucket, startedAt)
+  end
+end
+
 local function EnsureFrameState(self, frame)
   local state = self.frameStates[frame]
   if type(state) ~= "table" then
@@ -116,6 +129,7 @@ function Manager:GetDesiredState()
 end
 
 function Manager:Sync()
+  local profileStart = ProfileStart("sync:blizzard_aura_frames")
   local hideBuffs, hideDebuffs = self:GetDesiredState()
 
   for _, frame in ipairs(self:GetSectionFrames("buffs")) do
@@ -125,6 +139,16 @@ function Manager:Sync()
   for _, frame in ipairs(self:GetSectionFrames("debuffs")) do
     ApplyFrameHidden(self, frame, hideDebuffs)
   end
+  ProfileFinish("sync:blizzard_aura_frames", profileStart)
+end
+
+function Manager:ScheduleSync()
+  if self.syncPending then return end
+  self.syncPending = true
+  C_Timer.After(0, function()
+    self.syncPending = false
+    self:Sync()
+  end)
 end
 
 function Manager:Initialize()

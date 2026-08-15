@@ -919,6 +919,8 @@ function Panel:ApplyCurrent()
   local isNameplateAura = IsNameplateAura(aura)
   local previousGlowWhenActive = aura.display.glowWhenActive == true
   local previousActiveGlowStyle = aura.display.activeGlowStyle or "NONE"
+  local previousSoundEnabled = aura.display.soundEnabled == true
+  local previousShowOnRaidFrames = aura.display.showOnRaidFrames == true
 
   aura.name = ns.Registry:GetUniqueAuraName(frame.nameInputWrap.input:GetText(), aura.id)
   frame.nameInputWrap.input:SetText(aura.name)
@@ -1104,6 +1106,12 @@ function Panel:ApplyCurrent()
     -- state so the next player aura update cannot use a stale list.
     if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
       ns.TriggerBase:InvalidateProviderCaches("spell_cooldown")
+    end
+  end
+  if previousSoundEnabled ~= (aura.display.soundEnabled == true)
+      or previousShowOnRaidFrames ~= (aura.display.showOnRaidFrames == true) then
+    if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+      ns.TriggerBase:InvalidateProviderCaches("aura")
     end
   end
   ns.runtime:RefreshAura(aura.id)

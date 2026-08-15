@@ -24,6 +24,19 @@ Manager.viewerNames = {
 
 local EMPTY = {}
 
+local function ProfileStart(bucket)
+  if ns.Profiler and ns.Profiler.IsEnabled and ns.Profiler:IsEnabled() then
+    return ns.Profiler:Begin(bucket)
+  end
+  return nil
+end
+
+local function ProfileFinish(bucket, startedAt)
+  if startedAt and ns.Profiler and ns.Profiler.Finish then
+    ns.Profiler:Finish(bucket, startedAt)
+  end
+end
+
 local function IsDemanded()
   return not ns.FeatureInventory
     or not ns.FeatureInventory.IsRequired
@@ -339,12 +352,22 @@ function Manager:FindAuraDisplaySource(spellIDs, requestedUnit, forceRefresh)
   return FindAuraSource(self, spellIDs, requestedUnit, forceRefresh, IsAuraDisplayFrame)
 end
 
-local function SetForcedHidden(frame, hidden)
+local function SetForcedHidden(frame, hidden, expectedCooldownID)
   if not frame or not frame.SetAlpha then return end
   if frame._popAurasHiddenHook ~= true then
     frame._popAurasHiddenHook = true
     hooksecurefunc(frame, "SetAlpha", function(owner, alpha)
       if owner._popAurasForceHidden == true and Safe:Number(alpha) ~= 0 and owner._popAurasApplyingAlpha ~= true then
+        -- CDM recycles frame objects. If Blizzard has assigned this frame to a
+        -- different entry, release it immediately instead of keeping the new
+        -- owner invisible until the next scheduled reconciliation.
+        local currentCooldownID = Manager:GetFrameCooldownID(owner)
+        if currentCooldownID ~= owner._popAurasExpectedCooldownID then
+          owner._popAurasForceHidden = false
+          owner._popAurasExpectedCooldownID = nil
+          owner._popAurasOriginalAlpha = nil
+          return
+        end
         owner._popAurasApplyingAlpha = true
         pcall(owner.SetAlpha, owner, 0)
         owner._popAurasApplyingAlpha = false
@@ -355,14 +378,18 @@ local function SetForcedHidden(frame, hidden)
     if frame._popAurasOriginalAlpha == nil and frame.GetAlpha then
       frame._popAurasOriginalAlpha = frame:GetAlpha()
     end
+    frame._popAurasExpectedCooldownID = expectedCooldownID
     frame._popAurasForceHidden = true
     frame._popAurasApplyingAlpha = true
     pcall(frame.SetAlpha, frame, 0)
     frame._popAurasApplyingAlpha = false
   else
+    local wasForced = frame._popAurasForceHidden == true
     frame._popAurasForceHidden = false
+    frame._popAurasExpectedCooldownID = nil
     local alpha = Safe:Number(frame._popAurasOriginalAlpha) or 1
     frame._popAurasOriginalAlpha = nil
+    if not wasForced then return end
     pcall(frame.SetAlpha, frame, alpha)
   end
 end
@@ -448,10 +475,15 @@ function Manager:GetDesiredHiddenIDs()
 end
 
 function Manager:ApplyVisibilityOverrides()
+  local profileStart = ProfileStart("sync:cdm_visibility")
   if not self.active and not self:EnsureActive(false) then
+    ProfileFinish("sync:cdm_visibility", profileStart)
     return
   end
-  if self.applyingVisibilityOverrides then return end
+  if self.applyingVisibilityOverrides then
+    ProfileFinish("sync:cdm_visibility", profileStart)
+    return
+  end
   self.applyingVisibilityOverrides = true
   local desired = self:GetDesiredHiddenIDs()
   -- CDM recycles frame objects between cooldown entries. Always release the
@@ -462,10 +494,11 @@ function Manager:ApplyVisibilityOverrides()
 
   for cooldownID in pairs(desired) do
     local frames = self:FindFramesByCooldownID(cooldownID, true)
-    for _, frame in ipairs(frames) do SetForcedHidden(frame, true) end
+    for _, frame in ipairs(frames) do SetForcedHidden(frame, true, cooldownID) end
     self.hiddenFrames[cooldownID] = frames
   end
   self.applyingVisibilityOverrides = false
+  ProfileFinish("sync:cdm_visibility", profileStart)
 end
 
 function Manager:ScheduleVisibilityOverrideSync()

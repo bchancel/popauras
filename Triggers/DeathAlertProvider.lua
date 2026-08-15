@@ -12,6 +12,9 @@ local provider = ns.TriggerBase:CreateProvider("death_alert", {
     "PLAYER_REGEN_DISABLED",
     "PLAYER_REGEN_ENABLED",
   },
+  unitEvents = {
+    UNIT_FLAGS = { "group" },
+  },
   alerts = {},
   recentDeaths = {},
   observedDeathState = {},

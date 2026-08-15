@@ -18,6 +18,9 @@ local provider = ns.TriggerBase:CreateProvider("spell_cooldown", {
     "SPELLS_CHANGED",
     "PLAYER_ENTERING_WORLD",
   },
+  unitEvents = {
+    UNIT_AURA = { "player" },
+  },
   manualTimers = {},
 })
 

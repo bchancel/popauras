@@ -1,3 +1,6 @@
+# v12.1.8
+- Improved combat performance with unit scoped aura events
+
 # v12.1.7
 - Fixed radial cooldown swipes rendering across horizontal and vertical buff bars instead of across the full bar
 - Fixed **Play On Ready** sounds also playing when a trinket was used

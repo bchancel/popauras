@@ -52,6 +52,9 @@ function Panel:Create(parent)
       scale = tonumber(frame.scaleInput:GetText()) or 1.25,
       color = { r = 1, g = 0.2, b = 0.2, a = 1 },
     }
+    if ns.TriggerBase and ns.TriggerBase.InvalidateProviderCaches then
+      ns.TriggerBase:InvalidateProviderCaches("aura")
+    end
     ns.runtime:RefreshAura(aura.id)
   end)
   frame.saveButton:SetPoint("TOPLEFT", frame.scaleInput, "BOTTOMLEFT", 0, -18)

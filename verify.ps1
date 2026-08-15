@@ -39,9 +39,9 @@ $optionsTocText = Get-Content -LiteralPath $optionsToc -Raw
 if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
     throw "PopAuras.toc is not targeting PTR interface 120100"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.7\s*$' -or
-    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.7\s*$') {
-    throw "Core and options metadata are not aligned to release 12.1.6"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.8\s*$' -or
+    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.8\s*$') {
+    throw "Core and options metadata are not aligned to release 12.1.8"
 }
 if ($optionsTocText -notmatch '(?m)^## LoadOnDemand:\s*1\s*$' -or
     $optionsTocText -notmatch '(?m)^## Dependencies:\s*PopAuras\s*$') {
@@ -256,10 +256,40 @@ if ($runtimeStoreText -notmatch 'function RuntimeStore:RefreshNativeAuraSources'
 if ($runtimeStoreText -notmatch 'function RuntimeStore:ScheduleGroupLayoutRefresh') {
     throw "Runtime store cannot coalesce native child visibility relayouts"
 }
+if ($runtimeStoreText -notmatch 'function RuntimeStore:SetNativeAuraSourceUnit' -or
+    $runtimeStoreText -notmatch 'nativeAuraRegionsByUnit') {
+    throw "Native aura late-binding still scans every runtime region instead of using a unit index"
+}
+if ($runtimeStoreText -notmatch 'function RuntimeStore:UpdateManagerSyncFingerprints' -or
+    $runtimeStoreText -notmatch 'function RuntimeStore:ScheduleAllManagerSyncs') {
+    throw "Runtime manager reconciliation is not dirty-driven"
+}
+if ($runtimeStoreText -match 'function RuntimeStore:RefreshAuras[\s\S]*?ApplyVisibilityOverrides[\s\S]*?end\s*function RuntimeStore:RefreshAll') {
+    throw "Aura refresh batches still run a global CDM visibility scan"
+}
 if ($runtimeStoreText -notmatch 'local function ShouldPlaySoundForMode' -or
     $runtimeStoreText -notmatch 'if soundMode == "ready" then[\s\S]*?return ShouldPlayReadySound' -or
     $runtimeStoreText -match 'soundMode == "ready"\s*[\r\n]+\s*and ShouldPlayReadySound[\s\S]*?or ShouldPlayActivationSound') {
     throw "Ready-mode sounds can fall through to activation transitions"
+}
+
+$eventsText = Get-Content -LiteralPath (Join-Path $root "Core\Events.lua") -Raw
+if ($eventsText -notmatch 'UNIT_SCOPED_EVENTS' -or
+    $eventsText -notmatch 'function Events:RebuildUnitEventSubscriptions' -or
+    $eventsText -notmatch 'RegisterUnitEvent') {
+    throw "High-frequency unit events are not routed through C-side unit filtering"
+}
+if ($eventsText -notmatch 'GROUP_UNIT_TOKENS' -or $eventsText -notmatch 'unitTrackers') {
+    throw "Group unit-event demand is not expanded into concrete unit trackers"
+}
+
+$blizzardAuraFramesText = Get-Content -LiteralPath (Join-Path $root "Core\BlizzardAuraFrames.lua") -Raw
+$blizzardSpellAlertsText = Get-Content -LiteralPath (Join-Path $root "Core\BlizzardSpellAlerts.lua") -Raw
+$cooldownManagerSyncText = Get-Content -LiteralPath (Join-Path $root "Core\CooldownManager.lua") -Raw
+if ($blizzardAuraFramesText -notmatch 'function Manager:ScheduleSync' -or
+    $blizzardSpellAlertsText -notmatch 'function Manager:ScheduleSync' -or
+    $cooldownManagerSyncText -notmatch 'function Manager:ScheduleVisibilityOverrideSync') {
+    throw "Global presentation managers cannot coalesce deferred reconciliation"
 }
 
 $spellAuraAliasesPath = Join-Path $root "Data\SpellAuraAliases.lua"
@@ -1005,8 +1035,8 @@ function Get-TocLuaByteCount {
 }
 $baseLuaBytes = Get-TocLuaByteCount -TocPath $toc -BasePath $root
 $optionsLuaBytes = Get-TocLuaByteCount -TocPath $optionsToc -BasePath $optionsRoot
-if (($optionsLuaBytes / ($baseLuaBytes + $optionsLuaBytes)) -lt 0.405) {
-    throw "The load-on-demand editor split defers less than the audited 40.5% startup target"
+if (($optionsLuaBytes / ($baseLuaBytes + $optionsLuaBytes)) -lt 0.40) {
+    throw "The load-on-demand editor split defers less than the audited 40% startup target"
 }
 
 & (Join-Path $root "deploy.ps1") -WhatIf

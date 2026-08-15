@@ -2,7 +2,7 @@
 ## Title: PopAuras
 ## Notes: Midnight 12.1 addon focused on reliable bars and icons
 ## Author: Popabeast-Sargeras
-## Version: 12.1.7
+## Version: 12.1.8
 ## X-Curse-Project-ID: 1510249
 ## SavedVariables: PopAurasDB
 ## OptionalDeps: Blizzard_AuraContainer, Blizzard_CooldownViewer
