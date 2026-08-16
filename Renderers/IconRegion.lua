@@ -206,6 +206,7 @@ function IconRegion:Update(aura, state)
   end
   self.frame:EnableMouse(BaseRegion:CanMove(aura) == true or cancelEnabled)
   self.icon:SetTexture(Spells:ResolveDisplayIcon(aura, state))
+  self.icon:SetShown(aura.display.icon ~= false)
   local remainingFromObject = ns.TextResolver:GetDurationObjectRemaining(state)
   local readyLookActive = aura.display.readyLook == true and ns.TextResolver:IsReadyState(state, remainingFromObject)
   local iconColor = readyLookActive and (aura.display.readyColor or aura.display.color) or DEFAULT_ICON_COLOR
@@ -285,10 +286,6 @@ function IconRegion:Update(aura, state)
     ns.runtime:RegisterTimedRegion(aura.id, self)
   else
     ns.runtime:UnregisterTimedRegion(aura.id)
-  end
-
-  if aura.kind == "icon" and aura.display.icon ~= true then
-    self.frame:Hide()
   end
 
   if ns.RaidFrameOverlay then

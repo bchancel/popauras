@@ -1,5 +1,8 @@
 # v12.1.8
 - Improved combat performance with unit scoped aura events
+- Reduced group missing-aura overhead
+- Moved Death Alert timing, role filters, and per-role sounds to Display with an explicit sound toggle
+- Fixed hidden icon textures also hiding the entire aura region
 
 # v12.1.7
 - Fixed radial cooldown swipes rendering across horizontal and vertical buff bars instead of across the full bar

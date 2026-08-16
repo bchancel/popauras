@@ -3,6 +3,12 @@ local _, ns = ...
 local Safe = ns.SafeValues
 local Duration = ns.Duration
 local EMPTY = {}
+local DEFERRED_GROUP_MISSING_SECONDS = 0.05
+
+local PARTY_UNIT_TOKENS = {}
+local RAID_UNIT_TOKENS = {}
+for index = 1, 4 do PARTY_UNIT_TOKENS[index] = "party" .. index end
+for index = 1, 40 do RAID_UNIT_TOKENS[index] = "raid" .. index end
 
 local provider = ns.TriggerBase:CreateProvider("aura", {
   events = {
@@ -11,6 +17,9 @@ local provider = ns.TriggerBase:CreateProvider("aura", {
     "GROUP_ROSTER_UPDATE",
     "UNIT_FLAGS",
     "PLAYER_ENTERING_WORLD",
+    "PLAYER_SPECIALIZATION_CHANGED",
+    "ACTIVE_PLAYER_SPECIALIZATION_CHANGED",
+    "SPELLS_CHANGED",
   },
 })
 
@@ -24,7 +33,7 @@ local function AddSpellID(result, seen, value)
   end
 end
 
-local function GetSpellIDs(trigger)
+local function BuildSpellIDs(trigger)
   local result, seen = {}, {}
   for _, value in ipairs(type(trigger and trigger.spellIDs) == "table" and trigger.spellIDs or EMPTY) do
     AddSpellID(result, seen, value)
@@ -36,6 +45,13 @@ local function GetSpellIDs(trigger)
     AddSpellID(result, seen, ns.util.Spells:ResolveConfiguredSpellID(name))
   end
   return result
+end
+
+local function GetSpellIDs(trigger)
+  local compiled = provider.compiledSpellIDsByTrigger
+  local cached = compiled and compiled[trigger]
+  if cached then return cached end
+  return BuildSpellIDs(trigger)
 end
 
 local function GetSpellPresentation(spellID, auraConfig)
@@ -215,6 +231,46 @@ local function BuildAbsent(trigger, auraConfig, helpful, spellID, missingMatched
   })
 end
 
+local function CollectMissingGroupUnit(absentUnits, unit, trigger, helpful, spellIDs)
+  if not UnitPassesFilters(unit, trigger) then return false end
+
+  local unitAbsent = true
+  local unitUnavailable = false
+  for _, spellID in ipairs(spellIDs) do
+    local auraData, availability = QueryAura(unit, spellID, helpful, trigger)
+    if auraData then
+      unitAbsent = false
+      break
+    elseif availability == "unavailable" then
+      unitUnavailable = true
+      unitAbsent = false
+    end
+  end
+  if unitAbsent then absentUnits[#absentUnits + 1] = unit end
+  return unitUnavailable
+end
+
+local function EvaluateGroupMissing(trigger, auraConfig, helpful, spellIDs)
+  local absentUnits = {}
+  local anyUnavailable = CollectMissingGroupUnit(absentUnits, "player", trigger, helpful, spellIDs)
+  local units, count
+  if IsInRaid and IsInRaid() then
+    units = RAID_UNIT_TOKENS
+    count = math.min(Safe:Number(GetNumGroupMembers and GetNumGroupMembers()) or 0, #RAID_UNIT_TOKENS)
+  elseif IsInGroup and IsInGroup() then
+    units = PARTY_UNIT_TOKENS
+    count = math.min(Safe:Number(GetNumSubgroupMembers and GetNumSubgroupMembers()) or 0, #PARTY_UNIT_TOKENS)
+  end
+  for index = 1, count or 0 do
+    if CollectMissingGroupUnit(absentUnits, units[index], trigger, helpful, spellIDs) then
+      anyUnavailable = true
+    end
+  end
+
+  if anyUnavailable then return BuildUnavailable(trigger, auraConfig, helpful, spellIDs[1]) end
+  return BuildAbsent(trigger, auraConfig, helpful, spellIDs[1], #absentUnits > 0, absentUnits)
+end
+
 function provider:Evaluate(trigger, auraConfig)
   local helpful = trigger.auraType ~= "debuff"
   if trigger.unit == "nameplate" then
@@ -233,6 +289,11 @@ function provider:Evaluate(trigger, auraConfig)
   local spellIDs = GetSpellIDs(trigger)
   if #spellIDs == 0 then
     return BuildUnavailable(trigger, auraConfig, helpful, nil)
+  end
+  if trigger.unit == "group" and trigger.auraFilter == "missing"
+      and auraConfig and provider.deferredAuraIDs
+      and provider.deferredAuraIDs[auraConfig.id] == true then
+    return EvaluateGroupMissing(trigger, auraConfig, helpful, spellIDs)
   end
 
   local anyUnavailable = false
@@ -277,10 +338,108 @@ function provider:Evaluate(trigger, auraConfig)
   return BuildAbsent(trigger, auraConfig, helpful, spellIDs[1], false, eligibleUnits)
 end
 
+local function HasImmediateConsumers(aura)
+  if type(aura) ~= "table" then return true end
+  if type(aura.actions) == "table" and next(aura.actions) ~= nil then return true end
+  if type(aura.conditions) == "table" and next(aura.conditions) ~= nil then return true end
+  local display = aura.display
+  if type(display) == "table" and (display.soundEnabled == true
+      or display.showOnRaidFrames == true) then
+    return true
+  end
+  for _, trigger in ns.TriggerBase:IterateTriggers(aura) do
+    if trigger.debug == true then return true end
+  end
+  return false
+end
+
+local function CanCoalesceGroupMissing(aura, selectedTrigger)
+  -- A short delay is valid only when the aura and its ancestors consume final
+  -- presentation state. Edge-sensitive actions, sounds, raid overlays,
+  -- conditions, debug output, and multi-trigger combinations stay immediate.
+  if type(aura) ~= "table" or type(selectedTrigger) ~= "table"
+      or selectedTrigger.unit ~= "group" or selectedTrigger.auraFilter ~= "missing" then
+    return false
+  end
+  if aura.kind ~= "icon" and aura.kind ~= "bar" and aura.kind ~= "text" then return false end
+
+  local enabledCount = 0
+  for _, trigger in ns.TriggerBase:IterateTriggers(aura) do
+    enabledCount = enabledCount + 1
+    if trigger ~= selectedTrigger then return false end
+  end
+  if enabledCount ~= 1 then return false end
+
+  local current = aura
+  local visited = {}
+  while current do
+    if visited[current] then return false end
+    visited[current] = true
+    if HasImmediateConsumers(current) then return false end
+    current = current.parentId and ns.Registry:GetAura(current.parentId) or nil
+  end
+  return true
+end
+
+local function IsEditorOpen()
+  return ns.ui and ns.ui.MainWindow and ns.ui.MainWindow.IsOpen
+    and ns.ui.MainWindow:IsOpen() == true
+end
+
+function provider:GetUnitAuraRoutes(unit)
+  if not self.byUnit then self:RebuildIndex() end
+  local cached = self.unitAuraRoutes and self.unitAuraRoutes[unit]
+  if cached then return cached.immediate, cached.deferred end
+
+  local immediate, deferred = {}, {}
+  for _, auraID in ipairs(self:GetAffectedAurasForUnit(unit)) do
+    local target = self.deferredAuraIDs and self.deferredAuraIDs[auraID] and deferred or immediate
+    target[#target + 1] = auraID
+  end
+  self.unitAuraRoutes[unit] = { immediate = immediate, deferred = deferred }
+  return immediate, deferred
+end
+
+function provider:ScheduleDeferredAuraRefresh(auraIDs)
+  if type(auraIDs) ~= "table" or #auraIDs == 0 or not (C_Timer and C_Timer.After) then
+    return false
+  end
+  -- Queue configuration IDs only. Aura payloads and presence results are
+  -- always queried fresh at execution time and never cross the secret boundary.
+  self.pendingDeferredAuraIDs = self.pendingDeferredAuraIDs or {}
+  for _, auraID in ipairs(auraIDs) do self.pendingDeferredAuraIDs[auraID] = true end
+  if self.deferredRefreshPending then return true end
+
+  self.deferredRefreshPending = true
+  C_Timer.After(DEFERRED_GROUP_MISSING_SECONDS, function()
+    provider.deferredRefreshPending = false
+    local pending = provider.pendingDeferredAuraIDs or {}
+    provider.pendingDeferredAuraIDs = {}
+    local refreshIDs = {}
+    for auraID in pairs(pending) do
+      if provider.deferredAuraIDs and provider.deferredAuraIDs[auraID] then
+        refreshIDs[#refreshIDs + 1] = auraID
+      end
+    end
+    if #refreshIDs == 0 or not (ns.runtime and ns.runtime.RefreshAuras) then return end
+
+    local profileStart = ns.Profiler and ns.Profiler.IsEnabled and ns.Profiler:IsEnabled()
+      and ns.Profiler:Begin("provider_deferred:aura") or nil
+    ns.runtime:RefreshAuras(refreshIDs)
+    if profileStart and ns.Profiler and ns.Profiler.Finish then
+      ns.Profiler:Finish("provider_deferred:aura", profileStart)
+    end
+  end)
+  return true
+end
+
 function provider:RebuildIndex()
   self.byUnit, self.allAuraIDs = {}, {}
   self.eventUnits = {}
   self.affectedByUnit = {}
+  self.unitAuraRoutes = {}
+  self.deferredAuraIDs = {}
+  self.compiledSpellIDsByTrigger = setmetatable({}, { __mode = "k" })
   local allSeen = {}
   local byUnitSeen = {}
   for _, auraID in ipairs(ns.Registry:GetFlatOrder()) do
@@ -314,6 +473,12 @@ function provider:RebuildIndex()
         needsLogicalRefresh = false
       end
 
+      if aura and aura.enabled ~= false and needsLogicalRefresh
+          and CanCoalesceGroupMissing(aura, trigger) then
+        self.deferredAuraIDs[auraID] = true
+        self.compiledSpellIDsByTrigger[trigger] = BuildSpellIDs(trigger)
+      end
+
       -- Blizzard's native AuraContainer receives UNIT_AURA directly. Avoid a
       -- second PopAuras evaluation/render pass unless another feature consumes
       -- the logical activation state.
@@ -334,6 +499,10 @@ function provider:InvalidateCaches()
   self.allAuraIDs = nil
   self.eventUnits = nil
   self.affectedByUnit = nil
+  self.unitAuraRoutes = nil
+  self.deferredAuraIDs = nil
+  self.compiledSpellIDsByTrigger = nil
+  self.pendingDeferredAuraIDs = {}
 end
 
 function provider:GetUnitEventUnits(event)
@@ -381,6 +550,10 @@ function provider:HandleEvent(event, ...)
     unit = "target"
   elseif event == "UNIT_FLAGS" then
     unit = Safe:String((...))
+  elseif event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_SPECIALIZATION_CHANGED"
+      or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" or event == "SPELLS_CHANGED" then
+    self:InvalidateCaches()
+    return
   end
 
   -- Blizzard's managed AuraContainer subscribes to UNIT_AURA itself, but a
@@ -407,6 +580,10 @@ function provider:GetAffectedAuras(event, ...)
     -- if a future client does hide the token, native containers still update
     -- themselves and logical evaluation must wait for a scoped/global event.
     if not unit then return EMPTY end
+    if event == "UNIT_AURA" and not IsEditorOpen() then
+      local immediate, deferred = self:GetUnitAuraRoutes(unit)
+      if self:ScheduleDeferredAuraRefresh(deferred) then return immediate end
+    end
     return self:GetAffectedAurasForUnit(unit)
   end
   return self.allAuraIDs

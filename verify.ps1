@@ -283,6 +283,18 @@ if ($eventsText -notmatch 'GROUP_UNIT_TOKENS' -or $eventsText -notmatch 'unitTra
     throw "Group unit-event demand is not expanded into concrete unit trackers"
 }
 
+$auraProviderText = Get-Content -LiteralPath (Join-Path $root "Triggers\AuraProvider.lua") -Raw
+if ($auraProviderText -notmatch 'DEFERRED_GROUP_MISSING_SECONDS' -or
+    $auraProviderText -notmatch 'function provider:ScheduleDeferredAuraRefresh' -or
+    $auraProviderText -notmatch 'CanCoalesceGroupMissing' -or
+    $auraProviderText -notmatch 'HasImmediateConsumers') {
+    throw "Presentation-only group missing auras are not safely coalesced"
+}
+if ($auraProviderText -notmatch 'provider\.deferredAuraIDs\[auraConfig\.id\]\s*==\s*true' -or
+    $auraProviderText -notmatch 'provider_deferred:aura') {
+    throw "Deferred group aura evaluation is not isolated or profiled"
+}
+
 $blizzardAuraFramesText = Get-Content -LiteralPath (Join-Path $root "Core\BlizzardAuraFrames.lua") -Raw
 $blizzardSpellAlertsText = Get-Content -LiteralPath (Join-Path $root "Core\BlizzardSpellAlerts.lua") -Raw
 $cooldownManagerSyncText = Get-Content -LiteralPath (Join-Path $root "Core\CooldownManager.lua") -Raw
@@ -707,8 +719,21 @@ foreach ($verticalRendererText in @($barRegionText, $nativeAuraRegionText, $acti
         throw "A vertical bar renderer uses the inverted texture-rotation rule"
     }
 }
-if ($displayPanelText -notmatch 'trigger\.type\s*~=\s*"death_alert"') {
-    throw "Death Alert auras still expose the redundant Display sound category"
+if ($displayPanelText -notmatch 'deathDurationWrap' -or
+    $displayPanelText -notmatch 'deathMaxAlertsWrap' -or
+    $displayPanelText -notmatch 'deathTankCheck' -or
+    $displayPanelText -notmatch 'deathHealerCheck' -or
+    $displayPanelText -notmatch 'deathDPSCheck' -or
+    $displayPanelText -notmatch 'deathTankSoundWrap' -or
+    $displayPanelText -notmatch 'deathHealerSoundWrap' -or
+    $displayPanelText -notmatch 'deathDPSSoundWrap' -or
+    $displayPanelText -notmatch '"Enable Sounds"' -or
+    $displayPanelText -notmatch 'trigger\.deathSoundEnabled') {
+    throw "Death Alert presentation controls are missing from the Display editor"
+}
+if ($triggerPanelText -match 'deathDurationLabel:SetShown\(isDeathAlert\)' -or
+    $triggerPanelText -match 'deathSoundsLabel:SetShown\(isDeathAlert\)') {
+    throw "Death Alert presentation controls still appear in the Trigger editor"
 }
 if ($displayPanelText -notmatch 'auraListSwipeCheck' -or
     $displayPanelText -notmatch '"Show Cooldown Swipe"' -or
@@ -716,9 +741,14 @@ if ($displayPanelText -notmatch 'auraListSwipeCheck' -or
     throw "Buffs and Debuffs does not expose its safe native cooldown-swipe option"
 }
 $defaultsText = Get-Content -LiteralPath (Join-Path $root "Data\Defaults.lua") -Raw
+$deathAlertProviderText = Get-Content -LiteralPath (Join-Path $root "Triggers\DeathAlertProvider.lua") -Raw
 $schemaText = Get-Content -LiteralPath (Join-Path $root "Data\Schema.lua") -Raw
 $triggerEngineText = Get-Content -LiteralPath (Join-Path $root "Engine\TriggerEngine.lua") -Raw
 $barRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\BarRegion.lua") -Raw
+if ($defaultsText -notmatch 'deathSoundEnabled' -or
+    $deathAlertProviderText -notmatch 'trigger\.deathSoundEnabled\s*~=\s*true') {
+    throw "Death Alert role sounds are missing their enabled-state compatibility boundary"
+}
 if ($barRegionText -notmatch 'GetAuraSpellInstanceID' -or
     $barRegionText -notmatch 'C_UnitAuras\.GetAuraDuration' -or
     $barRegionText -notmatch 'Duration:BuildTimer\(durationObject, "active_buff_cdm", true\)' -or

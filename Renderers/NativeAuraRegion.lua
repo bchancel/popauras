@@ -238,7 +238,7 @@ function Region:StyleFallback(aura, isPreview, state)
   end
 
   fallback.icon:SetTexture(spellIcon)
-  fallback.icon:SetShown(display.icon ~= false or aura.kind == "icon")
+  fallback.icon:SetShown(display.icon ~= false)
   fallback.nameText:SetText(spellName)
   fallback.nameText:SetShown(display.showName == true)
   fallback.timerText:SetText(isPreview and ns.TextResolver:GetTimerText(state, aura)
@@ -510,6 +510,7 @@ function Region:StyleButton(aura)
   if aura.kind == "icon" then
     button.icon:ClearAllPoints()
     button.icon:SetAllPoints()
+    button.icon:SetShown(display.icon ~= false)
     button.bar:Hide()
     button.background:Hide()
   else

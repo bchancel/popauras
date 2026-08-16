@@ -109,6 +109,9 @@ local function TriggerMatchesRole(trigger, role)
 end
 
 local function GetRoleSound(trigger, role)
+  if not trigger or trigger.deathSoundEnabled ~= true then
+    return "None"
+  end
   role = NormalizeRole(role)
   if role == "TANK" then
     return trigger.soundTank or "None"

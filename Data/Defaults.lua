@@ -305,6 +305,13 @@ local function ApplyTriggerTypeDefaults(trigger)
     trigger.soundTank = trigger.soundTank or "None"
     trigger.soundHealer = trigger.soundHealer or "None"
     trigger.soundDPS = trigger.soundDPS or "None"
+    if trigger.deathSoundEnabled == nil then
+      -- Preserve existing Death Alerts that already configured at least one
+      -- role sound while giving new alerts an explicit off state.
+      trigger.deathSoundEnabled = (trigger.soundTank ~= "" and trigger.soundTank ~= "None")
+        or (trigger.soundHealer ~= "" and trigger.soundHealer ~= "None")
+        or (trigger.soundDPS ~= "" and trigger.soundDPS ~= "None")
+    end
   elseif triggerType == "chat" then
     if type(trigger.chatChannels) ~= "table" or #trigger.chatChannels == 0 then
       trigger.chatChannels = { trigger.chatChannel or "WHISPER" }
@@ -608,6 +615,7 @@ function Defaults:NewAura(kind, triggerType)
       aura.triggers[1].soundTank = "None"
       aura.triggers[1].soundHealer = "None"
       aura.triggers[1].soundDPS = "None"
+      aura.triggers[1].deathSoundEnabled = false
     elseif triggerType == "aura_list" then
       aura.triggers[1].unit = "player"
       aura.triggers[1].auraType = "buff"

@@ -121,6 +121,9 @@ local function HideAllSoundPickers(frame)
   SoundPicker:HideIfDropdown(frame.soundFileWrap and frame.soundFileWrap.dropdown)
   SoundPicker:HideIfDropdown(frame.trinketTopSoundFileWrap and frame.trinketTopSoundFileWrap.dropdown)
   SoundPicker:HideIfDropdown(frame.trinketBottomSoundFileWrap and frame.trinketBottomSoundFileWrap.dropdown)
+  SoundPicker:HideIfDropdown(frame.deathTankSoundWrap and frame.deathTankSoundWrap.dropdown)
+  SoundPicker:HideIfDropdown(frame.deathHealerSoundWrap and frame.deathHealerSoundWrap.dropdown)
+  SoundPicker:HideIfDropdown(frame.deathDPSSoundWrap and frame.deathDPSSoundWrap.dropdown)
   if TexturePicker then
     TexturePicker:HideIfDropdown(frame.barTextureWrap and frame.barTextureWrap.dropdown)
   end
@@ -334,6 +337,34 @@ local function PositionColorSwatch(widget, x, y)
   Frames.PositionColorSwatch(widget, x, y)
 end
 
+local function HideDeathSoundPickers(frame)
+  if not SoundPicker or not frame then
+    return
+  end
+  SoundPicker:HideIfDropdown(frame.deathTankSoundWrap and frame.deathTankSoundWrap.dropdown)
+  SoundPicker:HideIfDropdown(frame.deathHealerSoundWrap and frame.deathHealerSoundWrap.dropdown)
+  SoundPicker:HideIfDropdown(frame.deathDPSSoundWrap and frame.deathDPSSoundWrap.dropdown)
+end
+
+local function SetParentIfPossible(widget, parent)
+  if widget and widget.SetParent then
+    widget:SetParent(parent)
+  end
+end
+
+local function SetIconAppearanceParent(frame, parent)
+  SetParentIfPossible(frame.showIconCheck, parent)
+  SetParentIfPossible(frame.hideCDMIconCheck, parent)
+  SetParentIfPossible(frame.iconEdgeCheck, parent)
+  SetParentIfPossible(frame.iconFinishFlashCheck, parent)
+  SetParentIfPossible(frame.altIconIdWrap.label, parent)
+  SetParentIfPossible(frame.altIconIdWrap.input, parent)
+  SetParentIfPossible(frame.iconSwipeColorWrap.label, parent)
+  SetParentIfPossible(frame.iconSwipeColorWrap.button, parent)
+  SetParentIfPossible(frame.iconSwipeColorWrap.valueText, parent)
+  SetParentIfPossible(frame.iconHint, parent)
+end
+
 local function CreateColorSwatch(parent, label, x, y)
   return Frames.CreateColorSwatch(parent, label, x, y)
 end
@@ -502,6 +533,14 @@ local function CommitInteger(input, fallback)
   return value
 end
 
+local function NormalizeDeathAlertCap(value)
+  value = tonumber(value)
+  if value == nil then
+    return 7
+  end
+  return math.max(0, math.min(20, math.floor(value)))
+end
+
 local function CommitString(input)
   local value = tostring(input:GetText() or "")
   value = value:gsub("^%s+", ""):gsub("%s+$", "")
@@ -646,6 +685,7 @@ function Panel:UpdateControlStates()
   local showBackground = frame.showBackgroundCheck:GetChecked() == true
   local readyStateEnabled = frame.showAlwaysReadyCheck:GetChecked() == true
   local trigger = GetSelectedTrigger(aura)
+  local isDeathAlert = trigger and trigger.type == "death_alert"
   local supportsNoStacksColor = trigger and trigger.type == "spell_cooldown" and kind == "bar"
   local supportsActiveGlowStyle = trigger and trigger.type == "spell_cooldown" and kind == "bar"
   local supportsDisplayActiveGlow = trigger
@@ -657,7 +697,7 @@ function Panel:UpdateControlStates()
   local supportsChargeCooldown = trigger and trigger.type == "spell_cooldown" and not isGroup and not isText
   local supportsShowAlways = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown" or trigger.type == "aura")
   local supportsReadyText = trigger and (trigger.type == "spell_cooldown" or trigger.type == "item_cooldown" or trigger.type == "trinket_cooldown")
-  local showIconCooldownControls = not isGroup and not isText and isIconAura and frame.iconSection.collapsed ~= true
+  local showIconCooldownControls = not isGroup and not isText and isIconAura
   local showRaidFrameSection = not isGroup and not isText and isIconAura and frame.raidFrameSection:IsShown()
   local showRaidFrameControls = showRaidFrameSection and frame.showOnRaidFramesCheck:GetChecked() == true and frame.raidFrameSection.collapsed ~= true
   local soundEnabled = frame.soundEnabledCheck:GetChecked() == true
@@ -774,14 +814,19 @@ function Panel:UpdateControlStates()
     frame.trinketTopSoundFileButton, frame.trinketTopSoundFileWrap.label,
     frame.trinketBottomSoundFileButton, frame.trinketBottomSoundFileWrap.label,
     frame.soundChannelWrap.dropdown, frame.soundChannelWrap.label,
-  }, soundEnabled and not isGroup and not isAuraBarList)
+  }, soundEnabled and not isGroup and not isAuraBarList and not isDeathAlert)
   SetControlGroupShown({
     frame.soundFileButton, frame.soundFileWrap.label,
-  }, showSoundBody and not dualTrinketSounds)
+  }, showSoundBody and not isDeathAlert and not dualTrinketSounds)
   SetControlGroupShown({
     frame.trinketTopSoundFileButton, frame.trinketTopSoundFileWrap.label,
     frame.trinketBottomSoundFileButton, frame.trinketBottomSoundFileWrap.label,
-  }, showSoundBody and dualTrinketSounds)
+  }, showSoundBody and not isDeathAlert and dualTrinketSounds)
+  SetControlGroupEnabled({
+    frame.deathTankSoundButton, frame.deathTankSoundWrap.label,
+    frame.deathHealerSoundButton, frame.deathHealerSoundWrap.label,
+    frame.deathDPSSoundButton, frame.deathDPSSoundWrap.label,
+  }, showSoundBody and isDeathAlert and soundEnabled)
   SetControlGroupEnabled({
     frame.blizzardSpellAlertWrap.input,
     frame.blizzardSpellAlertWrap.label,
@@ -792,7 +837,7 @@ function Panel:UpdateControlStates()
   -- off. This keeps each submenu useful without presenting inactive fields.
   SetControlGroupShown({
     frame.backgroundColorWrap.button, frame.backgroundColorWrap.label, frame.backgroundColorWrap.valueText,
-  }, showBackground)
+  }, showBackground and (not isIconAura or isNameplateAura))
   SetControlGroupShown({
     frame.backgroundGammaWrap.input, frame.backgroundGammaWrap.label,
   }, showBackground and isAuraBarList)
@@ -816,7 +861,7 @@ function Panel:UpdateControlStates()
     frame.iconAnchorWrap.dropdown, frame.iconAnchorWrap.label,
     frame.iconXWrap.input, frame.iconXWrap.label,
     frame.iconYWrap.input, frame.iconYWrap.label,
-  }, showIcon and not isNameplateAura)
+  }, showIcon and not isIconAura and not isNameplateAura)
   SetControlGroupShown({ frame.iconHint }, showIcon and not isAuraBarList and not isGroup and not isText)
 
   SetControlGroupShown({
@@ -858,15 +903,20 @@ function Panel:UpdateControlStates()
   SetControlGroupShown({
     frame.soundReadyCheck,
     frame.soundChannelWrap.dropdown, frame.soundChannelWrap.label,
-    frame.soundHint,
-  }, showSoundBody and soundEnabled)
+  }, showSoundBody and soundEnabled and not isDeathAlert)
+  SetControlGroupShown({ frame.soundHint }, showSoundBody and soundEnabled)
   SetControlGroupShown({
     frame.soundFileButton, frame.soundFileWrap.label,
-  }, showSoundBody and soundEnabled and not dualTrinketSounds)
+  }, showSoundBody and soundEnabled and not isDeathAlert and not dualTrinketSounds)
   SetControlGroupShown({
     frame.trinketTopSoundFileButton, frame.trinketTopSoundFileWrap.label,
     frame.trinketBottomSoundFileButton, frame.trinketBottomSoundFileWrap.label,
-  }, showSoundBody and soundEnabled and dualTrinketSounds)
+  }, showSoundBody and soundEnabled and not isDeathAlert and dualTrinketSounds)
+  SetControlGroupShown({
+    frame.deathTankSoundButton, frame.deathTankSoundWrap.label,
+    frame.deathHealerSoundButton, frame.deathHealerSoundWrap.label,
+    frame.deathDPSSoundButton, frame.deathDPSSoundWrap.label,
+  }, showSoundBody and soundEnabled and isDeathAlert)
   SetControlGroupShown({
     frame.blizzardSpellAlertWrap.input, frame.blizzardSpellAlertWrap.label, frame.blizzardSpellAlertHint,
   }, blizzardSpellAlertEnabled and not isGroup)
@@ -883,10 +933,16 @@ function Panel:UpdateControlStates()
   }, showRaidFrameBody)
 
   if frame.reverseCheck.Text then
-    frame.reverseCheck.Text:SetText(frame.reverseCheck:GetChecked() and "Fill" or "Drain")
+    if isIconAura then
+      frame.reverseCheck.Text:SetText("Fill Cooldown Swipe")
+    else
+      frame.reverseCheck.Text:SetText(frame.reverseCheck:GetChecked() and "Fill" or "Drain")
+    end
   end
 
-  frame.iconSection:SetHeight(showIcon and (isNameplateAura and 180 or 270) or 70)
+  if not isIconAura then
+    frame.iconSection:SetHeight(showIcon and 270 or 70)
+  end
   frame.nameSection:SetHeight(showName and 290 or 70)
   frame.timerSection:SetHeight(showTimer and 260 or 70)
   frame.stacksSection:SetHeight(showStacks and 220 or 70)
@@ -897,9 +953,15 @@ function Panel:UpdateControlStates()
 
   if not soundEnabled or isGroup or isAuraBarList then
     HideAllSoundPickers(frame)
+  elseif isDeathAlert and SoundPicker then
+    SoundPicker:HideIfDropdown(frame.soundFileWrap.dropdown)
+    SoundPicker:HideIfDropdown(frame.trinketTopSoundFileWrap.dropdown)
+    SoundPicker:HideIfDropdown(frame.trinketBottomSoundFileWrap.dropdown)
   elseif dualTrinketSounds and SoundPicker then
+    HideDeathSoundPickers(frame)
     SoundPicker:HideIfDropdown(frame.soundFileWrap.dropdown)
   elseif SoundPicker then
+    HideDeathSoundPickers(frame)
     SoundPicker:HideIfDropdown(frame.trinketTopSoundFileWrap.dropdown)
     SoundPicker:HideIfDropdown(frame.trinketBottomSoundFileWrap.dropdown)
   end
@@ -964,6 +1026,17 @@ function Panel:ApplyCurrent()
   aura.display.noStacksBarColor = Colors.Copy(frame.noStacksBarColorWrap.color
     or aura.display.noStacksBarColor or { r = 0.86, g = 0.18, b = 0.18, a = 1 })
   local trigger = GetSelectedTrigger(aura)
+  if trigger.type == "death_alert" then
+    trigger.alertDuration = math.max(0.1,
+      CommitNumeric(frame.deathDurationWrap.input, trigger.alertDuration or 2))
+    trigger.maxAlertsPerCombat = NormalizeDeathAlertCap(
+      CommitInteger(frame.deathMaxAlertsWrap.input, trigger.maxAlertsPerCombat or 7))
+    frame.deathDurationWrap.input:SetText(string.format("%.2f", trigger.alertDuration))
+    frame.deathMaxAlertsWrap.input:SetText(tostring(trigger.maxAlertsPerCombat))
+    trigger.showTank = frame.deathTankCheck:GetChecked() == true
+    trigger.showHealer = frame.deathHealerCheck:GetChecked() == true
+    trigger.showDPS = frame.deathDPSCheck:GetChecked() == true
+  end
   if isNameplateAura then
     local maxAuras = CommitInteger(frame.nameplateMaxAurasWrap.input, trigger.nameplateMaxAuras or 3)
     trigger.nameplateMaxAuras = math.max(1, math.min(maxAuras, 8))
@@ -1064,7 +1137,17 @@ function Panel:ApplyCurrent()
   aura.display.stacksOffsetX = CommitNumeric(frame.stacksControls.xWrap.input, aura.display.stacksOffsetX or 0)
   aura.display.stacksOffsetY = CommitNumeric(frame.stacksControls.yWrap.input, aura.display.stacksOffsetY or 0)
   aura.display.stacksColor = Colors.Copy(frame.stacksControls.colorWrap.color or aura.display.stacksColor)
-  aura.display.soundEnabled = frame.soundEnabledCheck:GetChecked() == true
+  if trigger.type == "death_alert" then
+    trigger.deathSoundEnabled = frame.soundEnabledCheck:GetChecked() == true
+    trigger.soundTank = UIDropDownMenu_GetSelectedValue(frame.deathTankSoundWrap.dropdown)
+      or trigger.soundTank or "None"
+    trigger.soundHealer = UIDropDownMenu_GetSelectedValue(frame.deathHealerSoundWrap.dropdown)
+      or trigger.soundHealer or "None"
+    trigger.soundDPS = UIDropDownMenu_GetSelectedValue(frame.deathDPSSoundWrap.dropdown)
+      or trigger.soundDPS or "None"
+  else
+    aura.display.soundEnabled = frame.soundEnabledCheck:GetChecked() == true
+  end
   aura.display.soundMode = frame.soundReadyCheck:GetChecked() and "ready" or "activate"
   aura.display.soundFile = UIDropDownMenu_GetSelectedValue(frame.soundFileWrap.dropdown) or aura.display.soundFile or "None"
   aura.display.trinketTopSoundFile = UIDropDownMenu_GetSelectedValue(frame.trinketTopSoundFileWrap.dropdown) or aura.display.trinketTopSoundFile or "None"
@@ -1169,14 +1252,15 @@ function Panel:Create(parent)
   frame.canvasSection = CreateSection(frame.content, "Look", -36, 480)
   frame.canvasSection.expandedHeightAura = 590
   frame.canvasSection.expandedHeightGroup = 352
-  frame.canvasSection.expandedHeightNameplate = 270
+  frame.canvasSection.expandedHeightNameplate = 430
+  frame.canvasSection.expandedHeightDeathAlert = 430
   frame.groupSection = CreateSection(frame.content, "Group Layout", -396, 132)
   frame.iconSection = CreateSection(frame.content, "Icon", -560, 270)
   frame.raidFrameSection = CreateSection(frame.content, "Raid Frames", -846, 236)
   frame.nameSection = CreateSection(frame.content, "Name Text", -1050, 290)
   frame.timerSection = CreateSection(frame.content, "Duration Text", -1356, 260)
   frame.stacksSection = CreateSection(frame.content, "Stacks Text", -1632, 220)
-  frame.soundSection = CreateSection(frame.content, "Sound", -1868, 164)
+  frame.soundSection = CreateSection(frame.content, "Sounds", -1868, 164)
   frame.blizzardSection = CreateSection(frame.content, "Blizzard UI", -2048, 176)
 
   frame.sectionEntries = {
@@ -1187,7 +1271,7 @@ function Panel:Create(parent)
     { key = "name", label = "Name", section = frame.nameSection },
     { key = "timer", label = "Duration", section = frame.timerSection },
     { key = "stacks", label = "Stacks", section = frame.stacksSection },
-    { key = "sound", label = "Sound", section = frame.soundSection },
+    { key = "sound", label = "Sounds", section = frame.soundSection },
     { key = "blizzard", label = "Blizzard", section = frame.blizzardSection },
   }
   frame.sectionTabs = {}
@@ -1219,6 +1303,22 @@ function Panel:Create(parent)
     frame.canvasSection, "Nameplate Anchor", 380, -88, 180, Anchors.GetNameplateAnchorList)
   frame.strataWrap = CreateLabeledDropdown(frame.canvasSection, "Strata", 12, -212, 150, strataValues)
   frame.levelWrap = CreateLabeledInput(frame.canvasSection, "Level", 200, -212, 58)
+  frame.deathDurationWrap = CreateLabeledInput(frame.canvasSection, "Alert Duration (seconds)", 12, -274, 120)
+  frame.deathMaxAlertsWrap = CreateLabeledInput(frame.canvasSection, "Max Alerts / Combat", 180, -274, 120)
+  frame.deathRolesLabel = Frames.CreateLabel(frame.canvasSection, "Show Roles", "GameFontNormalSmall", "caption")
+  frame.deathRolesLabel:SetPoint("TOPLEFT", 380, -274)
+  frame.deathTankCheck = Frames.CreateCheckbox(frame.canvasSection, "Tanks")
+  frame.deathTankCheck:SetPoint("TOPLEFT", 380, -296)
+  frame.deathHealerCheck = Frames.CreateCheckbox(frame.canvasSection, "Healers")
+  frame.deathHealerCheck:SetPoint("TOPLEFT", 490, -296)
+  frame.deathDPSCheck = Frames.CreateCheckbox(frame.canvasSection, "DPS")
+  frame.deathDPSCheck:SetPoint("TOPLEFT", 610, -296)
+  frame.deathAlertHint = Frames.CreateLabel(
+    frame.canvasSection,
+    "Max Alerts accepts 0 for unlimited alerts during a combat window.",
+    "GameFontDisableSmall")
+  frame.deathAlertHint:SetPoint("TOPLEFT", 12, -330)
+  frame.deathAlertHint:SetWidth(660)
 
   frame.barColorWrap = CreateColorSwatch(frame.canvasSection, "Bar Color", 12, -284)
   frame.glowWhenActiveCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Glow When Active")
@@ -1454,6 +1554,31 @@ function Panel:Create(parent)
     })
   end)
   frame.soundChannelWrap = CreateLabeledDropdown(frame.soundSection, "Channel", 488, -68, 150, GetSoundChannelDropdownValues)
+  local function CreateDeathRoleSoundSelector(label, x, title)
+    local wrap = CreateLabeledDropdown(frame.soundSection, label, x, -68, 196, GetSoundDropdownValues)
+    wrap.dropdown:Hide()
+    local button = Frames.CreateSelectorButton(frame.soundSection, 196, 24)
+    button:SetPoint("TOPLEFT", wrap.label, "BOTTOMLEFT", 0, -6)
+    button:SetScript("OnClick", function()
+      if not SoundPicker then
+        return
+      end
+      SoundPicker:Toggle(button, wrap.dropdown, GetSoundDropdownValues, {
+        title = title,
+        onChanged = function()
+          UpdateSelectorButtonText(button, wrap.dropdown)
+          Panel:ApplyCurrent()
+        end,
+      })
+    end)
+    return wrap, button
+  end
+  frame.deathTankSoundWrap, frame.deathTankSoundButton = CreateDeathRoleSoundSelector(
+    "Tank", 12, "Select Tank Death Sound")
+  frame.deathHealerSoundWrap, frame.deathHealerSoundButton = CreateDeathRoleSoundSelector(
+    "Healer", 244, "Select Healer Death Sound")
+  frame.deathDPSSoundWrap, frame.deathDPSSoundButton = CreateDeathRoleSoundSelector(
+    "DPS", 476, "Select DPS Death Sound")
   frame.soundHint = Frames.CreateLabel(frame.soundSection, "Choose whether the sound plays when the aura activates or when it becomes ready/off cooldown. The picker is scrollable and color-codes sounds by source pack. Use %m in text auras if you want the matched chat message rendered.", "GameFontDisableSmall")
   frame.soundHint:SetPoint("TOPLEFT", 12, -146)
   frame.soundHint:SetWidth(720)
@@ -1485,6 +1610,11 @@ function Panel:Create(parent)
     frame.nameplateMaxAurasWrap.label, frame.nameplateMaxAurasWrap.input,
     frame.strataWrap.label, frame.strataWrap.dropdown,
     frame.levelWrap.label, frame.levelWrap.input,
+    frame.deathDurationWrap.label, frame.deathDurationWrap.input,
+    frame.deathMaxAlertsWrap.label, frame.deathMaxAlertsWrap.input,
+    frame.deathRolesLabel,
+    frame.deathTankCheck, frame.deathHealerCheck, frame.deathDPSCheck,
+    frame.deathAlertHint,
     frame.barColorWrap.label, frame.barColorWrap.button, frame.barColorWrap.valueText,
     frame.noStacksBarColorCheck,
     frame.noStacksBarColorWrap.label, frame.noStacksBarColorWrap.button, frame.noStacksBarColorWrap.valueText,
@@ -1571,6 +1701,9 @@ function Panel:Create(parent)
     frame.soundFileWrap.label, frame.soundFileButton,
     frame.trinketTopSoundFileWrap.label, frame.trinketTopSoundFileButton,
     frame.trinketBottomSoundFileWrap.label, frame.trinketBottomSoundFileButton,
+    frame.deathTankSoundWrap.label, frame.deathTankSoundButton,
+    frame.deathHealerSoundWrap.label, frame.deathHealerSoundButton,
+    frame.deathDPSSoundWrap.label, frame.deathDPSSoundButton,
     frame.soundChannelWrap.label, frame.soundChannelWrap.dropdown,
     frame.soundHint
   )
@@ -1590,6 +1723,8 @@ function Panel:Create(parent)
   ConfigureNumericInput(frame.xWrap.input, 10)
   ConfigureNumericInput(frame.yWrap.input, 10)
   ConfigureNumericInput(frame.levelWrap.input, 5)
+  ConfigureNumericInput(frame.deathDurationWrap.input, 6)
+  ConfigureNumericInput(frame.deathMaxAlertsWrap.input, 2)
   ConfigureNumericInput(frame.groupSpacingWrap.input, 3)
   ConfigureNumericInput(frame.iconSizeWrap.input, 3)
   frame.altIconIdWrap.input:SetMaxLetters(64)
@@ -1632,6 +1767,8 @@ function Panel:Create(parent)
   self:WireLiveInput(frame.xWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.yWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.levelWrap.input, function() Panel:ApplyCurrent() end)
+  self:WireLiveInput(frame.deathDurationWrap.input, function() Panel:ApplyCurrent() end)
+  self:WireLiveInput(frame.deathMaxAlertsWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.backgroundGammaWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.permanentAlphaWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.nameplateMaxAurasWrap.input, function() Panel:ApplyCurrent() end)
@@ -1676,6 +1813,9 @@ function Panel:Create(parent)
   self:WireLiveCheckbox(frame.groupMaintainOrderCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.soundEnabledCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.soundReadyCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.deathTankCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.deathHealerCheck, function() Panel:ApplyCurrent() end)
+  self:WireLiveCheckbox(frame.deathDPSCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.nameControls.showCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.timerControls.showCheck, function() Panel:ApplyCurrent() end)
   self:WireLiveCheckbox(frame.showReadyTextCheck, function() Panel:ApplyCurrent() end)
@@ -1712,6 +1852,9 @@ function Panel:Create(parent)
   InitDropdownWithCallback(frame.soundFileWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.trinketTopSoundFileWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.trinketBottomSoundFileWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.deathTankSoundWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.deathHealerSoundWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
+  InitDropdownWithCallback(frame.deathDPSSoundWrap.dropdown, GetSoundDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.soundChannelWrap.dropdown, GetSoundChannelDropdownValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.nameControls.fontWrap.dropdown, fontStyleValues, function() Panel:ApplyCurrent() end)
   InitDropdownWithCallback(frame.nameControls.rotationWrap.dropdown, textRotationValues, function() Panel:ApplyCurrent() end)
@@ -1764,12 +1907,14 @@ function Panel:Create(parent)
   return frame
 end
 
-function Panel:ApplyCanvasLayout(isGroup, isNameplateAura)
+function Panel:ApplyCanvasLayout(isGroup, isNameplateAura, isIconAura, isDeathAlert)
   if not self.frame then
     return
   end
 
   local frame = self.frame
+
+  SetIconAppearanceParent(frame, isIconAura and frame.canvasSection or frame.iconSection)
 
   PositionLabeledInput(frame.nameInputWrap, 12, -34)
 
@@ -1809,6 +1954,18 @@ function Panel:ApplyCanvasLayout(isGroup, isNameplateAura)
     frame.showBackgroundCheck:ClearAllPoints()
     frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -212)
     PositionColorSwatch(frame.backgroundColorWrap, 220, -212)
+
+    frame.showIconCheck:ClearAllPoints()
+    frame.showIconCheck:SetPoint("TOPLEFT", 12, -274)
+    frame.reverseCheck:ClearAllPoints()
+    frame.reverseCheck:SetPoint("TOPLEFT", 180, -274)
+    frame.iconEdgeCheck:ClearAllPoints()
+    frame.iconEdgeCheck:SetPoint("TOPLEFT", 12, -326)
+    frame.iconFinishFlashCheck:ClearAllPoints()
+    frame.iconFinishFlashCheck:SetPoint("TOPLEFT", 220, -326)
+    PositionColorSwatch(frame.iconSwipeColorWrap, 410, -326)
+    frame.iconHint:ClearAllPoints()
+    frame.iconHint:SetPoint("TOPLEFT", 12, -374)
     return
   end
 
@@ -1824,6 +1981,56 @@ function Panel:ApplyCanvasLayout(isGroup, isNameplateAura)
 
   PositionLabeledDropdown(frame.strataWrap, 12, -212)
   PositionLabeledInput(frame.levelWrap, 200, -212)
+
+  if isDeathAlert then
+    PositionLabeledInput(frame.deathDurationWrap, 12, -274)
+    PositionLabeledInput(frame.deathMaxAlertsWrap, 180, -274)
+    frame.deathRolesLabel:ClearAllPoints()
+    frame.deathRolesLabel:SetPoint("TOPLEFT", 380, -274)
+    frame.deathTankCheck:ClearAllPoints()
+    frame.deathTankCheck:SetPoint("TOPLEFT", 380, -296)
+    frame.deathHealerCheck:ClearAllPoints()
+    frame.deathHealerCheck:SetPoint("TOPLEFT", 490, -296)
+    frame.deathDPSCheck:ClearAllPoints()
+    frame.deathDPSCheck:SetPoint("TOPLEFT", 610, -296)
+    frame.deathAlertHint:ClearAllPoints()
+    frame.deathAlertHint:SetPoint("TOPLEFT", 12, -330)
+    frame.showBackgroundCheck:ClearAllPoints()
+    frame.showBackgroundCheck:SetPoint("TOPLEFT", 12, -370)
+    PositionColorSwatch(frame.backgroundColorWrap, 220, -370)
+    return
+  end
+
+  if isIconAura then
+    frame.showIconCheck:ClearAllPoints()
+    frame.showIconCheck:SetPoint("TOPLEFT", 12, -274)
+    frame.hideCDMIconCheck:ClearAllPoints()
+    frame.hideCDMIconCheck:SetPoint("TOPLEFT", 190, -274)
+    PositionLabeledInput(frame.altIconIdWrap, 390, -266)
+
+    frame.reverseCheck:ClearAllPoints()
+    frame.reverseCheck:SetPoint("TOPLEFT", 12, -330)
+    frame.iconEdgeCheck:ClearAllPoints()
+    frame.iconEdgeCheck:SetPoint("TOPLEFT", 220, -330)
+    frame.iconFinishFlashCheck:ClearAllPoints()
+    frame.iconFinishFlashCheck:SetPoint("TOPLEFT", 410, -330)
+    PositionColorSwatch(frame.iconSwipeColorWrap, 560, -330)
+
+    PositionColorSwatch(frame.readyColorWrap, 220, -382)
+    frame.showReadyTextCheck:ClearAllPoints()
+    frame.showReadyTextCheck:SetPoint("TOPLEFT", 430, -390)
+    frame.showAlwaysReadyCheck:ClearAllPoints()
+    frame.showAlwaysReadyCheck:SetPoint("TOPLEFT", 12, -382)
+    frame.glowWhenActiveCheck:ClearAllPoints()
+    frame.glowWhenActiveCheck:SetPoint("TOPLEFT", 12, -430)
+    PositionLabeledDropdown(frame.activeGlowStyleWrap, 220, -422)
+    PositionColorSwatch(frame.activeGlowColorWrap, 430, -430)
+    frame.chargeCooldownCheck:ClearAllPoints()
+    frame.chargeCooldownCheck:SetPoint("TOPLEFT", 12, -478)
+    frame.iconHint:ClearAllPoints()
+    frame.iconHint:SetPoint("TOPLEFT", 12, -526)
+    return
+  end
 
   PositionColorSwatch(frame.barColorWrap, 12, -284)
   PositionLabeledDropdown(frame.barTextureWrap, 430, -276)
@@ -1853,24 +2060,13 @@ function Panel:ApplyCanvasLayout(isGroup, isNameplateAura)
   frame.chargeCooldownCheck:SetPoint("TOPLEFT", 12, -516)
 end
 
-function Panel:ApplyIconLayout(isNameplateAura)
+function Panel:ApplyIconLayout(isIconAura)
   local frame = self.frame
   if not frame then
     return
   end
 
-  if isNameplateAura then
-    frame.iconSection.expandedHeight = 180
-    frame.iconSection:SetHeight(frame.iconSection.expandedHeight)
-    frame.showIconCheck:ClearAllPoints()
-    frame.showIconCheck:SetPoint("TOPLEFT", 12, -34)
-    frame.iconEdgeCheck:ClearAllPoints()
-    frame.iconEdgeCheck:SetPoint("TOPLEFT", 180, -34)
-    frame.iconFinishFlashCheck:ClearAllPoints()
-    frame.iconFinishFlashCheck:SetPoint("TOPLEFT", 380, -34)
-    PositionColorSwatch(frame.iconSwipeColorWrap, 12, -78)
-    frame.iconHint:ClearAllPoints()
-    frame.iconHint:SetPoint("TOPLEFT", 12, -126)
+  if isIconAura then
     return
   end
 
@@ -1986,6 +2182,7 @@ function Panel:Refresh(aura)
   local isIconAura = aura.kind == "icon"
   local isAuraBarList = aura.kind == "aura_bar_list"
   local trigger = GetSelectedTrigger(aura)
+  local isDeathAlert = trigger.type == "death_alert"
   local isNameplateAura = isIconAura and trigger.type == "aura" and trigger.unit == "nameplate"
   local usesLayoutSection = isGroup or isAuraBarList or isNameplateAura
   local supportsShowAlways = not isNameplateAura and (
@@ -2006,6 +2203,9 @@ function Panel:Refresh(aura)
   RefreshDropdown(self.frame.soundFileWrap.dropdown)
   RefreshDropdown(self.frame.trinketTopSoundFileWrap.dropdown)
   RefreshDropdown(self.frame.trinketBottomSoundFileWrap.dropdown)
+  RefreshDropdown(self.frame.deathTankSoundWrap.dropdown)
+  RefreshDropdown(self.frame.deathHealerSoundWrap.dropdown)
+  RefreshDropdown(self.frame.deathDPSSoundWrap.dropdown)
   RefreshDropdown(self.frame.soundChannelWrap.dropdown)
   SetDropdown(self.frame.strataWrap.dropdown, aura.display.frameStrata or "MEDIUM")
   self.frame.levelWrap.input:SetText(tostring(aura.display.frameLevel or 1))
@@ -2061,6 +2261,12 @@ function Panel:Refresh(aura)
   self.frame.permanentAlphaWrap.input:SetText(string.format("%.2f", tonumber(aura.display.permanentAlpha or 0.25) or 0.25))
   self.frame.nameplateMaxAurasWrap.input:SetText(
     isNameplateAura and tostring(trigger.nameplateMaxAuras or 3) or "")
+  self.frame.deathDurationWrap.input:SetText(isDeathAlert and tostring(trigger.alertDuration or 2) or "")
+  self.frame.deathMaxAlertsWrap.input:SetText(
+    isDeathAlert and tostring(NormalizeDeathAlertCap(trigger.maxAlertsPerCombat)) or "")
+  self.frame.deathTankCheck:SetChecked(trigger.showTank ~= false)
+  self.frame.deathHealerCheck:SetChecked(trigger.showHealer ~= false)
+  self.frame.deathDPSCheck:SetChecked(trigger.showDPS ~= false)
   self.frame.auraListSwipeCheck:SetChecked(aura.display.swipe == true)
 
   self.frame.groupSpacingWrap.input:SetText(tostring(aura.display.spacing or GetDefaultLayoutSpacing(aura)))
@@ -2088,7 +2294,14 @@ function Panel:Refresh(aura)
   self.frame.raidFrameSizeWrap.input:SetText(tostring(aura.display.raidFrameIconSize or 18))
   self.frame.raidFrameXWrap.input:SetText(tostring(aura.display.raidFrameOffsetX or 0))
   self.frame.raidFrameYWrap.input:SetText(tostring(aura.display.raidFrameOffsetY or 11))
-  self.frame.soundEnabledCheck:SetChecked(aura.display.soundEnabled == true)
+  if isDeathAlert then
+    self.frame.soundEnabledCheck:SetChecked(trigger.deathSoundEnabled == true)
+  else
+    self.frame.soundEnabledCheck:SetChecked(aura.display.soundEnabled == true)
+  end
+  if self.frame.soundEnabledCheck.Text then
+    self.frame.soundEnabledCheck.Text:SetText(isDeathAlert and "Enable Sounds" or "Play Aura Sound")
+  end
   self.frame.hideBlizzardSpellAlertCheck:SetChecked(aura.display.hideBlizzardSpellAlert == true)
   self.frame.blizzardSpellAlertWrap.input:SetText(GetBlizzardSpellAlertOverrideText(aura))
   self.frame.blizzardSpellAlertHint:SetText(GetBlizzardSpellAlertHint(aura))
@@ -2109,11 +2322,20 @@ function Panel:Refresh(aura)
   UpdateSelectorButtonText(self.frame.trinketTopSoundFileButton, self.frame.trinketTopSoundFileWrap.dropdown)
   SetDropdown(self.frame.trinketBottomSoundFileWrap.dropdown, aura.display.trinketBottomSoundFile or "None")
   UpdateSelectorButtonText(self.frame.trinketBottomSoundFileButton, self.frame.trinketBottomSoundFileWrap.dropdown)
+  SetDropdown(self.frame.deathTankSoundWrap.dropdown, trigger.soundTank or "None")
+  UpdateSelectorButtonText(self.frame.deathTankSoundButton, self.frame.deathTankSoundWrap.dropdown)
+  SetDropdown(self.frame.deathHealerSoundWrap.dropdown, trigger.soundHealer or "None")
+  UpdateSelectorButtonText(self.frame.deathHealerSoundButton, self.frame.deathHealerSoundWrap.dropdown)
+  SetDropdown(self.frame.deathDPSSoundWrap.dropdown, trigger.soundDPS or "None")
+  UpdateSelectorButtonText(self.frame.deathDPSSoundButton, self.frame.deathDPSSoundWrap.dropdown)
   SetDropdown(self.frame.soundChannelWrap.dropdown, aura.display.soundChannel or "Master")
   if SoundPicker then
     SoundPicker:RefreshIfOpen(self.frame.soundFileWrap.dropdown)
     SoundPicker:RefreshIfOpen(self.frame.trinketTopSoundFileWrap.dropdown)
     SoundPicker:RefreshIfOpen(self.frame.trinketBottomSoundFileWrap.dropdown)
+    SoundPicker:RefreshIfOpen(self.frame.deathTankSoundWrap.dropdown)
+    SoundPicker:RefreshIfOpen(self.frame.deathHealerSoundWrap.dropdown)
+    SoundPicker:RefreshIfOpen(self.frame.deathDPSSoundWrap.dropdown)
   end
 
   self.frame.nameControls.showCheck:SetChecked(aura.display.showName == true)
@@ -2151,7 +2373,7 @@ function Panel:Refresh(aura)
   self.frame.canvasSection._popAurasAvailable = true
   self.frame.embedLayoutInLook = isAuraBarList
   self.frame.groupSection._popAurasAvailable = usesLayoutSection and not isAuraBarList
-  self.frame.iconSection._popAurasAvailable = not isGroup and not isText
+  self.frame.iconSection._popAurasAvailable = not isGroup and not isText and not isIconAura
   self.frame.raidFrameSection._popAurasAvailable = false
   self.frame.nameSection._popAurasAvailable = not isGroup
   self.frame.timerSection._popAurasAvailable = not isGroup and not isText
@@ -2159,7 +2381,6 @@ function Panel:Refresh(aura)
   self.frame.soundSection._popAurasAvailable = not isGroup
     and not isAuraBarList
     and not isNameplateAura
-    and trigger.type ~= "death_alert"
   self.frame.blizzardSection._popAurasAvailable = not isGroup and not isNameplateAura
   if isGroup or isAuraBarList or isNameplateAura then
     HideAllSoundPickers(self.frame)
@@ -2169,16 +2390,21 @@ function Panel:Refresh(aura)
       and self.frame.canvasSection.expandedHeightGroup
       or isNameplateAura
         and self.frame.canvasSection.expandedHeightNameplate
-        or self.frame.canvasSection.expandedHeightAura
+        or isDeathAlert
+          and self.frame.canvasSection.expandedHeightDeathAlert
+          or self.frame.canvasSection.expandedHeightAura
   self.frame.canvasSection:SetHeight(self.frame.canvasSection.expandedHeight)
   local dualTrinketSounds = UsesDualTrinketSounds(aura)
   self.frame.soundSection.expandedHeight = dualTrinketSounds and 226 or 164
   self.frame.soundHint:ClearAllPoints()
-  self.frame.soundHint:SetPoint("TOPLEFT", 12, dualTrinketSounds and -208 or -146)
-  self:ApplyIconLayout(isNameplateAura)
+  self.frame.soundHint:SetPoint("TOPLEFT", 12, isDeathAlert and -130 or dualTrinketSounds and -208 or -146)
+  self.frame.soundHint:SetText(isDeathAlert
+    and "Choose a distinct alert sound for each enabled group role."
+    or "Choose whether the sound plays when the aura activates or when it becomes ready/off cooldown. The picker is scrollable and color-codes sounds by source pack. Use %m in text auras if you want the matched chat message rendered.")
+  self:ApplyIconLayout(isIconAura)
 
-  self.frame.orientationWrap.label:SetShown(not isGroup and not isText and not isNameplateAura)
-  self.frame.orientationWrap.dropdown:SetShown(not isGroup and not isText and not isNameplateAura)
+  self.frame.orientationWrap.label:SetShown(not isGroup and not isText and not isIconAura and not isNameplateAura)
+  self.frame.orientationWrap.dropdown:SetShown(not isGroup and not isText and not isIconAura and not isNameplateAura)
   self.frame.anchorWrap.label:SetShown(not isNameplateAura)
   self.frame.anchorWrap.dropdown:SetShown(not isNameplateAura)
   self.frame.framePointWrap.label:SetShown(not isNameplateAura)
@@ -2193,9 +2419,16 @@ function Panel:Refresh(aura)
   self.frame.strataWrap.dropdown:SetShown(true)
   self.frame.levelWrap.label:SetShown(true)
   self.frame.levelWrap.input:SetShown(true)
-  self.frame.barColorWrap.label:SetShown(not isGroup and not isText and not isNameplateAura)
-  self.frame.barColorWrap.button:SetShown(not isGroup and not isText and not isNameplateAura)
-  self.frame.barColorWrap.valueText:SetShown(not isGroup and not isText and not isNameplateAura)
+  SetControlGroupShown({
+    self.frame.deathDurationWrap.label, self.frame.deathDurationWrap.input,
+    self.frame.deathMaxAlertsWrap.label, self.frame.deathMaxAlertsWrap.input,
+    self.frame.deathRolesLabel,
+    self.frame.deathTankCheck, self.frame.deathHealerCheck, self.frame.deathDPSCheck,
+    self.frame.deathAlertHint,
+  }, isDeathAlert)
+  self.frame.barColorWrap.label:SetShown(not isGroup and not isText and not isIconAura and not isNameplateAura)
+  self.frame.barColorWrap.button:SetShown(not isGroup and not isText and not isIconAura and not isNameplateAura)
+  self.frame.barColorWrap.valueText:SetShown(not isGroup and not isText and not isIconAura and not isNameplateAura)
   local showNoStacksColor = trigger.type == "spell_cooldown" and aura.kind == "bar"
   self.frame.noStacksBarColorCheck:SetShown(showNoStacksColor)
   self.frame.noStacksBarColorWrap.label:SetShown(showNoStacksColor)
@@ -2225,12 +2458,13 @@ function Panel:Refresh(aura)
   self.frame.readyColorWrap.valueText:SetShown(showReadyStateOptions)
   self.frame.showReadyTextCheck:SetShown(showReadyStateOptions and supportsReadyText
     and aura.display.showTimer == true)
-  self.frame.barTextureWrap.label:SetShown(not isGroup and not isText and not isNameplateAura)
-  self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText and not isNameplateAura)
-  self.frame.showBackgroundCheck:SetShown(true)
-  self.frame.backgroundColorWrap.label:SetShown(true)
-  self.frame.backgroundColorWrap.button:SetShown(true)
-  self.frame.backgroundColorWrap.valueText:SetShown(true)
+  self.frame.barTextureWrap.label:SetShown(not isGroup and not isText and not isIconAura and not isNameplateAura)
+  self.frame.barTextureWrap.dropdown:SetShown(not isGroup and not isText and not isIconAura and not isNameplateAura)
+  local showBackgroundControls = not isIconAura or isNameplateAura
+  self.frame.showBackgroundCheck:SetShown(showBackgroundControls)
+  self.frame.backgroundColorWrap.label:SetShown(showBackgroundControls)
+  self.frame.backgroundColorWrap.button:SetShown(showBackgroundControls)
+  self.frame.backgroundColorWrap.valueText:SetShown(showBackgroundControls)
   self.frame.backgroundGammaWrap.label:SetShown(isAuraBarList)
   self.frame.backgroundGammaWrap.input:SetShown(isAuraBarList)
   self.frame.permanentAlphaWrap.label:SetShown(isAuraBarList)
@@ -2247,14 +2481,14 @@ function Panel:Refresh(aura)
   self.frame.hideCDMIconCheck:SetShown(not isAuraBarList and not isGroup and not isText and not isNameplateAura)
   self.frame.altIconIdWrap.label:SetShown(not isAuraBarList and not isGroup and not isText and not isNameplateAura)
   self.frame.altIconIdWrap.input:SetShown(not isAuraBarList and not isGroup and not isText and not isNameplateAura)
-  self.frame.iconSizeWrap.label:SetShown(not isNameplateAura)
-  self.frame.iconSizeWrap.input:SetShown(not isNameplateAura)
-  self.frame.iconAnchorWrap.label:SetShown(not isNameplateAura)
-  self.frame.iconAnchorWrap.dropdown:SetShown(not isNameplateAura)
-  self.frame.iconXWrap.label:SetShown(not isNameplateAura)
-  self.frame.iconXWrap.input:SetShown(not isNameplateAura)
-  self.frame.iconYWrap.label:SetShown(not isNameplateAura)
-  self.frame.iconYWrap.input:SetShown(not isNameplateAura)
+  self.frame.iconSizeWrap.label:SetShown(not isIconAura and not isNameplateAura)
+  self.frame.iconSizeWrap.input:SetShown(not isIconAura and not isNameplateAura)
+  self.frame.iconAnchorWrap.label:SetShown(not isIconAura and not isNameplateAura)
+  self.frame.iconAnchorWrap.dropdown:SetShown(not isIconAura and not isNameplateAura)
+  self.frame.iconXWrap.label:SetShown(not isIconAura and not isNameplateAura)
+  self.frame.iconXWrap.input:SetShown(not isIconAura and not isNameplateAura)
+  self.frame.iconYWrap.label:SetShown(not isIconAura and not isNameplateAura)
+  self.frame.iconYWrap.input:SetShown(not isIconAura and not isNameplateAura)
   self.frame.iconHint:SetShown(not isAuraBarList and not isGroup and not isText)
   if isNameplateAura then
     self.frame.iconHint:SetText(
@@ -2317,7 +2551,7 @@ function Panel:Refresh(aura)
     Theme.UpdateToggle(toggle)
   end
 
-  self:ApplyCanvasLayout(isGroup, isNameplateAura)
+  self:ApplyCanvasLayout(isGroup, isNameplateAura, isIconAura, trigger.type == "death_alert")
   self:SetActiveSection(self.frame.activeSectionKey or "canvas")
   self:UpdateControlStates()
   self.suppressUpdates = false
