@@ -286,8 +286,35 @@ function Export:BuildPayload(auraIds)
   return payload
 end
 
+local function ComputeFingerprint(value)
+  local text = SerializeValue(value)
+  local hash = 5381
+  local second = 0
+  for index = 1, #text do
+    local byte = string.byte(text, index)
+    hash = ((hash * 33) + byte) % 4294967291
+    second = ((second * 65599) + byte) % 4294967279
+  end
+  return string.format("%08x%08x:%d", hash, second, #text)
+end
+
+function Export:EncodePayload(payload)
+  local serialized = "return " .. SerializeValue(payload or {})
+  return ns.Constants.EXPORT_PREFIX .. Strings.Base64Encode(serialized)
+end
+
+function Export:GetPayloadAuraFingerprint(payload, auraId)
+  local aura = payload and payload.auras and payload.auras[auraId] or nil
+  return aura and ComputeFingerprint(aura) or nil
+end
+
+function Export:PayloadAurasEqual(leftPayload, rightPayload, auraId)
+  local left = leftPayload and leftPayload.auras and leftPayload.auras[auraId] or nil
+  local right = rightPayload and rightPayload.auras and rightPayload.auras[auraId] or nil
+  return left ~= nil and right ~= nil and SerializeValue(left) == SerializeValue(right)
+end
+
 function Export:Encode(auraIds)
   local payload = self:BuildPayload(auraIds)
-  local serialized = "return " .. SerializeValue(payload)
-  return ns.Constants.EXPORT_PREFIX .. Strings.Base64Encode(serialized), payload
+  return self:EncodePayload(payload), payload
 end

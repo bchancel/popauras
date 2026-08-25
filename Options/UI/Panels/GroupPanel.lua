@@ -12,7 +12,7 @@ function Panel:Create(parent)
     fillHeight = true,
   })
 
-  frame.info = Frames.CreateLabel(frame, "Static and dynamic groups preserve manual child order in V1.", "GameFontHighlight")
+  frame.info = Frames.CreateLabel(frame, "Groups reserve every configured slot. Dynamic Groups collapse hidden children and keep the remaining children in configured order.", "GameFontHighlight")
   frame.info:SetPoint("TOPLEFT", 16, -20)
 
   frame.upButton = Frames.CreateButton(frame, "Move Up", 100, 22, function()

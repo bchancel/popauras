@@ -24,7 +24,7 @@ end
 function provider:Evaluate(trigger)
   local mode = trigger.mode or "always"
   local active = false
-  local name = trigger.label or "Simple"
+  local name = trigger.label or "Basic State"
   local status = mode
 
   if mode == "always" then

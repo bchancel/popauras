@@ -40,13 +40,17 @@ Bootstrap:SetScript("OnEvent", function(_, event, addonName)
   end
   ns.Slash:Initialize()
   ns.runtime:RefreshAll()
-  if ns.ShareLinks and ns.ShareLinks.Initialize then
-    if C_Timer and C_Timer.After then
-      C_Timer.After(0, function()
-        ns.ShareLinks:Initialize()
-      end)
-    else
+  local function InitializeSharing()
+    if ns.ShareLinks and ns.ShareLinks.Initialize then
       ns.ShareLinks:Initialize()
     end
+    if ns.AccountSync and ns.AccountSync.Initialize then
+      ns.AccountSync:Initialize()
+    end
+  end
+  if C_Timer and C_Timer.After then
+    C_Timer.After(0, InitializeSharing)
+  else
+    InitializeSharing()
   end
 end)

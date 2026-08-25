@@ -135,8 +135,8 @@ function Debug:ApplyWindowState()
     frame:SetHeight(frame.collapsedHeight or 30)
     frame.minimize:SetText("+")
   else
-    frame:SetWidth(frame.expandedWidth or 560)
-    frame:SetHeight(frame.expandedHeight or 300)
+    frame:SetWidth(frame.expandedWidth or 440)
+    frame:SetHeight(frame.expandedHeight or 240)
     frame.title:Show()
     frame.scroll:Show()
     frame.copy:Show()
@@ -170,13 +170,13 @@ function Debug:CreateWindow()
   end
 
   local frame = CreateFrame("Frame", "PopAurasDebugWindow", UIParent, "BackdropTemplate")
-  frame.expandedWidth = 560
-  frame.expandedHeight = 300
+  frame.expandedWidth = 440
+  frame.expandedHeight = 240
   frame.collapsedWidth = 112
   frame.collapsedHeight = 30
   frame.minimized = false
   frame:SetSize(frame.expandedWidth, frame.expandedHeight)
-  frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  frame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -24, -194)
   frame:SetFrameStrata("TOOLTIP")
   frame:SetFrameLevel(2000)
   frame:SetToplevel(true)
@@ -255,7 +255,7 @@ function Debug:CreateWindow()
   frame.editBox:SetMultiLine(true)
   frame.editBox:SetAutoFocus(false)
   frame.editBox:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 11, "")
-  frame.editBox:SetWidth(490)
+  frame.editBox:SetWidth(370)
   frame.editBox:SetTextInsets(4, 4, 4, 4)
   frame.editBox:SetScript("OnEscapePressed", function(self)
     self:ClearFocus()

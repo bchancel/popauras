@@ -10,7 +10,7 @@ function ns.Features:IsEnabled(featureName)
 end
 
 ns.Constants = {
-  DB_VERSION = 5,
+  DB_VERSION = 6,
   EXPORT_VERSION = 1,
   EXPORT_PREFIX = "POPAURAS:1:",
   AURA_KINDS = {

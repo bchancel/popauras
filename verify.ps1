@@ -39,9 +39,9 @@ $optionsTocText = Get-Content -LiteralPath $optionsToc -Raw
 if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
     throw "PopAuras.toc is not targeting PTR interface 120100"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.8\s*$' -or
-    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.8\s*$') {
-    throw "Core and options metadata are not aligned to release 12.1.8"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.9\s*$' -or
+    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.9\s*$') {
+    throw "Core and options metadata are not aligned to release 12.1.9"
 }
 if ($optionsTocText -notmatch '(?m)^## LoadOnDemand:\s*1\s*$' -or
     $optionsTocText -notmatch '(?m)^## Dependencies:\s*PopAuras\s*$') {
@@ -544,8 +544,16 @@ if ($nameplateAuraRegionText -notmatch 'filters\.isStealable' -or
 }
 
 $layoutsText = Get-Content -LiteralPath (Join-Path $root "Renderers\Layouts.lua") -Raw
-if ($layoutsText -notmatch 'layoutVisible') {
-    throw "Group layout cannot exclude disabled native aura regions without hiding forbidden frames"
+if ($layoutsText -notmatch 'layoutVisible' -or
+    $layoutsText -notmatch 'reserveConfiguredSlot\s*=\s*aura\.kind\s*==\s*"group"') {
+    throw "Group layout does not distinguish fixed Group slots from explicit Dynamic Group visibility"
+}
+$iconRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\IconRegion.lua") -Raw
+$textRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\TextRegion.lua") -Raw
+foreach ($ordinaryRegionText in @($barRegionText, $iconRegionText, $textRegionText)) {
+    if ($ordinaryRegionText -notmatch 'self\.layoutVisible\s*=\s*state\s+and\s+state\.show\s*==\s*true') {
+        throw "An ordinary child renderer does not publish explicit Dynamic Group layout visibility"
+    }
 }
 
 $groupRegionText = Get-Content -LiteralPath (Join-Path $root "Renderers\GroupRegion.lua") -Raw
@@ -672,10 +680,15 @@ foreach ($label in @('Trinket 1 (Top)', 'Trinket 2 (Bottom)')) {
         throw "Dual trinket sound UI is missing '$label'"
     }
 }
-if ($displayPanelText -notmatch 'function Panel:SetActiveSection' -or
-    $displayPanelText -notmatch 'frame\.sectionTabs' -or
-    $displayPanelText -notmatch 'Theme\.StyleTab') {
-    throw "Display configuration does not use the contained secondary tab menu"
+if ($displayPanelText -notmatch 'ApplyTwoColumnSettingsGrid' -or
+    $displayPanelText -notmatch 'settingsGridCells' -or
+    $displayPanelText -notmatch 'Theme\.SetTexture\(cell, "canvasAlt"\)' -or
+    $displayPanelText -notmatch 'cell:SetSize\(cellWidth, 48\)' -or
+    $displayPanelText -notmatch 'section\.insetLeft = 22' -or
+    $displayPanelText -notmatch 'cellGap = 2' -or
+    $displayPanelText -notmatch 'math\.floor\(\(index - 1\) / 2\)' -or
+    $displayPanelText -notmatch 'column = \(index - 1\) % 2') {
+    throw "Display configuration does not use a strict two-column settings grid"
 }
 if ($displayPanelText -notmatch 'frame\.summary:Hide\(\)' -or
     $displayPanelText -notmatch 'frame\.hint:Hide\(\)' -or
@@ -774,6 +787,7 @@ if ($displayPanelText -match 'showAuraWindow|Show CDM aura/proc' -or
 }
 $loadPanelText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\Panels\LoadPanel.lua") -Raw
 if ($loadPanelText -notmatch '"Instance Information"' -or
+    $loadPanelText -notmatch 'instanceInfoRoot:Show\(\)' -or
     $loadPanelText -notmatch 'GetInstanceInfo' -or
     $loadPanelText -notmatch 'C_EncounterJournal\.GetInstanceForGameMap' -or
     $loadPanelText -notmatch 'EJ_GetEncounterInfoByIndex' -or
@@ -781,6 +795,22 @@ if ($loadPanelText -notmatch '"Instance Information"' -or
     $loadPanelText -notmatch 'resolvedDungeonEncounterID' -or
     $loadPanelText -notmatch 'ZONE_CHANGED_NEW_AREA') {
     throw "Load configuration is missing live instance and runtime encounter ID information"
+$savedLoadoutCreateIndex = $loadPanelText.IndexOf('frame.savedLoadoutModeDropDown = Frames.CreateDropdown')
+$savedLoadoutWidthIndex = $loadPanelText.IndexOf('UIDropDownMenu_SetWidth(frame.savedLoadoutModeDropDown')
+if ($savedLoadoutCreateIndex -lt 0 -or $savedLoadoutWidthIndex -lt $savedLoadoutCreateIndex) {
+    throw "Load configuration styles the Talent Layout dropdown before creating it"
+}
+if ($loadPanelText -notmatch 'frame\.loadDetails' -or
+    $loadPanelText -notmatch 'CreateInlineCells\("generalInline"' -or
+    $loadPanelText -notmatch 'CreateInlineCells\("visibilityInline",\s*-224,\s*8,\s*4\)' -or
+    $loadPanelText -notmatch 'math\.ceil\(#CLASS_ORDER / 4\)' -or
+    $loadPanelText -notmatch 'frame\.classCells' -or
+    $loadPanelText -notmatch 'frame\.talentGear' -or
+    $loadPanelText -notmatch 'frame\.savedLoadoutEnabledCheck' -or
+    $loadPanelText -notmatch 'aura\.load\.savedLoadoutMode = "any"') {
+    throw "Load configuration no longer exposes its compact General, Visibility, Class, and Talent controls"
+}
+
 }
 if ($spellCooldownText -notmatch 'noCharges\s*=\s*chargeStateKnown and outOfCharges' -or
     $schemaText -notmatch 'state\.noCharges\s*=\s*SafeBoolean' -or
@@ -829,7 +859,7 @@ if ($triggerPanelText -notmatch 'Spell Cast Event') {
 
 $constantsText = Get-Content -LiteralPath (Join-Path $root "Core\Constants.lua") -Raw
 $migrationText = Get-Content -LiteralPath (Join-Path $root "Data\Migration.lua") -Raw
-if ($constantsText -notmatch 'DB_VERSION\s*=\s*5' -or
+if ($constantsText -notmatch 'DB_VERSION\s*=\s*6' -or
     $migrationText -notmatch 'aura\.kind\s*==\s*"communication"' -or
     $migrationText -notmatch 'action\.type\s*~=\s*"send_chat_message"') {
     throw "Removed Communication auras do not have a saved-variable migration"
@@ -1067,6 +1097,45 @@ $baseLuaBytes = Get-TocLuaByteCount -TocPath $toc -BasePath $root
 $optionsLuaBytes = Get-TocLuaByteCount -TocPath $optionsToc -BasePath $optionsRoot
 if (($optionsLuaBytes / ($baseLuaBytes + $optionsLuaBytes)) -lt 0.40) {
     throw "The load-on-demand editor split defers less than the audited 40% startup target"
+}
+
+$accountSyncPath = Join-Path $root "Core\AccountSync.lua"
+$accountSyncWindowPath = Join-Path $optionsRoot "UI\AccountSyncWindow.lua"
+if (-not (Test-Path -LiteralPath $accountSyncPath) -or
+    -not (Test-Path -LiteralPath $accountSyncWindowPath) -or
+    $tocText -notmatch 'Core\\AccountSync\.lua' -or
+    $optionsTocText -notmatch 'UI\\AccountSyncWindow\.lua') {
+    throw "Account sync is not fully packaged in the base and options addons"
+}
+$accountSyncText = Get-Content -LiteralPath $accountSyncPath -Raw
+$accountSyncWindowText = Get-Content -LiteralPath $accountSyncWindowPath -Raw
+$shareLinksText = Get-Content -LiteralPath (Join-Path $root "Core\ShareLinks.lua") -Raw
+$slashText = Get-Content -LiteralPath (Join-Path $root "Core\Slash.lua") -Raw
+$syncExportText = Get-Content -LiteralPath (Join-Path $root "Data\Export.lua") -Raw
+if ($syncExportText -notmatch 'GetPayloadAuraFingerprint' -or
+    $syncExportText -notmatch 'function Export:PayloadAurasEqual' -or
+    $accountSyncText -notmatch 'function AccountSync:BuildManifest' -or
+    $accountSyncText -notmatch 'syncManifest = PROTOCOL_VERSION' -or
+    $accountSyncText -notmatch 'BuildSelectedPayload' -or
+    $accountSyncText -notmatch 'SYNCR_' -or
+    $accountSyncText -notmatch 'SYNCP_' -or
+    $accountSyncText -match 'SendSnapshot|remotePayload' -or
+    $accountSyncText -notmatch 'missingPayload' -or
+    $accountSyncText -notmatch 'AddAncestors' -or
+    $accountSyncText -notmatch 'ImportSelected' -or
+    $accountSyncText -notmatch 'IgnoreRequest' -or
+    $accountSyncWindowText -notmatch 'Select All' -or
+    $accountSyncWindowText -notmatch 'Select None' -or
+    $accountSyncWindowText -notmatch 'Sync Selected' -or
+    $shareLinksText -notmatch 'AccountSync:IsIgnored\(sender\)' -or
+    $shareLinksText -notmatch 'AccountSync:HandleSnapshot' -or
+    $shareLinksText -notmatch 'SEND_INTERVAL = 0\.04' -or
+    $shareLinksText -notmatch 'tostring\(shareKey or ""\):match\("\^SYNC"\)' -or
+    $slashText -notmatch 'msg == "account sync"' -or
+    $slashText -notmatch 'AccountSync:IgnorePlayer' -or
+    $slashText -notmatch 'AccountSync:UnignorePlayer' -or
+    $defaultsText -notmatch 'ignoredPlayers\s*=\s*\{\}') {
+    throw "Account sync, selective import, or sharing-ignore safeguards are incomplete"
 }
 
 & (Join-Path $root "deploy.ps1") -WhatIf

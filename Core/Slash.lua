@@ -182,6 +182,9 @@ local function GetHelpLines()
   return {
     "PopAuras commands:",
     "/pa - toggle the main window",
+    "/pa account sync - compare and selectively copy auras with another online account",
+    "/pa ignore <Name-Realm> - block account-sync and aura-share traffic from that player",
+    "/pa unignore <Name-Realm> - allow PopAuras sharing with that player again",
     "/pa help - show this command list",
     "/pa debug - open the debug window",
     "/pa memory - print memory and cache stats",
@@ -258,9 +261,9 @@ local function RefreshPerfOverlay()
 
   if frame.subtitle then
     if running then
-      frame.subtitle:SetText("Capture is running. Click the button again to stop and open a copyable report.")
+      frame.subtitle:SetText("Capturing. Click Stop to open the report.")
     else
-      frame.subtitle:SetText("Click to clear old samples and start a fresh capture. Drag the frame to move it.")
+      frame.subtitle:SetText("Drag this window. Capture only while diagnosing.")
     end
   end
 end
@@ -271,8 +274,8 @@ local function EnsurePerfOverlay()
   end
 
   local frame = CreateFrame("Frame", "PopAurasPerfOverlay", UIParent, "BackdropTemplate")
-  frame:SetSize(460, 120)
-  frame:SetPoint("TOP", UIParent, "TOP", 0, -170)
+  frame:SetSize(320, 94)
+  frame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -24, -80)
   frame:SetFrameStrata("DIALOG")
   frame:SetBackdrop({
     bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -284,17 +287,22 @@ local function EnsurePerfOverlay()
   frame:Hide()
   ns.util.Frames.MakeMovable(frame)
 
-  frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  frame.title:SetPoint("TOP", 0, -12)
+  frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  frame.title:SetPoint("TOPLEFT", 12, -10)
   frame.title:SetText("PopAuras Performance")
 
+  frame.close = ns.util.Frames.CreateButton(frame, "x", 22, 20, function()
+    frame:Hide()
+  end)
+  frame.close:SetPoint("TOPRIGHT", -7, -6)
+
   frame.subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  frame.subtitle:SetPoint("TOP", frame.title, "BOTTOM", 0, -8)
-  frame.subtitle:SetWidth(420)
-  frame.subtitle:SetJustifyH("CENTER")
+  frame.subtitle:SetPoint("TOPLEFT", frame.title, "BOTTOMLEFT", 0, -5)
+  frame.subtitle:SetPoint("RIGHT", frame, "RIGHT", -12, 0)
+  frame.subtitle:SetJustifyH("LEFT")
   frame.subtitle:SetTextColor(0.82, 0.88, 0.96)
 
-  frame.button = ns.util.Frames.CreateButton(frame, "PopAuras Performance: Start", 400, 52, function()
+  frame.button = ns.util.Frames.CreateButton(frame, "Start Performance Capture", 288, 30, function()
     if ns.Profiler and ns.Profiler.IsEnabled and ns.Profiler:IsEnabled() then
       StopPerfCapture()
     else
@@ -302,9 +310,9 @@ local function EnsurePerfOverlay()
     end
     RefreshPerfOverlay()
   end)
-  frame.button:SetPoint("BOTTOM", 0, 16)
+  frame.button:SetPoint("BOTTOM", 0, 9)
   if frame.button.Text then
-    ns.util.Fonts.Apply(frame.button.Text, 16, "OUTLINE")
+    ns.util.Fonts.Apply(frame.button.Text, 12, "OUTLINE")
   end
 
   frame.elapsedSinceUpdate = 0
@@ -356,6 +364,52 @@ local function HandleSlashCommand(msg)
     WriteChatLines(GetHelpLines())
     return
   end
+  if msg == "account sync" then
+    if not (ns.AccountSync and ns.AccountSync.OpenTargetPrompt) then
+      WriteChatLine("PopAuras account sync is unavailable.")
+      return
+    end
+    local ok, reason = ns.AccountSync:OpenTargetPrompt()
+    if not ok then
+      WriteChatLine(string.format("|cffff4444PopAuras:|r Could not open account sync: %s", tostring(reason)))
+    end
+    return
+  end
+  if msg == "account" or msg:find("^account%s") then
+    WriteChatLine("Usage: /pa account sync")
+    return
+  end
+  if msg == "ignore" or msg:find("^ignore%s") then
+    local playerName = rawMsg:match("^%S+%s+(.+)$") or ""
+    if not (ns.AccountSync and ns.AccountSync.IgnorePlayer) then
+      WriteChatLine("PopAuras sharing ignores are unavailable.")
+      return
+    end
+    local ok, result = ns.AccountSync:IgnorePlayer(playerName)
+    if ok then
+      WriteChatLine(string.format("|cff66ccffPopAuras:|r Ignoring account sync and aura shares from %s.", result))
+    else
+      WriteChatLine("Usage: /pa ignore <Name-Realm>")
+      if result then WriteChatLine(tostring(result)) end
+    end
+    return
+  end
+  if msg == "unignore" or msg:find("^unignore%s") then
+    local playerName = rawMsg:match("^%S+%s+(.+)$") or ""
+    if not (ns.AccountSync and ns.AccountSync.UnignorePlayer) then
+      WriteChatLine("PopAuras sharing ignores are unavailable.")
+      return
+    end
+    local existed, normalized = ns.AccountSync:UnignorePlayer(playerName)
+    if normalized and normalized ~= "" then
+      WriteChatLine(string.format("|cff66ccffPopAuras:|r %s %s on your sharing ignore list.",
+        normalized, existed and "is no longer" or "was not"))
+    else
+      WriteChatLine("Usage: /pa unignore <Name-Realm>")
+    end
+    return
+  end
+
   if msg == "cddebug" or msg:find("^cddebug%s") then
     local provider = ns.providers and ns.providers.spell_cooldown or nil
     if not provider then

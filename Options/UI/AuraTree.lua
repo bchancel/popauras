@@ -19,6 +19,20 @@ AuraTree.dragMoved = false
 local DEBUG_OUTLINE_COLOR = { 0.92, 0.24, 0.22, 0.98 }
 local PREVIEW_OUTLINE_COLOR = { 0.24, 0.84, 0.38, 0.98 }
 
+local TRIGGER_TYPE_LABELS = {
+  simple = "basic state",
+  aura = "aura",
+  spell_cooldown = "spell cooldown",
+  item_cooldown = "item cooldown",
+  trinket_cooldown = "trinket cooldown",
+  cast = "cast / channel",
+  spell_cast_event = "spell cast event",
+  chat = "chat",
+  timer = "internal timer",
+  death_alert = "death alert",
+  aura_list = "buffs and debuffs",
+}
+
 local function ShowTooltip(owner, title, body)
   GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
   GameTooltip:SetText(title)
@@ -153,6 +167,18 @@ end
 local function GetAuraKindLabel(aura)
   local kind = aura and tostring(aura.kind or "") or ""
   kind = kind:gsub("_", " ")
+
+  if kind == "group" or kind == "dynamic group" then
+    return kind
+  end
+
+  local trigger = aura and type(aura.triggers) == "table" and aura.triggers[1] or nil
+  local triggerType = trigger and trigger.type or nil
+  local triggerLabel = triggerType and TRIGGER_TYPE_LABELS[triggerType] or nil
+  if triggerLabel then
+    return string.format("%s - %s", kind, triggerLabel)
+  end
+
   return kind
 end
 

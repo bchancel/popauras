@@ -8,8 +8,7 @@ ns.renderers.GroupRegion = GroupRegion
 
 local function IsRegionLayoutVisible(region)
   if not region or not region.frame then return false end
-  if region.layoutVisible ~= nil then return region.layoutVisible == true end
-  return region.frame:IsShown()
+  return region.layoutVisible == true
 end
 
 local function AppendLayoutRegions(target, region)

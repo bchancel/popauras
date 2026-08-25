@@ -291,6 +291,8 @@ end
 
 local function CreateSection(parent, title, y, height)
   return Frames.CreateSectionCard(parent, title, y, height, {
+    showHeader = true,
+    showRows = true,
     chevron = true,
     bodyDivider = true,
     titleInset = 14,
@@ -622,7 +624,7 @@ local function GetBlizzardSpellAlertHint(aura)
     local liveName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellId) or nil
     local label = spellName ~= "" and spellName or liveName or ("Spell ID " .. tostring(spellId))
     return string.format(
-      "|cff88ff88Suppressing Blizzard spell alert:|r %s (%d)\n|cffaaaaaaThis override applies from load rules even if the aura itself never shows. Use a Simple trigger set to Never if you want a controller-only aura.|r",
+      "|cff88ff88Suppressing Blizzard spell alert:|r %s (%d)\n|cffaaaaaaThis override applies from load rules even if the aura itself never shows. Use a Basic State trigger set to Never if you want a controller-only aura.|r",
       label,
       spellId
     )
@@ -630,12 +632,12 @@ local function GetBlizzardSpellAlertHint(aura)
 
   if spellName ~= "" then
     return string.format(
-      "|cffff8888Spell alert target unresolved:|r %s\n|cffaaaaaaEnter a spell name from your spellbook or a numeric spell ID. If this proc also exists as a player buff, trigger it once while the editor is open and PopAuras can learn the spell ID from your current aura. Use a Simple trigger set to Never if you want this aura to stay hidden and act only as a controller.|r",
+      "|cffff8888Spell alert target unresolved:|r %s\n|cffaaaaaaEnter a spell name from your spellbook or a numeric spell ID. If this proc also exists as a player buff, trigger it once while the editor is open and PopAuras can learn the spell ID from your current aura. Use a Basic State trigger set to Never if you want this aura to stay hidden and act only as a controller.|r",
       spellName
     )
   end
 
-  return "|cffaaaaaaSelect a spell name or spell ID to suppress that Blizzard spell alert while this aura is loaded. This override applies from load rules even if the aura itself never shows. Use a Simple trigger set to Never if you want a hidden controller-only aura.|r"
+  return "|cffaaaaaaSelect a spell name or spell ID to suppress that Blizzard spell alert while this aura is loaded. This override applies from load rules even if the aura itself never shows. Use a Basic State trigger set to Never if you want a hidden controller-only aura.|r"
 end
 
 function Panel:GetSelectedAura()
@@ -999,6 +1001,12 @@ function Panel:ApplyCurrent()
 
   aura.display.width = widthValue
   aura.display.height = heightValue
+  if frame.widthSlider and frame.heightSlider then
+    frame._popAurasSyncingSliders = true
+    frame.widthSlider:SetValue(math.max(20, math.min(1000, widthValue)))
+    frame.heightSlider:SetValue(math.max(4, math.min(300, heightValue)))
+    frame._popAurasSyncingSliders = false
+  end
   aura.position.width = aura.display.width
   aura.position.height = aura.display.height
   if aura.kind == "group" or aura.kind == "dynamic_group" then
@@ -1215,9 +1223,644 @@ end
 function Panel:WireLiveCheckbox(check, onApply)
   check:SetScript("OnClick", function()
     onApply()
+    local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+    if aura then
+      Panel:Refresh(aura)
+    end
   end)
 end
 
+local function GetEditedAura()
+  return ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+end
+
+local function SetLabeledInputShown(widget, shown)
+  if not widget then return end
+  widget.label:SetShown(shown)
+  widget.input:SetShown(shown)
+end
+
+local function SetLabeledDropdownShown(widget, shown)
+  if not widget then return end
+  widget.label:SetShown(shown)
+  widget.dropdown:SetShown(shown)
+end
+
+local function SetColorWidgetShown(widget, shown)
+  if not widget then return end
+  widget.label:SetShown(shown)
+  widget.button:SetShown(shown)
+  widget.valueText:SetShown(false)
+end
+
+local function CreateDisplayGearControls(frame)
+  local function Apply()
+    Panel:ApplyCurrent()
+  end
+
+  frame.anchorGear = Frames.CreateGearButton(frame.canvasSection, "Attachment points and offsets")
+  frame.anchorPopover = Frames.CreateSettingsPopover({
+    title = "Anchor Details",
+    width = 330,
+    onChanged = Apply,
+    rows = {
+      {
+        type = "dropdown", label = "Frame Point", values = Anchors.GetPointList,
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.position and aura.position.point or "CENTER"
+        end,
+        set = function(value) SetDropdown(frame.framePointWrap.dropdown, value) end,
+      },
+      {
+        type = "dropdown", label = "Parent Point", values = Anchors.GetPointList,
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.position and aura.position.relativePoint or "CENTER"
+        end,
+        set = function(value) SetDropdown(frame.parentPointWrap.dropdown, value) end,
+      },
+      {
+        type = "input", label = "Offset X",
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.position and aura.position.x or 0
+        end,
+        set = function(value) frame.xWrap.input:SetText(tostring(value or 0)) end,
+      },
+      {
+        type = "input", label = "Offset Y",
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.position and aura.position.y or 0
+        end,
+        set = function(value) frame.yWrap.input:SetText(tostring(value or 0)) end,
+      },
+    },
+  })
+  frame.anchorGear:SetScript("OnClick", function() frame.anchorPopover:ShowFor(frame.anchorGear) end)
+
+  frame.layerGear = Frames.CreateGearButton(frame.canvasSection, "Adjust the frame level within this strata")
+  frame.layerPopover = Frames.CreateSettingsPopover({
+    title = "Layer Details",
+    width = 300,
+    onChanged = Apply,
+    rows = {
+      {
+        type = "input", label = "Frame Level",
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.display and aura.display.frameLevel or 1
+        end,
+        set = function(value) frame.levelWrap.input:SetText(tostring(value or 1)) end,
+      },
+    },
+  })
+  frame.layerGear:SetScript("OnClick", function() frame.layerPopover:ShowFor(frame.layerGear) end)
+
+  frame.glowGear = Frames.CreateGearButton(frame.canvasSection, "Choose the active glow type and color")
+  frame.glowPopover = Frames.CreateSettingsPopover({
+    title = "Active Glow",
+    width = 320,
+    onChanged = Apply,
+    rows = {
+      {
+        type = "dropdown", label = "Glow Type", values = activeGlowStyleValues,
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.display and aura.display.activeGlowStyle or "INNER_GLOW"
+        end,
+        set = function(value) SetDropdown(frame.activeGlowStyleWrap.dropdown, value) end,
+      },
+      {
+        type = "color", label = "Glow Color",
+        disabled = function()
+          local aura = GetEditedAura()
+          return aura and aura.display and aura.display.activeGlowStyle == "ACTIVE_DURATION"
+        end,
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.display and aura.display.activeGlowColor
+            or { r = 1.00, g = 0.82, b = 0.08, a = 1 }
+        end,
+        set = function(r, g, b, a)
+          SetColorSwatch(frame.activeGlowColorWrap, { r = r, g = g, b = b, a = a })
+        end,
+      },
+    },
+  })
+  frame.glowGear:SetScript("OnClick", function() frame.glowPopover:ShowFor(frame.glowGear) end)
+
+  frame.readyGear = Frames.CreateGearButton(frame.canvasSection, "Configure the ready appearance")
+  frame.readyPopover = Frames.CreateSettingsPopover({
+    title = "Ready Appearance", width = 320, onChanged = Apply,
+    rows = {
+      {
+        type = "color", label = "Ready Color",
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.display and aura.display.readyColor
+            or { r = 0.16, g = 0.72, b = 0.26, a = 1 }
+        end,
+        set = function(r, g, b, a)
+          SetColorSwatch(frame.readyColorWrap, { r = r, g = g, b = b, a = a })
+        end,
+      },
+      {
+        type = "toggle", label = "Show Ready Text",
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.display and aura.display.hideReadyTimer ~= true
+        end,
+        set = function(value) frame.showReadyTextCheck:SetChecked(value == true) end,
+      },
+    },
+  })
+  frame.readyGear:SetScript("OnClick", function() frame.readyPopover:ShowFor(frame.readyGear) end)
+
+  frame.backgroundGear = Frames.CreateGearButton(frame.canvasSection, "Choose the background color")
+  frame.backgroundPopover = Frames.CreateSettingsPopover({
+    title = "Background", width = 320, onChanged = Apply,
+    rows = {
+      {
+        type = "color", label = "Background Color",
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.display and aura.display.backgroundColor
+            or { r = 0, g = 0, b = 0, a = 0.45 }
+        end,
+        set = function(r, g, b, a)
+          SetColorSwatch(frame.backgroundColorWrap, { r = r, g = g, b = b, a = a })
+        end,
+      },
+    },
+  })
+  frame.backgroundGear:SetScript("OnClick", function() frame.backgroundPopover:ShowFor(frame.backgroundGear) end)
+
+  frame.noStacksGear = Frames.CreateGearButton(frame.canvasSection, "Choose the out-of-stacks color")
+  frame.noStacksPopover = Frames.CreateSettingsPopover({
+    title = "Out-of-Stacks", width = 320, onChanged = Apply,
+    rows = {
+      {
+        type = "color", label = "Bar Color",
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.display and aura.display.noStacksBarColor
+            or { r = 0.86, g = 0.18, b = 0.18, a = 1 }
+        end,
+        set = function(r, g, b, a)
+          SetColorSwatch(frame.noStacksBarColorWrap, { r = r, g = g, b = b, a = a })
+        end,
+      },
+    },
+  })
+  frame.noStacksGear:SetScript("OnClick", function() frame.noStacksPopover:ShowFor(frame.noStacksGear) end)
+
+  local function CreateTextGear(section, controls, prefix, title, includeAlternateName, includeDecimals)
+    local gear = Frames.CreateGearButton(section, "Configure " .. string.lower(title))
+    local rows = {}
+    if includeAlternateName then
+      rows[#rows + 1] = {
+        type = "input", label = "Alternative Name", width = 160,
+        get = function()
+          local aura = GetEditedAura()
+          return aura and aura.text and aura.text.nameOverride or ""
+        end,
+        set = function(value) controls.altNameWrap.input:SetText(tostring(value or "")) end,
+      }
+    end
+    rows[#rows + 1] = {
+      type = "dropdown", label = "Font", values = fontStyleValues,
+      get = function()
+        local aura = GetEditedAura()
+        return aura and aura.display and aura.display[prefix .. "FontStyle"] or "FRIZQT"
+      end,
+      set = function(value) SetDropdown(controls.fontWrap.dropdown, value) end,
+    }
+    rows[#rows + 1] = {
+      type = "input", label = "Font Size",
+      get = function()
+        local aura = GetEditedAura()
+        return aura and aura.display and aura.display[prefix .. "FontSize"] or 12
+      end,
+      set = function(value) controls.sizeWrap.input:SetText(tostring(value or 12)) end,
+    }
+    rows[#rows + 1] = {
+      type = "dropdown", label = "Anchor", values = textAnchorValues,
+      get = function()
+        local aura = GetEditedAura()
+        return aura and aura.display and aura.display[prefix .. "Anchor"] or "CENTER"
+      end,
+      set = function(value) SetDropdown(controls.anchorWrap.dropdown, value) end,
+    }
+    rows[#rows + 1] = {
+      type = "dropdown", label = "Rotation", values = textRotationValues,
+      get = function()
+        local aura = GetEditedAura()
+        return tostring(aura and aura.display and aura.display[prefix .. "Rotation"] or 0)
+      end,
+      set = function(value) SetDropdown(controls.rotationWrap.dropdown, tostring(value or 0)) end,
+    }
+    rows[#rows + 1] = {
+      type = "input", label = "Offset X",
+      get = function()
+        local aura = GetEditedAura()
+        return aura and aura.display and aura.display[prefix .. "OffsetX"] or 0
+      end,
+      set = function(value) controls.xWrap.input:SetText(tostring(value or 0)) end,
+    }
+    rows[#rows + 1] = {
+      type = "input", label = "Offset Y",
+      get = function()
+        local aura = GetEditedAura()
+        return aura and aura.display and aura.display[prefix .. "OffsetY"] or 0
+      end,
+      set = function(value) controls.yWrap.input:SetText(tostring(value or 0)) end,
+    }
+    if includeDecimals then
+      rows[#rows + 1] = {
+        type = "dropdown", label = "Decimals", values = { "0", "1", "2" },
+        get = function()
+          local aura = GetEditedAura()
+          return tostring(aura and aura.display and aura.display.timerDecimals or 1)
+        end,
+        set = function(value) SetDropdown(controls.decimalsWrap.dropdown, tostring(value or 1)) end,
+      }
+    end
+    rows[#rows + 1] = {
+      type = "color", label = "Text Color",
+      get = function()
+        local aura = GetEditedAura()
+        return aura and aura.display and aura.display[prefix .. "Color"]
+          or { r = 1, g = 1, b = 1, a = 1 }
+      end,
+      set = function(r, g, b, a)
+        SetColorSwatch(controls.colorWrap, { r = r, g = g, b = b, a = a })
+      end,
+    }
+    local popover = Frames.CreateSettingsPopover({
+      title = title,
+      width = 340,
+      rows = rows,
+      onChanged = Apply,
+    })
+    gear:SetScript("OnClick", function() popover:ShowFor(gear) end)
+    return gear, popover
+  end
+
+  frame.nameGear, frame.namePopover = CreateTextGear(
+    frame.nameSection, frame.nameControls, "name", "Name Text", true, false)
+  frame.timerGear, frame.timerPopover = CreateTextGear(
+    frame.timerSection, frame.timerControls, "timer", "Duration Text", false, true)
+  frame.stacksGear, frame.stacksPopover = CreateTextGear(
+    frame.stacksSection, frame.stacksControls, "stacks", "Stacks Text", false, false)
+
+  frame:HookScript("OnHide", function()
+    for _, popup in ipairs({
+      frame.anchorPopover, frame.layerPopover, frame.glowPopover,
+      frame.readyPopover, frame.backgroundPopover, frame.noStacksPopover,
+      frame.namePopover, frame.timerPopover, frame.stacksPopover,
+    }) do
+      if popup and popup:IsShown() then popup:Hide() end
+    end
+  end)
+end
+
+local function GetGridEntryTarget(entry)
+  if entry.target then return entry.target end
+  if entry.kind == "range" then return entry.slider end
+  if entry.kind == "input" then return entry.widget and entry.widget.input end
+  if entry.kind == "dropdown" or entry.kind == "dropdownGear" then
+    return entry.widget and entry.widget.dropdown
+  end
+  if entry.kind == "color" then return entry.widget and entry.widget.button end
+  if entry.kind == "selector" then return entry.control end
+  return entry.control
+end
+
+local function GetGridEntryLabel(entry)
+  if entry.label then return entry.label end
+  if entry.widget and entry.widget.label then return entry.widget.label end
+  return entry.control and entry.control.Text or nil
+end
+
+local function ApplyTwoColumnSettingsGrid(section, entries, hint)
+  if not section then return 0 end
+  local visible = {}
+  for _, entry in ipairs(entries or {}) do
+    local target = GetGridEntryTarget(entry)
+    if target and target:IsShown() then
+      visible[#visible + 1] = entry
+    end
+  end
+
+  local parentWidth = section:GetParent() and section:GetParent():GetWidth() or 764
+  local sectionWidth = math.max(720, (tonumber(parentWidth) or 764) - 44)
+  local contentInset = 4
+  local cellGap = 2
+  local cellWidth = math.floor((sectionWidth - (contentInset * 2) - cellGap) / 2)
+  local headerHeight = 34
+  local rowHeight = 50
+
+  section.insetLeft = 22
+  section.insetRight = 22
+  Theme.StyleSurface(section, "transparent", "transparent")
+  section._popAurasUseGridCells = true
+  Theme.StyleSurface(section.header, "transparent", "transparent")
+  section.header:SetHeight(30)
+  section.title:ClearAllPoints()
+  section.title:SetPoint("LEFT", section.header, "LEFT", 4, 0)
+  Theme.ApplyTypography(section.title, "controlSmall")
+  Theme.SetText(section.title, "navigation")
+  if section.bodyTop then
+    section.bodyTop:Show()
+    Theme.SetTexture(section.bodyTop, "border")
+  end
+  for _, band in ipairs(section.rowBands or {}) do band:Hide() end
+  if section.settingsGridDivider then section.settingsGridDivider:Hide() end
+
+  section.settingsGridCells = section.settingsGridCells or {}
+  local function GetCell(index, row, column)
+    local cell = section.settingsGridCells[index]
+    if not cell then
+      cell = section:CreateTexture(nil, "BACKGROUND", nil, -2)
+      cell:SetTexture("Interface\\Buttons\\WHITE8x8")
+      Theme.SetTexture(cell, "canvasAlt")
+      section.settingsGridCells[index] = cell
+    end
+    cell:ClearAllPoints()
+    cell:SetPoint("TOPLEFT", section, "TOPLEFT",
+      contentInset + (column * (cellWidth + cellGap)),
+      -headerHeight - (row * rowHeight))
+    cell:SetSize(cellWidth, 48)
+    cell:Show()
+    return cell
+  end
+
+  local function PlaceLabel(label, cell, controlWidth)
+    if not label then return end
+    label:ClearAllPoints()
+    label:SetPoint("LEFT", cell, "LEFT", 14, 0)
+    label:SetWidth(math.max(100, cellWidth - controlWidth - 48))
+    label:SetJustifyH("LEFT")
+    label:SetWordWrap(false)
+    Theme.ApplyTypography(label, "control")
+    Theme.SetText(label, "text")
+  end
+
+  for index, entry in ipairs(visible) do
+    local row = math.floor((index - 1) / 2)
+    local column = (index - 1) % 2
+    local cell = GetCell(index, row, column)
+    local label = GetGridEntryLabel(entry)
+    local hasGear = entry.gear and entry.gear:IsShown()
+    local gearWidth = hasGear and 34 or 0
+
+    if entry.kind == "range" then
+      PlaceLabel(label, cell, 232)
+      entry.widget.input:ClearAllPoints()
+      entry.widget.input:SetWidth(54)
+      entry.widget.input:SetPoint("RIGHT", cell, "RIGHT", -14, 0)
+      entry.slider:ClearAllPoints()
+      entry.slider:SetWidth(150)
+      entry.slider:SetPoint("RIGHT", entry.widget.input, "LEFT", -12, 0)
+    elseif entry.kind == "input" then
+      local width = math.min(entry.width or 90, 190)
+      PlaceLabel(label, cell, width)
+      entry.widget.input:ClearAllPoints()
+      entry.widget.input:SetWidth(width)
+      entry.widget.input:SetPoint("RIGHT", cell, "RIGHT", -14, 0)
+    elseif entry.kind == "dropdown" or entry.kind == "dropdownGear" then
+      local width = hasGear and 150 or 170
+      PlaceLabel(label, cell, width + gearWidth)
+      UIDropDownMenu_SetWidth(entry.widget.dropdown, width)
+      entry.widget.dropdown:ClearAllPoints()
+      entry.widget.dropdown:SetPoint("RIGHT", cell, "RIGHT", -2 - gearWidth, 0)
+      if hasGear then
+        entry.gear:ClearAllPoints()
+        entry.gear:SetPoint("RIGHT", cell, "RIGHT", -10, 0)
+      end
+    elseif entry.kind == "color" then
+      PlaceLabel(label, cell, 40)
+      entry.widget.button:ClearAllPoints()
+      entry.widget.button:SetPoint("RIGHT", cell, "RIGHT", -14, 0)
+      if entry.widget.valueText then entry.widget.valueText:Hide() end
+    elseif entry.kind == "selector" then
+      local width = math.min(entry.width or 170, 190)
+      PlaceLabel(label, cell, width)
+      entry.control:ClearAllPoints()
+      entry.control:SetWidth(width)
+      entry.control:SetPoint("RIGHT", cell, "RIGHT", -14, 0)
+    else
+      local control = entry.control
+      PlaceLabel(label, cell, hasGear and 78 or 48)
+      control:ClearAllPoints()
+      control:SetPoint("RIGHT", cell, "RIGHT", -14 - gearWidth, 0)
+      if hasGear then
+        entry.gear:ClearAllPoints()
+        entry.gear:SetPoint("RIGHT", cell, "RIGHT", -10, 0)
+      end
+    end
+  end
+
+  for index = #visible + 1, #section.settingsGridCells do
+    section.settingsGridCells[index]:Hide()
+  end
+
+  local rows = math.max(1, math.ceil(#visible / 2))
+  local hintHeight = hint and hint:IsShown() and 34 or 0
+  local height = headerHeight + (rows * rowHeight) + hintHeight
+  section:SetHeight(height)
+  section.expandedHeight = height
+
+  if hint and hint:IsShown() then
+    hint:ClearAllPoints()
+    hint:SetPoint("TOPLEFT", section, "TOPLEFT", 14,
+      -(headerHeight + (rows * rowHeight) + 6))
+    hint:SetPoint("TOPRIGHT", section, "TOPRIGHT", -14,
+      -(headerHeight + (rows * rowHeight) + 6))
+    hint:SetJustifyH("LEFT")
+  end
+  return rows
+end
+local function ApplyDisplayTwoColumnGrids(frame, aura, isGroup, isNameplateAura)
+  local isIconAura = aura.kind == "icon"
+  local trigger = GetSelectedTrigger(aura)
+  frame.deathRolesLabel:Hide()
+
+  local canvasEntries = {
+    { kind = "input", widget = frame.nameInputWrap, width = 260 },
+    { kind = "range", widget = frame.widthWrap, slider = frame.widthSlider },
+    { kind = "range", widget = frame.heightWrap, slider = frame.heightSlider },
+    { kind = "dropdown", widget = frame.orientationWrap, width = 220 },
+    { kind = "dropdown", widget = frame.nameplateAnchorWrap, width = 220 },
+    { kind = "dropdownGear", widget = frame.anchorWrap, gear = frame.anchorGear, width = 230 },
+    { kind = "dropdownGear", widget = frame.strataWrap, gear = frame.layerGear, width = 190 },
+    { kind = "input", widget = frame.deathDurationWrap, width = 120 },
+    { kind = "input", widget = frame.deathMaxAlertsWrap, width = 120 },
+    { kind = "toggle", control = frame.deathTankCheck },
+    { kind = "toggle", control = frame.deathHealerCheck },
+    { kind = "toggle", control = frame.deathDPSCheck },
+    { kind = "color", widget = frame.barColorWrap },
+    { kind = "dropdown", widget = frame.barTextureWrap, width = 240 },
+    { kind = "toggle", control = frame.showAlwaysReadyCheck, gear = frame.readyGear },
+    { kind = "toggle", control = frame.glowWhenActiveCheck, gear = frame.glowGear },
+    { kind = "toggle", control = frame.reverseCheck },
+    { kind = "toggle", control = frame.showBackgroundCheck, gear = frame.backgroundGear },
+    { kind = "input", widget = frame.backgroundGammaWrap, width = 110 },
+    { kind = "input", widget = frame.permanentAlphaWrap, width = 110 },
+    { kind = "toggle", control = frame.auraListSwipeCheck },
+    { kind = "toggle", control = frame.noStacksBarColorCheck, gear = frame.noStacksGear },
+    { kind = "toggle", control = frame.chargeCooldownCheck },
+  }
+
+  if isIconAura then
+    canvasEntries[#canvasEntries + 1] = { kind = "toggle", control = frame.showIconCheck }
+    canvasEntries[#canvasEntries + 1] = { kind = "toggle", control = frame.hideCDMIconCheck }
+    canvasEntries[#canvasEntries + 1] = { kind = "input", widget = frame.altIconIdWrap, width = 220 }
+    canvasEntries[#canvasEntries + 1] = { kind = "toggle", control = frame.iconEdgeCheck }
+    canvasEntries[#canvasEntries + 1] = { kind = "toggle", control = frame.iconFinishFlashCheck }
+    canvasEntries[#canvasEntries + 1] = { kind = "color", widget = frame.iconSwipeColorWrap }
+  end
+
+  local canvasHint = trigger.type == "death_alert" and frame.deathAlertHint
+    or isIconAura and frame.iconHint or nil
+  ApplyTwoColumnSettingsGrid(frame.canvasSection, canvasEntries, canvasHint)
+
+  ApplyTwoColumnSettingsGrid(frame.groupSection, {
+    { kind = "input", widget = frame.groupSpacingWrap, width = 110 },
+    { kind = "dropdown", widget = frame.groupGrowthWrap, width = 210 },
+    { kind = "toggle", control = frame.groupMaintainOrderCheck },
+  }, frame.groupHint)
+
+  if not isIconAura then
+    ApplyTwoColumnSettingsGrid(frame.iconSection, {
+      { kind = "toggle", control = frame.showIconCheck },
+      { kind = "toggle", control = frame.hideCDMIconCheck },
+      { kind = "toggle", control = frame.iconMatchSizeCheck },
+      { kind = "toggle", control = frame.iconEdgeCheck },
+      { kind = "toggle", control = frame.iconFinishFlashCheck },
+      { kind = "input", widget = frame.iconSizeWrap, width = 100 },
+      { kind = "dropdown", widget = frame.iconAnchorWrap, width = 190 },
+      { kind = "input", widget = frame.iconXWrap, width = 100 },
+      { kind = "input", widget = frame.iconYWrap, width = 100 },
+      { kind = "input", widget = frame.altIconIdWrap, width = 220 },
+      { kind = "color", widget = frame.iconSwipeColorWrap },
+    }, frame.iconHint)
+  end
+
+  ApplyTwoColumnSettingsGrid(frame.raidFrameSection, {
+    { kind = "toggle", control = frame.showOnRaidFramesCheck },
+    { kind = "toggle", control = frame.raidFrameGlowCheck },
+    { kind = "toggle", control = frame.raidFrameDurationCheck },
+    { kind = "toggle", control = frame.raidFrameStacksCheck },
+    { kind = "input", widget = frame.raidFrameSizeWrap, width = 100 },
+    { kind = "dropdown", widget = frame.raidFrameAnchorWrap, width = 210 },
+    { kind = "dropdown", widget = frame.raidFrameGrowthWrap, width = 190 },
+    { kind = "input", widget = frame.raidFrameXWrap, width = 100 },
+    { kind = "input", widget = frame.raidFrameYWrap, width = 100 },
+  }, frame.raidFrameHint)
+
+  ApplyTwoColumnSettingsGrid(frame.nameSection, {
+    { kind = "toggle", control = frame.nameControls.showCheck },
+    { kind = "input", widget = frame.nameControls.altNameWrap, width = 170 },
+    { kind = "dropdown", widget = frame.nameControls.fontWrap },
+    { kind = "input", widget = frame.nameControls.sizeWrap },
+    { kind = "dropdown", widget = frame.nameControls.anchorWrap },
+    { kind = "dropdown", widget = frame.nameControls.rotationWrap },
+    { kind = "input", widget = frame.nameControls.xWrap },
+    { kind = "input", widget = frame.nameControls.yWrap },
+    { kind = "color", widget = frame.nameControls.colorWrap },
+  })
+  ApplyTwoColumnSettingsGrid(frame.timerSection, {
+    { kind = "toggle", control = frame.timerControls.showCheck },
+    { kind = "dropdown", widget = frame.timerControls.fontWrap },
+    { kind = "input", widget = frame.timerControls.sizeWrap },
+    { kind = "dropdown", widget = frame.timerControls.anchorWrap },
+    { kind = "dropdown", widget = frame.timerControls.rotationWrap },
+    { kind = "input", widget = frame.timerControls.xWrap },
+    { kind = "input", widget = frame.timerControls.yWrap },
+    { kind = "dropdown", widget = frame.timerControls.decimalsWrap },
+    { kind = "color", widget = frame.timerControls.colorWrap },
+  })
+  ApplyTwoColumnSettingsGrid(frame.stacksSection, {
+    { kind = "toggle", control = frame.stacksControls.showCheck },
+    { kind = "dropdown", widget = frame.stacksControls.fontWrap },
+    { kind = "input", widget = frame.stacksControls.sizeWrap },
+    { kind = "dropdown", widget = frame.stacksControls.anchorWrap },
+    { kind = "dropdown", widget = frame.stacksControls.rotationWrap },
+    { kind = "input", widget = frame.stacksControls.xWrap },
+    { kind = "input", widget = frame.stacksControls.yWrap },
+    { kind = "color", widget = frame.stacksControls.colorWrap },
+  })
+
+  ApplyTwoColumnSettingsGrid(frame.soundSection, {
+    { kind = "toggle", control = frame.soundEnabledCheck },
+    { kind = "toggle", control = frame.soundReadyCheck },
+    { kind = "selector", label = frame.soundFileWrap.label, control = frame.soundFileButton, width = 260 },
+    { kind = "selector", label = frame.trinketTopSoundFileWrap.label, control = frame.trinketTopSoundFileButton, width = 240 },
+    { kind = "selector", label = frame.trinketBottomSoundFileWrap.label, control = frame.trinketBottomSoundFileButton, width = 240 },
+    { kind = "dropdown", widget = frame.soundChannelWrap, width = 190 },
+    { kind = "selector", label = frame.deathTankSoundWrap.label, control = frame.deathTankSoundButton, width = 210 },
+    { kind = "selector", label = frame.deathHealerSoundWrap.label, control = frame.deathHealerSoundButton, width = 210 },
+    { kind = "selector", label = frame.deathDPSSoundWrap.label, control = frame.deathDPSSoundButton, width = 210 },
+  }, frame.soundHint)
+
+  ApplyTwoColumnSettingsGrid(frame.blizzardSection, {
+    { kind = "toggle", control = frame.hideBlizzardSpellAlertCheck },
+    { kind = "input", widget = frame.blizzardSpellAlertWrap, width = 230 },
+  }, frame.blizzardSpellAlertHint)
+end
+
+local function ApplyCompactDisplayLayout(frame, aura, isGroup, isNameplateAura)
+  if not frame or not aura then return end
+
+  local useAnchorGear = not isNameplateAura
+  frame.anchorGear:ClearAllPoints()
+  frame.anchorGear:SetPoint("LEFT", frame.anchorWrap.dropdown, "RIGHT", -8, 0)
+  frame.anchorGear:SetShown(useAnchorGear)
+  if useAnchorGear then
+    SetLabeledDropdownShown(frame.framePointWrap, false)
+    SetLabeledDropdownShown(frame.parentPointWrap, false)
+    SetLabeledInputShown(frame.xWrap, false)
+    SetLabeledInputShown(frame.yWrap, false)
+  end
+
+  frame.layerGear:ClearAllPoints()
+  frame.layerGear:SetPoint("LEFT", frame.strataWrap.dropdown, "RIGHT", -8, 0)
+  frame.layerGear:Show()
+  SetLabeledInputShown(frame.levelWrap, false)
+
+  local trigger = GetSelectedTrigger(aura)
+  local showGlowGear = trigger.type == "spell_cooldown"
+    and aura.kind == "bar"
+    and frame.glowWhenActiveCheck:IsShown()
+    and frame.glowWhenActiveCheck:GetChecked() == true
+  frame.glowGear:SetShown(showGlowGear)
+  SetLabeledDropdownShown(frame.activeGlowStyleWrap, false)
+  SetColorWidgetShown(frame.activeGlowColorWrap, false)
+
+  local showReadyGear = frame.showAlwaysReadyCheck:IsShown()
+    and frame.showAlwaysReadyCheck:GetChecked() == true
+  frame.readyGear:SetShown(showReadyGear)
+  SetColorWidgetShown(frame.readyColorWrap, false)
+  frame.showReadyTextCheck:Hide()
+
+  local showBackgroundGear = frame.showBackgroundCheck:IsShown()
+    and frame.showBackgroundCheck:GetChecked() == true
+  frame.backgroundGear:SetShown(showBackgroundGear)
+  SetColorWidgetShown(frame.backgroundColorWrap, false)
+
+  local showNoStacksGear = frame.noStacksBarColorCheck:IsShown()
+    and frame.noStacksBarColorCheck:GetChecked() == true
+  frame.noStacksGear:SetShown(showNoStacksGear)
+  SetColorWidgetShown(frame.noStacksBarColorWrap, false)
+
+  frame.nameGear:Hide()
+  frame.timerGear:Hide()
+  frame.stacksGear:Hide()
+  ApplyDisplayTwoColumnGrids(frame, aura, isGroup, isNameplateAura)
+end
 function Panel:Create(parent)
   local frame = CreateFrame("Frame", nil, parent)
   frame:SetAllPoints()
@@ -1236,6 +1879,13 @@ function Panel:Create(parent)
     frame.content:SetWidth(math.max(724, (tonumber(width) or selfFrame:GetWidth() or 0) - 28))
     if Panel.frame == frame and frame.sectionEntries then
       Panel:LayoutSectionTabs()
+      local selectedAura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+      if selectedAura then
+        local selectedTrigger = GetSelectedTrigger(selectedAura)
+        ApplyDisplayTwoColumnGrids(frame, selectedAura,
+          selectedAura.kind == "group" or selectedAura.kind == "dynamic_group",
+          selectedAura.kind == "icon" and selectedTrigger.type == "aura" and selectedTrigger.unit == "nameplate")
+      end
       Panel:LayoutSections()
     end
   end)
@@ -1292,6 +1942,8 @@ function Panel:Create(parent)
   frame.nameInputWrap = CreateLabeledInput(frame.canvasSection, "Aura Name", 12, -34, 420)
   frame.widthWrap = CreateLabeledInput(frame.canvasSection, "Width", 12, -88, 60)
   frame.heightWrap = CreateLabeledInput(frame.canvasSection, "Height", 96, -88, 60)
+  frame.widthSlider = Frames.CreateCompactSlider(frame.canvasSection, 20, 1000, 1)
+  frame.heightSlider = Frames.CreateCompactSlider(frame.canvasSection, 4, 300, 1)
   frame.xWrap = CreateLabeledInput(frame.canvasSection, "Offset X", 180, -88, 84)
   frame.yWrap = CreateLabeledInput(frame.canvasSection, "Offset Y", 280, -88, 84)
   frame.orientationWrap = CreateLabeledDropdown(frame.canvasSection, "Orientation", 380, -88, 160, { "HORIZONTAL", "VERTICAL" })
@@ -1447,7 +2099,7 @@ function Panel:Create(parent)
   frame.groupBackgroundColorWrap.button:SetPoint("TOPLEFT", 220, -66)
   frame.groupBackgroundColorWrap.label:ClearAllPoints()
   frame.groupBackgroundColorWrap.label:SetPoint("LEFT", frame.groupBackgroundColorWrap.button, "RIGHT", 8, 0)
-  frame.groupMaintainOrderCheck = Frames.CreateCheckbox(frame.groupSection, "Maintain Aura Order")
+  frame.groupMaintainOrderCheck = Frames.CreateCheckbox(frame.groupSection, "Use Configured Aura Order")
   frame.groupMaintainOrderCheck:SetPoint("TOPLEFT", 386, -34)
   frame.groupHint = Frames.CreateLabel(frame.groupSection, "Groups control child size, spacing, order, and growth.", "GameFontDisableSmall")
   frame.groupHint:SetPoint("TOPLEFT", 12, -94)
@@ -1718,7 +2370,7 @@ function Panel:Create(parent)
   Frames.StylePrimaryButton(frame.saveButton)
   frame.saveButton:Hide()
 
-  ConfigureNumericInput(frame.widthWrap.input, 3)
+  ConfigureNumericInput(frame.widthWrap.input, 4)
   ConfigureNumericInput(frame.heightWrap.input, 3)
   ConfigureNumericInput(frame.xWrap.input, 10)
   ConfigureNumericInput(frame.yWrap.input, 10)
@@ -1760,10 +2412,31 @@ function Panel:Create(parent)
   }
 
   self.frame = frame
+  CreateDisplayGearControls(frame)
 
   self:WireLiveInput(frame.nameInputWrap.input, function() Panel:ApplyCurrent() end)
-  self:WireLiveInput(frame.widthWrap.input, function() Panel:ApplyCurrent() end)
-  self:WireLiveInput(frame.heightWrap.input, function() Panel:ApplyCurrent() end)
+  self:WireLiveInput(frame.widthWrap.input, function()
+    Panel:ApplyCurrent()
+    frame._popAurasSyncingSliders = true
+    frame.widthSlider:SetValue(tonumber(frame.widthWrap.input:GetText()) or 220)
+    frame._popAurasSyncingSliders = false
+  end)
+  self:WireLiveInput(frame.heightWrap.input, function()
+    Panel:ApplyCurrent()
+    frame._popAurasSyncingSliders = true
+    frame.heightSlider:SetValue(tonumber(frame.heightWrap.input:GetText()) or 32)
+    frame._popAurasSyncingSliders = false
+  end)
+  frame.widthSlider:SetScript("OnValueChanged", function(_, value)
+    if frame._popAurasSyncingSliders or Panel.suppressUpdates then return end
+    frame.widthWrap.input:SetText(tostring(math.floor((value or 20) + 0.5)))
+    Panel:ApplyCurrent()
+  end)
+  frame.heightSlider:SetScript("OnValueChanged", function(_, value)
+    if frame._popAurasSyncingSliders or Panel.suppressUpdates then return end
+    frame.heightWrap.input:SetText(tostring(math.floor((value or 4) + 0.5)))
+    Panel:ApplyCurrent()
+  end)
   self:WireLiveInput(frame.xWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.yWrap.input, function() Panel:ApplyCurrent() end)
   self:WireLiveInput(frame.levelWrap.input, function() Panel:ApplyCurrent() end)
@@ -2120,41 +2793,20 @@ function Panel:SetActiveSection(key)
     return
   end
 
-  local activeEntry
-  for _, entry in ipairs(self.frame.sectionEntries) do
-    if entry.key == key and entry.section._popAurasAvailable ~= false then
-      activeEntry = entry
-      break
-    end
-  end
-  if not activeEntry then
-    for _, entry in ipairs(self.frame.sectionEntries) do
-      if entry.section._popAurasAvailable ~= false then
-        activeEntry = entry
-        break
-      end
-    end
-  end
-  if not activeEntry then
-    return
-  end
-
-  local changed = self.frame.activeSectionKey ~= activeEntry.key
-  self.frame.activeSectionKey = activeEntry.key
+  self.frame.activeSectionKey = key or "canvas"
   for _, entry in ipairs(self.frame.sectionEntries) do
     local isEmbeddedLayout = self.frame.embedLayoutInLook == true
-      and activeEntry.key == "canvas" and entry.key == "group"
-    local isActive = entry == activeEntry or isEmbeddedLayout
-    entry.section.collapsed = not isActive
-    entry.section:SetShown(isActive)
-    Theme.StyleTab(self.frame.sectionTabs[entry.key], entry == activeEntry)
+      and entry.key == "group"
+    local isAvailable = entry.section._popAurasAvailable ~= false or isEmbeddedLayout
+    entry.section.collapsed = false
+    entry.section:SetShown(isAvailable)
+    entry.section.header:SetShown(isAvailable)
+    if entry.section.bodyTop then entry.section.bodyTop:SetShown(isAvailable) end
+    local tab = self.frame.sectionTabs[entry.key]
+    if tab then tab:Hide() end
   end
 
-  self:LayoutSectionTabs()
   self:LayoutSections()
-  if changed and self.frame.scroll then
-    self.frame.scroll:SetVerticalScroll(0)
-  end
 end
 
 function Panel:LayoutSections()
@@ -2168,7 +2820,7 @@ function Panel:LayoutSections()
       section:ClearAllPoints()
       section:SetPoint("TOPLEFT", section.insetLeft or 0, y)
       section:SetPoint("TOPRIGHT", -(section.insetRight or 0), y)
-      y = y - section:GetHeight() - 10
+      y = y - section:GetHeight() - 22
     end
   end
   local minHeight = self.frame:GetHeight() > 0 and self.frame:GetHeight() or 640
@@ -2178,6 +2830,7 @@ end
 function Panel:Refresh(aura)
   self.suppressUpdates = true
   local isGroup = aura.kind == "group" or aura.kind == "dynamic_group"
+  local isDynamicGroup = aura.kind == "dynamic_group"
   local isText = aura.kind == "text"
   local isIconAura = aura.kind == "icon"
   local isAuraBarList = aura.kind == "aura_bar_list"
@@ -2193,6 +2846,10 @@ function Panel:Refresh(aura)
 
   self.frame.nameInputWrap.input:SetText(aura.name or "")
   self.frame.widthWrap.input:SetText(tostring(aura.display.width or 220))
+  self.frame._popAurasSyncingSliders = true
+  self.frame.widthSlider:SetValue(math.max(20, math.min(1000, aura.display.width or 220)))
+  self.frame.heightSlider:SetValue(math.max(4, math.min(300, aura.display.height or 32)))
+  self.frame._popAurasSyncingSliders = false
   self.frame.heightWrap.input:SetText(tostring(aura.display.height or 32))
   self.frame.xWrap.input:SetText(tostring(aura.position.x or 0))
   self.frame.yWrap.input:SetText(tostring(aura.position.y or 0))
@@ -2507,11 +3164,11 @@ function Panel:Refresh(aura)
   self.frame.groupBackgroundColorWrap.label:SetShown(false)
   self.frame.groupBackgroundColorWrap.button:SetShown(false)
   self.frame.groupBackgroundColorWrap.valueText:SetShown(false)
-  self.frame.groupMaintainOrderCheck:SetShown(isGroup)
+  self.frame.groupMaintainOrderCheck:SetShown(isDynamicGroup)
   self.frame.groupSection.title:SetText(isAuraBarList and "List Layout"
     or isNameplateAura and "Nameplate Icon Layout" or "Group Layout")
-  self.frame.groupSection.header:SetShown(isAuraBarList)
-  self.frame.groupSection.bodyTop:SetShown(isAuraBarList)
+  self.frame.groupSection.header:Show()
+  self.frame.groupSection.bodyTop:Show()
   if isAuraBarList then
     Theme.StyleSurface(self.frame.groupSection.header, "transparent", "transparent")
     self.frame.groupSection.title:SetText("LAYOUT")
@@ -2527,7 +3184,9 @@ function Panel:Refresh(aura)
   elseif isNameplateAura then
     self.frame.groupHint:SetText("Control spacing and growth for matching native buff icons on each hostile NPC nameplate.")
   else
-    self.frame.groupHint:SetText("Groups control child size, spacing, order, and growth.")
+    self.frame.groupHint:SetText(isDynamicGroup
+      and "Dynamic Groups remove hidden children from the layout. Configured order keeps the first visible child at the top."
+      or "Groups reserve a fixed slot for every child, so hidden children do not move the remaining auras.")
   end
   self.frame.iconSection.title:SetText(isAuraBarList and "Row Icon" or "Icon")
   self.frame.blizzardSection.title:SetText("Blizzard UI")
@@ -2552,7 +3211,8 @@ function Panel:Refresh(aura)
   end
 
   self:ApplyCanvasLayout(isGroup, isNameplateAura, isIconAura, trigger.type == "death_alert")
-  self:SetActiveSection(self.frame.activeSectionKey or "canvas")
   self:UpdateControlStates()
+  ApplyCompactDisplayLayout(self.frame, aura, isGroup, isNameplateAura)
+  self:SetActiveSection(self.frame.activeSectionKey or "canvas")
   self.suppressUpdates = false
 end

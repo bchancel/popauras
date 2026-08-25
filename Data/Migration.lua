@@ -5,6 +5,15 @@ ns.Migration = Migration
 
 function Migration:Run(db)
   db.version = db.version or 0
+  db.sharing = type(db.sharing) == "table" and db.sharing or {}
+  db.sharing.ignoredPlayers = type(db.sharing.ignoredPlayers) == "table"
+    and db.sharing.ignoredPlayers or {}
+  for playerName, ignored in pairs(db.sharing.ignoredPlayers) do
+    if type(playerName) ~= "string" or playerName == "" or ignored ~= true then
+      db.sharing.ignoredPlayers[playerName] = nil
+    end
+  end
+
   db.auras = db.auras or {}
   db.ui = db.ui or {}
   if type(db.ui.selectedTriggerIndex) ~= "number" or db.ui.selectedTriggerIndex < 1 then
@@ -36,6 +45,11 @@ function Migration:Run(db)
         -- Preserve existing opt-in spell-cooldown bar glow when moving to the
         -- selectable active-effect styles. New auras default to None.
         aura.display.activeGlowStyle = aura.display.glowWhenActive == true and "INNER_GLOW" or "NONE"
+      end
+      if db.version < 6 and aura.kind == "dynamic_group" then
+        aura.display = type(aura.display) == "table" and aura.display or {}
+        -- Dynamic groups compact in configured child order by default.
+        aura.display.maintainAuraOrder = true
       end
       ns.Defaults:ApplyAuraDefaults(aura)
     end

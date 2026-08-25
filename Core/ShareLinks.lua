@@ -11,7 +11,7 @@ local ADDON_PREFIX = "PopAurasShare"
 local CHUNK_SIZE = 190
 local CACHE_TTL = 600
 local OFFER_POPUP_KEY = "POPAURAS_SHARE_OFFER"
-local SEND_INTERVAL = 0.02
+local SEND_INTERVAL = 0.04
 
 ShareLinks.outgoing = ShareLinks.outgoing or {}
 ShareLinks.incoming = ShareLinks.incoming or {}
@@ -196,6 +196,9 @@ end
 
 function ShareLinks:QueueOutgoingTransfer(target, shareKey, encoded, auraName)
   if type(encoded) ~= "string" or encoded == "" then
+    return false
+  end
+  if ns.AccountSync and ns.AccountSync:IsIgnored(target) then
     return false
   end
 
@@ -445,6 +448,17 @@ function ShareLinks:SendSelection(targetText)
   if #targets == 0 then
     return false, "Enter a player name, or use PARTY / RAID."
   end
+  local allowedTargets = {}
+  for _, target in ipairs(targets) do
+    if not (ns.AccountSync and ns.AccountSync:IsIgnored(target)) then
+      allowedTargets[#allowedTargets + 1] = target
+    end
+  end
+  targets = allowedTargets
+  if #targets == 0 then
+    return false, "Every selected recipient is on your PopAuras ignore list."
+  end
+
 
   local encoded = ns.Export and ns.Export.Encode and ns.Export:Encode({ selectedAuraId }) or nil
   if type(encoded) ~= "string" or encoded == "" then
@@ -573,6 +587,10 @@ function ShareLinks:HandleLinkClick(linkData)
   local playerName = GetPlayerFullName()
   PruneCacheTable(self.outgoing)
   PruneCacheTable(self.incoming)
+  if ns.AccountSync and ns.AccountSync:IsIgnored(owner) then
+    WriteChatLine(string.format("|cffff4444PopAuras:|r %s is on your ignore list.", owner))
+    return true
+  end
   PruneCacheTable(self.pending)
 
   local localShare = self.outgoing[shareKey]
@@ -618,6 +636,9 @@ function ShareLinks:HandleAddonMessage(message, sender)
   end
   sender = NormalizePlayerName(sender)
 
+  if ns.AccountSync and ns.AccountSync:IsIgnored(sender) then
+    return
+  end
   local command, payload = message:match("^([^\t]+)\t?(.*)$")
   if command == "OFFER" then
     local shareKey, auraName = payload:match("^([^\t]+)\t?(.*)$")
@@ -790,7 +811,11 @@ function ShareLinks:HandleAddonMessage(message, sender)
     total,
     total,
     true)
-  ApplySharedImport(encoded, sender)
+  if ns.AccountSync and tostring(shareKey or ""):match("^SYNC") then
+    ns.AccountSync:HandleSnapshot(sender, shareKey, encoded)
+  else
+    ApplySharedImport(encoded, sender)
+  end
 end
 
 function ShareLinks:Initialize()

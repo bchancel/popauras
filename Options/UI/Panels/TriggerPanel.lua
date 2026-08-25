@@ -8,7 +8,7 @@ local Theme = ns.util.Theme
 local UnitAuraList = ns.util.UnitAuraList
 
 local triggerTypes = {
-  simple = "Simple",
+  simple = "Basic State",
   aura = "Aura",
   spell_cooldown = "Spell Cooldown",
   item_cooldown = "Item Cooldown",
@@ -1315,7 +1315,7 @@ function Panel:Create(parent)
   frame.deathDPSSoundPreview:SetPoint("LEFT", frame.deathDPSSoundButton, "RIGHT", 8, 0)
   Frames.StyleSecondaryButton(frame.deathDPSSoundPreview)
 
-  frame.modeLabel = Frames.CreateLabel(frame, "Simple Mode", "GameFontNormal")
+  frame.modeLabel = Frames.CreateLabel(frame, "State", "GameFontNormal")
   frame.modeLabel:SetPoint("TOPLEFT", frame.resolvedLabel, "BOTTOMLEFT", 0, -10)
   frame.modeDropDown = Frames.CreateDropdown(frame, 160, function(self, level)
     for _, mode in ipairs(simpleModeValues) do
@@ -1869,7 +1869,7 @@ function Panel:Refresh(aura)
   self.frame.opLabel:SetShown(#triggers > 1 and not usesDedicatedTriggerEditor)
   self.frame.opDropDown:SetShown(#triggers > 1 and not usesDedicatedTriggerEditor)
   UIDropDownMenu_SetSelectedValue(self.frame.typeDropDown, trigger.type or "simple")
-  UIDropDownMenu_SetText(self.frame.typeDropDown, triggerTypes[trigger.type or "simple"] or "Simple")
+  UIDropDownMenu_SetText(self.frame.typeDropDown, triggerTypes[trigger.type or "simple"] or "Basic State")
   UIDropDownMenu_SetSelectedValue(self.frame.opDropDown, aura.triggerOp or "AND")
   UIDropDownMenu_SetText(self.frame.opDropDown, aura.triggerOp or "AND")
   UIDropDownMenu_SetSelectedValue(self.frame.modeDropDown, trigger.mode or "always")

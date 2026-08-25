@@ -1,3 +1,12 @@
+# v12.1.9
+1. The settings window now uses clear sections, compact two column rows, consistent controls, and gear menus for related options.
+2. Account Sync exchanges a small comparison list before it sends the auras each player selects.
+3. The ignore commands block Account Sync and regular aura sharing from named players.
+4. The Load tab now uses clear General, Visibility, Class, Talents, and Talent Layout sections.
+5. Groups keep fixed slots while Dynamic Groups close empty space and keep their configured order.
+6. Aura labels now show the display type and trigger, and the Simple trigger is now called Basic State.
+7. The performance and debug windows are smaller, movable, and include close buttons.
+
 # v12.1.8
 - Improved combat performance with unit scoped aura events
 - Reduced group missing-aura overhead

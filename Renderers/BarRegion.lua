@@ -410,6 +410,7 @@ end
 function BarRegion:Update(aura, state)
   self.currentAura = aura
   self.currentState = state
+  self.layoutVisible = state and state.show == true or false
   BaseRegion:ApplyAnchor(aura, self.frame)
   BaseRegion:ApplyFrameLayer(aura, self.frame, self.overlay)
 

@@ -367,7 +367,11 @@ local function GetPlayerSpecIndex()
 end
 
 local function NormalizeSavedLoadoutMode(value)
-  return tostring(value or "") == "except" and "except" or "only"
+  local normalized = tostring(value or "")
+  if normalized == "only" or normalized == "except" then
+    return normalized
+  end
+  return "any"
 end
 
 local function GetSavedLoadoutModeLabel(value)
@@ -1444,9 +1448,12 @@ function Panel:ApplyCurrent()
     aura.load.visibility[key] = check:GetChecked() == true
   end
   aura.load.talent = self.frame.talentEnabledCheck:GetChecked() == true
-  aura.load.savedLoadoutMode = NormalizeSavedLoadoutMode(
-    UIDropDownMenu_GetSelectedValue(self.frame.savedLoadoutModeDropDown) or aura.load.savedLoadoutMode
-  )
+  if self.frame.savedLoadoutEnabledCheck:GetChecked() == true then
+    local selectedMode = UIDropDownMenu_GetSelectedValue(self.frame.savedLoadoutModeDropDown)
+    aura.load.savedLoadoutMode = selectedMode == "except" and "except" or "only"
+  else
+    aura.load.savedLoadoutMode = "any"
+  end
   aura.load.level = math.max(0, math.floor((tonumber(self.frame.levelInput:GetText()) or 0) + 0.5))
   aura.load.instanceType = UIDropDownMenu_GetSelectedValue(self.frame.instanceTypeDropDown) or ""
   aura.load.instanceId = math.max(0, math.floor((tonumber(self.frame.instanceIdInput:GetText()) or 0) + 0.5))
@@ -1491,7 +1498,7 @@ function Panel:RefreshSpecSection(aura)
   PruneSpecSelections(load)
 
   local hasClasses = false
-  local classCollapsed = self.frame.collapsedSections and self.frame.collapsedSections.class == true
+  local classCollapsed = false
 
   for _, specCheck in ipairs(self.frame.specChecks or {}) do
     specCheck:Hide()
@@ -1499,26 +1506,25 @@ function Panel:RefreshSpecSection(aura)
   self.frame.specChecks = self.frame.specChecks or {}
 
   self.frame.classHeader:ClearAllPoints()
-  self.frame.classHeader:SetPoint("TOPLEFT", self.frame.combatDropDown, "BOTTOMLEFT", 14, -18)
+  self.frame.classHeader:SetPoint("TOPLEFT", self.frame.loadDetails, "BOTTOMLEFT", 0, -18)
   self.frame.classHeader.title:SetText("CLASS FILTER")
+  Theme.SetText(self.frame.classHeader.title, "navigation")
   self.frame.classToggle:ClearAllPoints()
-  self.frame.classToggle:SetPoint("LEFT", self.frame.classHeader.title, "RIGHT", 8, 0)
-  self.frame.classToggle:Show()
-  SetCollapseButtonText(self.frame.classToggle, classCollapsed)
+  self.frame.classToggle:Hide()
 
   self.frame.classSection:ClearAllPoints()
   self.frame.classSection:SetPoint("TOPLEFT", self.frame.classHeader, "BOTTOMLEFT", 0, -8)
 
-  local classRowCount = math.ceil(#CLASS_ORDER / 2)
-  self.frame.classSection:SetHeight(classCollapsed and 0 or (classRowCount * 24))
+  local classRowCount = math.ceil(#CLASS_ORDER / 4)
+  self.frame.classSection:SetHeight(classRowCount * 50)
   for index, classToken in ipairs(CLASS_ORDER) do
     local check = self.frame.classChecks[classToken]
     if check then
-      local row = math.floor((index - 1) / 2)
-      local column = (index - 1) % 2
+      local row = math.floor((index - 1) / 4)
+      local column = (index - 1) % 4
       check:ClearAllPoints()
-      check:SetPoint("TOPLEFT", self.frame.classSection, "TOPLEFT", column * 220, -(row * 24))
-      check:SetShown(not classCollapsed)
+      check:SetPoint("LEFT", self.frame.classCells[index], "LEFT", 12, 0)
+      check:Show()
     end
   end
 
@@ -1585,129 +1591,125 @@ function Panel:RefreshTalentSection(aura, topAnchor)
   load.talents = EnsureMap(load.talents)
   load.savedLoadoutSelections = EnsureSavedLoadoutSelections(load)
   load.savedLoadoutMode = NormalizeSavedLoadoutMode(load.savedLoadoutMode)
-  local classCollapsed = self.frame.collapsedSections and self.frame.collapsedSections.class == true
-  local hasClasses = CountEnabled(EnsureMap(load.classes)) > 0
 
   HideTalentListWidgets(self.frame)
+  self.frame.talentPickerButton:Hide()
 
-  local classBottomAnchor = topAnchor
-  local talentContentHeight = 0
-  local savedLoadoutContentHeight = 0
+  self.frame.talentHeader:ClearAllPoints()
+  self.frame.talentHeader:SetPoint("TOPLEFT", topAnchor, "BOTTOMLEFT", 0, -18)
+  self.frame.talentHeader:SetText("TALENTS")
+  self.frame.talentHeader:Show()
+  self.frame.talentDivider:ClearAllPoints()
+  self.frame.talentDivider:SetPoint("TOPLEFT", self.frame.talentHeader, "BOTTOMLEFT", 0, -6)
+  self.frame.talentDivider:SetWidth(700)
+  self.frame.talentDivider:Show()
 
-  if hasClasses and not classCollapsed then
-    self.frame.talentEnabledCheck:SetChecked(load.talent == true)
-    self.frame.talentPickerButton:ClearAllPoints()
-    self.frame.talentPickerButton:SetPoint("TOPLEFT", self.frame.talentEnabledCheck, "BOTTOMLEFT", 26, -6)
-
-    local talentAnchor = self.frame.talentEnabledCheck
-
-    if load.talent == true then
-      local groups, reason = BuildTalentOptions(load)
-      self.frame.talentHint:ClearAllPoints()
-      self.frame.talentHint:SetPoint("TOPLEFT", talentAnchor, "BOTTOMLEFT", 0, -10)
-      if not groups or #groups == 0 then
-        self.frame.talentHint:SetText("|cffaaaaaa" .. tostring(reason or "No talent options available.") .. "|r")
-        self.frame.talentHint:Show()
-        self.frame.talentPickerButton:Hide()
-        talentAnchor = self.frame.talentHint
-        talentContentHeight = 34
-      else
-        local selectedNames = GetSelectedTalentNames(groups, load)
-        local summaryText = #selectedNames > 0 and table.concat(selectedNames, ", ") or "No talents selected."
-        self.frame.talentHint:SetText(string.format("|cffaaaaaa%s|r", summaryText))
-        self.frame.talentHint:Show()
-        self.frame.talentPickerButton:Show()
-        self.frame.talentPickerButton:SetText("Choose Talents")
-        self.frame.talentPickerButton:SetScript("OnClick", function()
-          Panel:ShowTalentPicker(aura, groups)
-        end)
-        talentAnchor = self.frame.talentPickerButton
-        self.frame.talentHint:ClearAllPoints()
-        self.frame.talentHint:SetPoint("TOPLEFT", self.frame.talentPickerButton, "BOTTOMLEFT", 0, -8)
-        talentContentHeight = 56
-      end
-    else
-      self.frame.talentHint:Hide()
-      self.frame.talentPickerButton:Hide()
-    end
-    classBottomAnchor = self.frame.talentHint:IsShown() and self.frame.talentHint or self.frame.talentEnabledCheck
-  else
-    self.frame.talentHint:Hide()
-    self.frame.talentPickerButton:Hide()
+  for index, cell in ipairs(self.frame.talentCells) do
+    cell:ClearAllPoints()
+    cell:SetPoint("TOPLEFT", self.frame.talentDivider, "BOTTOMLEFT", (index - 1) * 351, -4)
+    cell:Show()
   end
+
+  self.frame.talentEnabledCheck:ClearAllPoints()
+  self.frame.talentEnabledCheck:SetPoint("LEFT", self.frame.talentCells[1], "LEFT", 14, 0)
+  self.frame.talentEnabledCheck:SetChecked(load.talent == true)
+  self.frame.talentEnabledCheck:Show()
+
+  local groups, talentReason = BuildTalentOptions(load)
+  local talentCanConfigure = load.talent == true and groups and #groups > 0
+  self.frame.talentGear:ClearAllPoints()
+  self.frame.talentGear:SetPoint("RIGHT", self.frame.talentCells[1], "RIGHT", -10, 0)
+  self.frame.talentGear:SetShown(talentCanConfigure == true)
+  if talentCanConfigure then
+    self.frame.talentGear:SetScript("OnClick", function()
+      Panel:ShowTalentPicker(aura, groups)
+    end)
+  end
+
+  self.frame.talentHint:ClearAllPoints()
+  self.frame.talentHint:SetPoint("LEFT", self.frame.talentCells[2], "LEFT", 14, 0)
+  self.frame.talentHint:SetPoint("RIGHT", self.frame.talentCells[2], "RIGHT", -14, 0)
+  if load.talent ~= true then
+    self.frame.talentHint:SetText("Optional talent requirements are off.")
+  elseif not groups or #groups == 0 then
+    self.frame.talentHint:SetText(tostring(talentReason or "Select a class and specialization first."))
+  else
+    local selectedNames = GetSelectedTalentNames(groups, load)
+    self.frame.talentHint:SetText(
+      #selectedNames > 0 and string.format("%d talent%s selected.", #selectedNames, #selectedNames == 1 and "" or "s")
+        or "No talents selected. Use the gear to choose.")
+  end
+  self.frame.talentHint:Show()
+  Theme.UpdateToggle(self.frame.talentEnabledCheck)
 
   self.frame.savedLoadoutHeader:ClearAllPoints()
-  self.frame.savedLoadoutHeader:SetPoint("TOPLEFT", classBottomAnchor, "BOTTOMLEFT", 0, -18)
+  self.frame.savedLoadoutHeader:SetPoint("TOPLEFT", self.frame.talentCells[1], "BOTTOMLEFT", 0, -18)
+  self.frame.savedLoadoutHeader:SetText("TALENT LAYOUTS")
   self.frame.savedLoadoutHeader:Show()
-  self.frame.savedLoadoutModeLabel:ClearAllPoints()
-  self.frame.savedLoadoutModeLabel:SetPoint("TOPLEFT", self.frame.savedLoadoutHeader, "BOTTOMLEFT", 0, -8)
-  self.frame.savedLoadoutModeLabel:Show()
-  self.frame.savedLoadoutModeDropDown:ClearAllPoints()
-  self.frame.savedLoadoutModeDropDown:SetPoint("TOPLEFT", self.frame.savedLoadoutModeLabel, "BOTTOMLEFT", -14, -4)
-  self.frame.savedLoadoutModeDropDown:Show()
-  self.frame.savedLoadoutCaptureButton:ClearAllPoints()
-  self.frame.savedLoadoutCaptureButton:SetPoint("TOPLEFT", self.frame.savedLoadoutModeDropDown, "TOPRIGHT", 26, 0)
-  self.frame.savedLoadoutCaptureButton:Show()
-  self.frame.savedLoadoutPickerButton:ClearAllPoints()
-  self.frame.savedLoadoutPickerButton:SetPoint("TOPLEFT", self.frame.savedLoadoutModeDropDown, "BOTTOMLEFT", 14, -12)
-  self.frame.savedLoadoutPickerButton:Show()
-  self.frame.savedLoadoutHint:ClearAllPoints()
-  self.frame.savedLoadoutHint:SetPoint("TOPLEFT", self.frame.savedLoadoutPickerButton, "BOTTOMLEFT", -14, -10)
-  self.frame.savedLoadoutHint:SetText(BuildSavedLoadoutHint(load))
-  self.frame.savedLoadoutHint:Show()
-  SetDropdown(self.frame.savedLoadoutModeDropDown, load.savedLoadoutMode, GetSavedLoadoutModeLabel(load.savedLoadoutMode))
-  classBottomAnchor = self.frame.savedLoadoutHint
-  savedLoadoutContentHeight = 126
+  self.frame.savedLoadoutDivider:ClearAllPoints()
+  self.frame.savedLoadoutDivider:SetPoint("TOPLEFT", self.frame.savedLoadoutHeader, "BOTTOMLEFT", 0, -6)
+  self.frame.savedLoadoutDivider:SetWidth(700)
+  self.frame.savedLoadoutDivider:Show()
 
-  self.frame.visibilityHeader:ClearAllPoints()
-  self.frame.visibilityHeader:SetPoint("TOPLEFT", classBottomAnchor, "BOTTOMLEFT", 0, -24)
-  self.frame.visibilitySection:ClearAllPoints()
-  self.frame.visibilitySection:SetPoint("TOPLEFT", self.frame.visibilityHeader, "BOTTOMLEFT", 0, -8)
-
-  local visibilityIndex = 0
-  for _, entry in ipairs(VISIBILITY_OPTIONS) do
-    local check = self.frame.visibilityChecks and self.frame.visibilityChecks[entry.key] or nil
-    if check then
-      local row = math.floor(visibilityIndex / 3)
-      local column = visibilityIndex % 3
-      check:ClearAllPoints()
-      check:SetPoint("TOPLEFT", self.frame.visibilitySection, "TOPLEFT", column * 180, -(row * 24))
-      visibilityIndex = visibilityIndex + 1
-    end
+  for index, cell in ipairs(self.frame.savedLoadoutToggleCells) do
+    cell:ClearAllPoints()
+    cell:SetPoint("TOPLEFT", self.frame.savedLoadoutDivider, "BOTTOMLEFT", (index - 1) * 351, -4)
+    cell:Show()
   end
 
-  self.frame.levelLabel:ClearAllPoints()
-  self.frame.levelLabel:SetPoint("TOPLEFT", self.frame.visibilitySection, "BOTTOMLEFT", 0, -20)
-  self.frame.levelInput:ClearAllPoints()
-  self.frame.levelInput:SetPoint("TOPLEFT", self.frame.levelLabel, "BOTTOMLEFT", 0, -6)
+  local savedLoadoutEnabled = load.savedLoadoutMode == "only" or load.savedLoadoutMode == "except"
+  self.frame.savedLoadoutEnabledCheck:ClearAllPoints()
+  self.frame.savedLoadoutEnabledCheck:SetPoint("LEFT", self.frame.savedLoadoutToggleCells[1], "LEFT", 14, 0)
+  self.frame.savedLoadoutEnabledCheck:SetChecked(savedLoadoutEnabled)
+  self.frame.savedLoadoutEnabledCheck:Show()
+  Theme.UpdateToggle(self.frame.savedLoadoutEnabledCheck)
 
-  self.frame.instanceTypeLabel:ClearAllPoints()
-  self.frame.instanceTypeLabel:SetPoint("TOPLEFT", self.frame.visibilitySection, "BOTTOMLEFT", 110, -20)
-  self.frame.instanceTypeDropDown:ClearAllPoints()
-  self.frame.instanceTypeDropDown:SetPoint("TOPLEFT", self.frame.instanceTypeLabel, "BOTTOMLEFT", -14, -4)
+  self.frame.savedLoadoutToggleHint:ClearAllPoints()
+  self.frame.savedLoadoutToggleHint:SetPoint("LEFT", self.frame.savedLoadoutToggleCells[2], "LEFT", 14, 0)
+  self.frame.savedLoadoutToggleHint:SetText(
+    savedLoadoutEnabled and "Only configured character layouts are evaluated."
+      or "Character layout filtering is off.")
+  self.frame.savedLoadoutToggleHint:Show()
 
-  self.frame.instanceIdLabel:ClearAllPoints()
-  self.frame.instanceIdLabel:SetPoint("TOPLEFT", self.frame.visibilitySection, "BOTTOMLEFT", 326, -20)
-  self.frame.instanceIdInput:ClearAllPoints()
-  self.frame.instanceIdInput:SetPoint("TOPLEFT", self.frame.instanceIdLabel, "BOTTOMLEFT", 0, -6)
+  for _, cell in ipairs(self.frame.savedLoadoutCells) do
+    cell:Hide()
+  end
+  self.frame.savedLoadoutModeLabel:Hide()
+  self.frame.savedLoadoutModeDropDown:Hide()
+  self.frame.savedLoadoutCaptureButton:Hide()
+  self.frame.savedLoadoutPickerButton:Hide()
+  self.frame.savedLoadoutHint:Hide()
 
-  self.frame.encounterIdLabel:ClearAllPoints()
-  self.frame.encounterIdLabel:SetPoint("TOPLEFT", self.frame.visibilitySection, "BOTTOMLEFT", 438, -20)
-  self.frame.encounterIdInput:ClearAllPoints()
-  self.frame.encounterIdInput:SetPoint("TOPLEFT", self.frame.encounterIdLabel, "BOTTOMLEFT", 0, -6)
+  if savedLoadoutEnabled then
+    for index, cell in ipairs(self.frame.savedLoadoutCells) do
+      local column = (index - 1) % 2
+      local row = math.floor((index - 1) / 2)
+      cell:ClearAllPoints()
+      cell:SetPoint("TOPLEFT", self.frame.savedLoadoutDivider, "BOTTOMLEFT",
+        column * 351, -54 - (row * 50))
+      cell:Show()
+    end
+    self.frame.savedLoadoutModeLabel:ClearAllPoints()
+    self.frame.savedLoadoutModeLabel:SetPoint("LEFT", self.frame.savedLoadoutCells[1], "LEFT", 14, 0)
+    self.frame.savedLoadoutModeLabel:Show()
+    self.frame.savedLoadoutModeDropDown:ClearAllPoints()
+    self.frame.savedLoadoutModeDropDown:SetPoint("RIGHT", self.frame.savedLoadoutCells[1], "RIGHT", 2, 0)
+    self.frame.savedLoadoutModeDropDown:Show()
+    self.frame.savedLoadoutCaptureButton:ClearAllPoints()
+    self.frame.savedLoadoutCaptureButton:SetPoint("CENTER", self.frame.savedLoadoutCells[2], "CENTER")
+    self.frame.savedLoadoutCaptureButton:Show()
+    self.frame.savedLoadoutPickerButton:ClearAllPoints()
+    self.frame.savedLoadoutPickerButton:SetPoint("CENTER", self.frame.savedLoadoutCells[3], "CENTER")
+    self.frame.savedLoadoutPickerButton:Show()
+    self.frame.savedLoadoutHint:ClearAllPoints()
+    self.frame.savedLoadoutHint:SetPoint("LEFT", self.frame.savedLoadoutCells[4], "LEFT", 14, 0)
+    self.frame.savedLoadoutHint:SetPoint("RIGHT", self.frame.savedLoadoutCells[4], "RIGHT", -14, 0)
+    self.frame.savedLoadoutHint:SetText(BuildSavedLoadoutHint(load))
+    self.frame.savedLoadoutHint:Show()
+  end
 
-  self.frame.equippedItemLabel:ClearAllPoints()
-  self.frame.equippedItemLabel:SetPoint("TOPLEFT", self.frame.levelInput, "BOTTOMLEFT", 0, -18)
-  self.frame.equippedItemInput:ClearAllPoints()
-  self.frame.equippedItemInput:SetPoint("TOPLEFT", self.frame.equippedItemLabel, "BOTTOMLEFT", 0, -6)
-  self.frame.equippedItemResolved:ClearAllPoints()
-  self.frame.equippedItemResolved:SetPoint("TOPLEFT", self.frame.equippedItemInput, "BOTTOMLEFT", 0, -6)
-
-  self.frame.instanceInfoRoot:ClearAllPoints()
-  self.frame.instanceInfoRoot:SetPoint("TOPLEFT", self.frame.equippedItemResolved, "BOTTOMLEFT", 0, -24)
-
-  self.frame.saveButton:ClearAllPoints()
-  self.frame.saveButton:SetPoint("TOPLEFT", self.frame.instanceInfoRoot, "BOTTOMLEFT", 0, -18)
+  local dropdownMode = load.savedLoadoutMode == "except" and "except" or "only"
+  SetDropdown(self.frame.savedLoadoutModeDropDown, dropdownMode, GetSavedLoadoutModeLabel(dropdownMode))
 
   local selectedSpecCount = 0
   for _, classToken in ipairs(CLASS_ORDER) do
@@ -1715,17 +1717,39 @@ function Panel:RefreshTalentSection(aura, topAnchor)
       selectedSpecCount = selectedSpecCount + #(CLASS_SPECS[classToken].specs or {})
     end
   end
-  local classHeight = classCollapsed and 0 or (math.ceil(#CLASS_ORDER / 2) * 24)
-  local specHeight = classCollapsed and 0 or (selectedSpecCount * 24)
+  local classHeight = math.ceil(#CLASS_ORDER / 4) * 50
+  local specHeight = selectedSpecCount * 24
   local featureNoticeHeight = self.frame.featureDisabledNotice:IsShown() and 72 or 0
-  local instanceInfoHeight = self.frame.instanceInfoRoot:GetHeight() + 24
+  self.frame.combatHeader:Hide()
+  self.frame.visibilityHeader:Hide()
+  self.frame.loadDetails:Show()
+  self.frame.combatInlineLabel:Show()
+  self.frame.combatDropDown:Show()
+  self.frame.visibilitySection:Show()
+  self.frame.levelLabel:Show()
+  self.frame.levelInput:Show()
+  self.frame.instanceTypeLabel:Show()
+  self.frame.instanceTypeDropDown:Show()
+  self.frame.instanceIdLabel:Show()
+  self.frame.instanceIdInput:Show()
+  self.frame.encounterIdLabel:Show()
+  self.frame.encounterIdInput:Show()
+  self.frame.equippedItemLabel:Show()
+  self.frame.equippedItemInput:Show()
+  self.frame.equippedItemResolved:Hide()
+  local instanceInfoAnchor = savedLoadoutEnabled
+    and self.frame.savedLoadoutCells[3]
+    or self.frame.savedLoadoutToggleCells[1]
+  self.frame.instanceInfoRoot:ClearAllPoints()
+  self.frame.instanceInfoRoot:SetPoint(
+    "TOPLEFT", instanceInfoAnchor, "BOTTOMLEFT", 0, -18)
+  self.frame.instanceInfoRoot:Show()
   self.frame.content:SetHeight(math.max(
-    980 + instanceInfoHeight + featureNoticeHeight,
-    640 + classHeight + specHeight + talentContentHeight + savedLoadoutContentHeight
-      + instanceInfoHeight + featureNoticeHeight
+    956 + classHeight + specHeight + (savedLoadoutEnabled and 100 or 0)
+      + self.frame.instanceInfoRoot:GetHeight() + featureNoticeHeight,
+    self.frame.scroll:GetHeight() or 0
   ))
 end
-
 function Panel:ShowTalentPicker(aura, groups)
   local frame = self.frame
   if not frame or not frame.talentModal then
@@ -1826,10 +1850,271 @@ function Panel:ShowSavedLoadoutPicker(aura)
   refreshList()
 end
 
+local function RefreshCompactLoadSummary(frame, aura)
+  if not frame or not aura then return end
+  local load = aura.load or {}
+  local qualifiers = 0
+  if (tonumber(load.level) or 0) > 0 then qualifiers = qualifiers + 1 end
+  if NormalizeText(load.instanceType) then qualifiers = qualifiers + 1 end
+  if (tonumber(load.instanceId) or 0) > 0 then qualifiers = qualifiers + 1 end
+  if (tonumber(load.encounterId) or 0) > 0 then qualifiers = qualifiers + 1 end
+  if (tonumber(load.equippedItemId) or 0) > 0 or NormalizeText(load.equippedItemName) then
+    qualifiers = qualifiers + 1
+  end
+  frame.generalSummary:SetText(string.format("General: %s%s",
+    CombatModeLabel(load.combat or "any"),
+    qualifiers > 0 and string.format(" + %d rule%s", qualifiers, qualifiers == 1 and "" or "s") or ""))
+
+  local visibility = GetVisibilitySelection(load)
+  local enabled = 0
+  for _, entry in ipairs(VISIBILITY_OPTIONS) do
+    if visibility[entry.key] then enabled = enabled + 1 end
+  end
+  frame.visibilitySummary:SetText(string.format("Visibility: %d/%d", enabled, #VISIBILITY_OPTIONS))
+end
+
+local function CreateCompactLoadControls(frame)
+  frame.loadRulesRow = CreateFrame("Frame", nil, frame.content)
+  frame.loadRulesRow:SetSize(700, 34)
+  Theme.StyleSurface(frame.loadRulesRow, "transparent", "transparent")
+
+  frame.loadRulesTitle = Frames.CreateLabel(frame.loadRulesRow, "LOAD", "GameFontNormal", "controlSmall")
+  frame.loadRulesTitle:SetPoint("TOPLEFT", 4, -7)
+  Theme.SetText(frame.loadRulesTitle, "navigation")
+  frame.loadRulesDivider = frame.loadRulesRow:CreateTexture(nil, "BORDER")
+  frame.loadRulesDivider:SetPoint("TOPLEFT", 0, -30)
+  frame.loadRulesDivider:SetPoint("TOPRIGHT", 0, -30)
+  frame.loadRulesDivider:SetHeight(1)
+  Theme.SetTexture(frame.loadRulesDivider, "border")
+
+  frame.enabledCheck:SetParent(frame.loadRulesRow)
+  frame.enabledCheck:ClearAllPoints()
+  frame.enabledCheck:SetPoint("TOPRIGHT", -8, -3)
+
+  frame.generalCell = frame.loadRulesRow:CreateTexture(nil, "BACKGROUND", nil, -2)
+  frame.generalCell:SetTexture("Interface\\Buttons\\WHITE8x8")
+  frame.generalCell:SetPoint("TOPLEFT", 0, -34)
+  frame.generalCell:SetSize(349, 48)
+  Theme.SetTexture(frame.generalCell, "canvasAlt")
+  frame.generalSummary = Frames.CreateLabel(frame.loadRulesRow, "General", "GameFontNormal", "control")
+  frame.generalSummary:SetPoint("LEFT", frame.generalCell, "LEFT", 14, 0)
+  frame.generalSummary:SetWidth(270)
+  frame.generalSummary:SetJustifyH("LEFT")
+  Theme.SetText(frame.generalSummary, "text")
+  frame.generalGear = Frames.CreateGearButton(frame.loadRulesRow, "Combat, level, instance, encounter, and equipment rules")
+  frame.generalGear:SetPoint("RIGHT", frame.generalCell, "RIGHT", -10, 0)
+
+  frame.visibilityCell = frame.loadRulesRow:CreateTexture(nil, "BACKGROUND", nil, -2)
+  frame.visibilityCell:SetTexture("Interface\\Buttons\\WHITE8x8")
+  frame.visibilityCell:SetPoint("TOPLEFT", 351, -34)
+  frame.visibilityCell:SetSize(349, 48)
+  Theme.SetTexture(frame.visibilityCell, "canvasAlt")
+  frame.visibilitySummary = Frames.CreateLabel(frame.loadRulesRow, "Visibility", "GameFontNormal", "control")
+  frame.visibilitySummary:SetPoint("LEFT", frame.visibilityCell, "LEFT", 14, 0)
+  frame.visibilitySummary:SetWidth(270)
+  frame.visibilitySummary:SetJustifyH("LEFT")
+  Theme.SetText(frame.visibilitySummary, "text")
+  frame.visibilityGear = Frames.CreateGearButton(frame.loadRulesRow, "Choose the contexts in which this aura may load")
+  frame.visibilityGear:SetPoint("RIGHT", frame.visibilityCell, "RIGHT", -10, 0)
+  frame.generalCell:Hide()
+  frame.generalSummary:Hide()
+  frame.generalGear:Hide()
+  frame.visibilityCell:Hide()
+  frame.visibilitySummary:Hide()
+  frame.visibilityGear:Hide()
+  frame.loadDetails = CreateFrame("Frame", nil, frame.conditionsRoot)
+  frame.loadDetails:SetSize(700, 322)
+  frame.loadDetails:SetPoint("TOPLEFT", frame.loadRulesRow, "BOTTOMLEFT", 0, -18)
+
+  local function CreateInlineHeader(text, y)
+    local label = Frames.CreateLabel(frame.loadDetails, text, "GameFontNormal", "controlSmall")
+    label:SetPoint("TOPLEFT", 4, y - 7)
+    Theme.SetText(label, "navigation")
+    local divider = frame.loadDetails:CreateTexture(nil, "BORDER")
+    divider:SetPoint("TOPLEFT", 0, y - 30)
+    divider:SetPoint("TOPRIGHT", 0, y - 30)
+    divider:SetHeight(1)
+    Theme.SetTexture(divider, "border")
+    return label, divider
+  end
+
+  local function CreateInlineCells(prefix, top, count, columns)
+    columns = columns or 2
+    local gap = 2
+    local cellWidth = columns == 4 and 173 or 349
+    local cells = {}
+    for index = 1, count do
+      local column = (index - 1) % columns
+      local row = math.floor((index - 1) / columns)
+      local cell = frame.loadDetails:CreateTexture(nil, "BACKGROUND", nil, -2)
+      cell:SetTexture("Interface\\Buttons\\WHITE8x8")
+      cell:SetPoint("TOPLEFT", column * (cellWidth + gap), top - (row * 50))
+      cell:SetSize(cellWidth, 48)
+      Theme.SetTexture(cell, "canvasAlt")
+      cells[index] = cell
+    end
+    frame[prefix .. "Cells"] = cells
+    return cells
+  end
+
+  frame.generalInlineHeader = CreateInlineHeader("GENERAL", 0)
+  local generalCells = CreateInlineCells("generalInline", -34, 6)
+  frame.combatInlineLabel = Frames.CreateLabel(frame.conditionsRoot, "Combat", "GameFontNormal", "control")
+  local generalFields = {
+    { label = frame.combatInlineLabel, control = frame.combatDropDown, kind = "dropdown" },
+    { label = frame.levelLabel, control = frame.levelInput, width = 78 },
+    { label = frame.instanceTypeLabel, control = frame.instanceTypeDropDown, kind = "dropdown" },
+    { label = frame.instanceIdLabel, control = frame.instanceIdInput, width = 78 },
+    { label = frame.encounterIdLabel, control = frame.encounterIdInput, width = 78 },
+    { label = frame.equippedItemLabel, control = frame.equippedItemInput, width = 170 },
+  }
+  for index, field in ipairs(generalFields) do
+    local cell = generalCells[index]
+    field.label:SetParent(frame.loadDetails)
+    field.control:SetParent(frame.loadDetails)
+    field.label:ClearAllPoints()
+    field.label:SetPoint("LEFT", cell, "LEFT", 14, 0)
+    field.label:SetWidth(field.kind == "dropdown" and 120 or field.width == 170 and 130 or 190)
+    field.label:SetJustifyH("LEFT")
+    Theme.ApplyTypography(field.label, "control")
+    Theme.SetText(field.label, "text")
+    field.control:ClearAllPoints()
+    if field.kind == "dropdown" then
+      UIDropDownMenu_SetWidth(field.control, 170)
+      field.control:SetPoint("RIGHT", cell, "RIGHT", 2, 0)
+    else
+      field.control:SetWidth(field.width)
+      field.control:SetPoint("RIGHT", cell, "RIGHT", -14, 0)
+    end
+    field.label:Show()
+    field.control:Show()
+  end
+
+  frame.visibilityInlineHeader = CreateInlineHeader("VISIBILITY", -190)
+  local visibilityCells = CreateInlineCells("visibilityInline", -224, 8, 4)
+  frame.visibilitySection:SetParent(frame.loadDetails)
+  frame.visibilitySection:ClearAllPoints()
+  frame.visibilitySection:SetAllPoints(frame.loadDetails)
+  frame.visibilitySection:SetFrameLevel(frame.loadDetails:GetFrameLevel() + 1)
+  frame.visibilitySection:Show()
+  for index, entry in ipairs(VISIBILITY_OPTIONS) do
+    local check = frame.visibilityChecks[entry.key]
+    check:ClearAllPoints()
+    check:SetPoint("LEFT", visibilityCells[index], "LEFT", 14, 0)
+    check:Show()
+  end
+
+
+  local function CurrentAura()
+    return ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+  end
+  local function ApplyAndRefresh()
+    Panel:ApplyCurrent()
+    RefreshCompactLoadSummary(frame, CurrentAura())
+  end
+
+  frame.generalPopover = Frames.CreateSettingsPopover({
+    title = "General Load Rules",
+    width = 360,
+    onChanged = ApplyAndRefresh,
+    rows = {
+      {
+        type = "dropdown", label = "Combat",
+        values = {
+          { value = "any", label = "Any Time" },
+          { value = "in", label = "In Combat" },
+          { value = "out", label = "Out of Combat" },
+        },
+        get = function()
+          local aura = CurrentAura()
+          return aura and aura.load and aura.load.combat or "any"
+        end,
+        set = function(value)
+          UIDropDownMenu_SetSelectedValue(frame.combatDropDown, value)
+          UIDropDownMenu_SetText(frame.combatDropDown, CombatModeLabel(value))
+        end,
+      },
+      {
+        type = "input", label = "Minimum Level",
+        get = function()
+          local aura = CurrentAura()
+          local value = aura and aura.load and aura.load.level or 0
+          return value > 0 and value or ""
+        end,
+        set = function(value) frame.levelInput:SetText(tostring(value or "")) end,
+      },
+      {
+        type = "dropdown", label = "Instance Type", values = INSTANCE_TYPE_OPTIONS,
+        get = function()
+          local aura = CurrentAura()
+          return aura and aura.load and aura.load.instanceType or ""
+        end,
+        set = function(value)
+          UIDropDownMenu_SetSelectedValue(frame.instanceTypeDropDown, value)
+          UIDropDownMenu_SetText(frame.instanceTypeDropDown, GetInstanceTypeLabel(value))
+        end,
+      },
+      {
+        type = "input", label = "Instance ID",
+        get = function()
+          local aura = CurrentAura()
+          local value = aura and aura.load and aura.load.instanceId or 0
+          return value > 0 and value or ""
+        end,
+        set = function(value) frame.instanceIdInput:SetText(tostring(value or "")) end,
+      },
+      {
+        type = "input", label = "Encounter ID",
+        get = function()
+          local aura = CurrentAura()
+          local value = aura and aura.load and aura.load.encounterId or 0
+          return value > 0 and value or ""
+        end,
+        set = function(value) frame.encounterIdInput:SetText(tostring(value or "")) end,
+      },
+      {
+        type = "input", label = "Equipped Item", width = 170,
+        get = function()
+          local aura = CurrentAura()
+          if not aura or not aura.load then return "" end
+          return (aura.load.equippedItemId or 0) > 0 and aura.load.equippedItemId
+            or aura.load.equippedItemName or ""
+        end,
+        set = function(value) frame.equippedItemInput:SetText(tostring(value or "")) end,
+      },
+    },
+  })
+  frame.generalGear:SetScript("OnClick", function() frame.generalPopover:ShowFor(frame.generalGear) end)
+
+  local visibilityRows = {}
+  for _, entry in ipairs(VISIBILITY_OPTIONS) do
+    local option = entry
+    visibilityRows[#visibilityRows + 1] = {
+      type = "toggle", label = option.label,
+      get = function()
+        local aura = CurrentAura()
+        return aura and IsVisibilityEnabled(aura.load and aura.load.visibility, option.key) or false
+      end,
+      set = function(value) frame.visibilityChecks[option.key]:SetChecked(value == true) end,
+    }
+  end
+  frame.visibilityPopover = Frames.CreateSettingsPopover({
+    title = "Visibility", width = 340, rows = visibilityRows, onChanged = ApplyAndRefresh,
+  })
+  frame.visibilityGear:SetScript("OnClick", function()
+    frame.visibilityPopover:ShowFor(frame.visibilityGear)
+  end)
+
+  frame:HookScript("OnHide", function()
+    if frame.generalPopover:IsShown() then frame.generalPopover:Hide() end
+    if frame.visibilityPopover:IsShown() then frame.visibilityPopover:Hide() end
+  end)
+end
+
 function Panel:Create(parent)
   local frame = CreateFrame("Frame", nil, parent)
   frame:SetAllPoints()
-  frame.collapsedSections = frame.collapsedSections or {}
+  frame.collapsedSections = frame.collapsedSections or { class = true }
   frame.scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
   frame.scroll:SetPoint("TOPLEFT", 0, 0)
   frame.scroll:SetPoint("BOTTOMRIGHT", -28, 0)
@@ -1885,15 +2170,22 @@ function Panel:Create(parent)
   Frames.StyleSecondaryButton(frame.classToggle)
   frame.classSection = CreateFrame("Frame", nil, frame.conditionsRoot)
   frame.classSection:SetPoint("TOPLEFT", frame.classHeader, "BOTTOMLEFT", 0, -8)
-  frame.classSection:SetSize(520, 180)
+  frame.classSection:SetSize(700, 200)
   frame.classChecks = {}
+  frame.classCells = {}
 
   for index, classToken in ipairs(CLASS_ORDER) do
     local classInfo = CLASS_SPECS[classToken]
+    local row = math.floor((index - 1) / 4)
+    local column = (index - 1) % 4
+    local cell = frame.classSection:CreateTexture(nil, "BACKGROUND", nil, -2)
+    cell:SetTexture("Interface\\Buttons\\WHITE8x8")
+    cell:SetPoint("TOPLEFT", column * 175, -(row * 50))
+    cell:SetSize(173, 48)
+    Theme.SetTexture(cell, "canvasAlt")
+    frame.classCells[index] = cell
     local check = Frames.CreateCheckbox(frame.classSection, classInfo.className)
-    local row = math.floor((index - 1) / 2)
-    local column = (index - 1) % 2
-    check:SetPoint("TOPLEFT", column * 220, -(row * 24))
+    check:SetPoint("LEFT", cell, "LEFT", 12, 0)
     frame.classChecks[classToken] = check
   end
 
@@ -1906,6 +2198,21 @@ function Panel:Create(parent)
     end
   end)
   Frames.StyleSecondaryButton(frame.specToggle)
+  frame.talentDivider = frame.conditionsRoot:CreateTexture(nil, "BORDER")
+  frame.talentDivider:SetTexture("Interface\\Buttons\\WHITE8x8")
+  frame.talentDivider:SetHeight(1)
+  Theme.SetTexture(frame.talentDivider, "border")
+  frame.talentCells = {}
+  for index = 1, 2 do
+    local cell = frame.conditionsRoot:CreateTexture(nil, "BACKGROUND", nil, -2)
+    cell:SetTexture("Interface\\Buttons\\WHITE8x8")
+    cell:SetSize(349, 48)
+    Theme.SetTexture(cell, "canvasAlt")
+    frame.talentCells[index] = cell
+  end
+  frame.talentGear = Frames.CreateGearButton(
+    frame.conditionsRoot, "Choose the talents required for this aura")
+
   frame.specToggle:Hide()
   frame.specChecks = {}
 
@@ -1914,7 +2221,16 @@ function Panel:Create(parent)
   frame.talentHint = Frames.CreateLabel(frame.conditionsRoot, "", "GameFontHighlightSmall")
   frame.talentHint:SetWidth(700)
   frame.talentHint:SetJustifyH("LEFT")
+  Theme.ApplyTypography(frame.talentHeader, "controlSmall")
+  Theme.SetText(frame.talentHeader, "navigation")
+  Theme.SetText(frame.talentHint, "textMuted")
   frame.talentPickerButton = Frames.CreateButton(frame.conditionsRoot, "Choose Talents", 140, 22, function() end)
+  frame.savedLoadoutEnabledCheck = Frames.CreateLabeledToggle(frame.conditionsRoot, "Use Talent Layouts")
+  frame.savedLoadoutToggleHint = Frames.CreateLabel(
+    frame.conditionsRoot, "", "GameFontHighlightSmall", "controlSmall")
+  frame.savedLoadoutToggleHint:SetWidth(315)
+  frame.savedLoadoutToggleHint:SetJustifyH("LEFT")
+  Theme.SetText(frame.savedLoadoutToggleHint, "textMuted")
   Frames.StyleSecondaryButton(frame.talentPickerButton)
   frame.talentPickerButton:Hide()
   frame.talentHeaders = {}
@@ -1922,6 +2238,15 @@ function Panel:Create(parent)
   frame.savedLoadoutHeader = Frames.CreateLabel(frame.conditionsRoot, "Talent Layouts", "GameFontNormal")
   frame.savedLoadoutModeLabel = Frames.CreateLabel(frame.conditionsRoot, "Mode", "GameFontNormal")
   frame.savedLoadoutModeDropDown = Frames.CreateDropdown(frame.conditionsRoot, 190)
+  frame.savedLoadoutToggleCells = {}
+  for index = 1, 2 do
+    local cell = frame.conditionsRoot:CreateTexture(nil, "BACKGROUND", nil, -2)
+    cell:SetTexture("Interface\\Buttons\\WHITE8x8")
+    cell:SetSize(349, 48)
+    Theme.SetTexture(cell, "canvasAlt")
+    frame.savedLoadoutToggleCells[index] = cell
+  end
+
   frame.savedLoadoutCaptureButton = Frames.CreateButton(frame.conditionsRoot, "Refresh Layouts", 160, 22, function() end)
   Frames.StyleSecondaryButton(frame.savedLoadoutCaptureButton)
   frame.savedLoadoutPickerButton = Frames.CreateButton(frame.conditionsRoot, "Choose Layouts", 160, 22, function() end)
@@ -1929,6 +2254,25 @@ function Panel:Create(parent)
   frame.savedLoadoutHint = Frames.CreateLabel(frame.conditionsRoot, "", "GameFontHighlightSmall")
   frame.savedLoadoutHint:SetWidth(700)
   frame.savedLoadoutHint:SetJustifyH("LEFT")
+  frame.savedLoadoutDivider = frame.conditionsRoot:CreateTexture(nil, "BORDER")
+  frame.savedLoadoutDivider:SetTexture("Interface\\Buttons\\WHITE8x8")
+  frame.savedLoadoutDivider:SetHeight(1)
+  Theme.SetTexture(frame.savedLoadoutDivider, "border")
+  frame.savedLoadoutCells = {}
+  for index = 1, 4 do
+    local cell = frame.conditionsRoot:CreateTexture(nil, "BACKGROUND", nil, -2)
+    cell:SetTexture("Interface\\Buttons\\WHITE8x8")
+    cell:SetSize(349, 48)
+    Theme.SetTexture(cell, "canvasAlt")
+    frame.savedLoadoutCells[index] = cell
+  end
+  frame.savedLoadoutEnabledCheck:Hide()
+  frame.savedLoadoutToggleHint:Hide()
+  frame.talentGear:Hide()
+  Theme.ApplyTypography(frame.savedLoadoutHeader, "controlSmall")
+  Theme.SetText(frame.savedLoadoutHeader, "navigation")
+  Theme.ApplyTypography(frame.savedLoadoutModeLabel, "control")
+  UIDropDownMenu_SetWidth(frame.savedLoadoutModeDropDown, 170)
   frame.savedLoadoutHeader:Hide()
   frame.savedLoadoutModeLabel:Hide()
   frame.savedLoadoutModeDropDown:Hide()
@@ -2084,6 +2428,7 @@ function Panel:Create(parent)
   frame.saveButton:Hide()
 
   self.frame = frame
+  CreateCompactLoadControls(frame)
 
   frame.enabledCheck:SetScript("OnClick", function()
     Panel:ApplyCurrent()
@@ -2153,6 +2498,21 @@ function Panel:Create(parent)
     end
     aura.load = aura.load or {}
     aura.load.talent = selfCheck:GetChecked() == true
+    Panel:RefreshSpecSection(aura)
+    Panel:ApplyCurrent()
+  end)
+  frame.savedLoadoutEnabledCheck:SetScript("OnClick", function(selfCheck)
+    local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
+    if not aura then
+      return
+    end
+    aura.load = aura.load or {}
+    if selfCheck:GetChecked() == true then
+      local selectedMode = UIDropDownMenu_GetSelectedValue(frame.savedLoadoutModeDropDown)
+      aura.load.savedLoadoutMode = selectedMode == "except" and "except" or "only"
+    else
+      aura.load.savedLoadoutMode = "any"
+    end
     Panel:RefreshSpecSection(aura)
     Panel:ApplyCurrent()
   end)
@@ -2232,12 +2592,12 @@ function Panel:Refresh(aura)
   self.frame.featureDisabledNotice:SetShown(featureDisabledNotice ~= nil)
   self.frame.featureDisabledNotice.text:SetText(
     featureDisabledNotice and ("|cffff6b78Feature disabled|r\n" .. featureDisabledNotice) or "")
-  self.frame.enabledCheck:ClearAllPoints()
+  self.frame.loadRulesRow:ClearAllPoints()
   if featureDisabledNotice then
-    self.frame.enabledCheck:SetPoint(
+    self.frame.loadRulesRow:SetPoint(
       "TOPLEFT", self.frame.featureDisabledNotice, "BOTTOMLEFT", 0, -16)
   else
-    self.frame.enabledCheck:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", 16, -20)
+    self.frame.loadRulesRow:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", 16, -16)
   end
   aura.load.classes = EnsureMap(aura.load.classes)
   aura.load.specs = EnsureMap(aura.load.specs)
@@ -2260,8 +2620,9 @@ function Panel:Refresh(aura)
   UIDropDownMenu_SetText(self.frame.combatDropDown, CombatModeLabel(aura.load.combat or "any"))
   UIDropDownMenu_SetSelectedValue(self.frame.instanceTypeDropDown, aura.load.instanceType or "")
   UIDropDownMenu_SetText(self.frame.instanceTypeDropDown, GetInstanceTypeLabel(aura.load.instanceType or ""))
-  UIDropDownMenu_SetSelectedValue(self.frame.savedLoadoutModeDropDown, aura.load.savedLoadoutMode or "any")
-  UIDropDownMenu_SetText(self.frame.savedLoadoutModeDropDown, GetSavedLoadoutModeLabel(aura.load.savedLoadoutMode or "any"))
+  local savedLoadoutDropDownMode = aura.load.savedLoadoutMode == "except" and "except" or "only"
+  UIDropDownMenu_SetSelectedValue(self.frame.savedLoadoutModeDropDown, savedLoadoutDropDownMode)
+  UIDropDownMenu_SetText(self.frame.savedLoadoutModeDropDown, GetSavedLoadoutModeLabel(savedLoadoutDropDownMode))
   for classToken, check in pairs(self.frame.classChecks) do
     check:SetChecked(aura.load.classes[classToken] == true)
     check:SetScript("OnClick", function(selfCheck)
@@ -2277,8 +2638,15 @@ function Panel:Refresh(aura)
   end
   self:RefreshInstanceInformation()
   self:RefreshSpecSection(aura)
+  RefreshCompactLoadSummary(self.frame, aura)
   local loadEnabled = aura.enabled ~= false
   self.frame.conditionsRoot:SetShown(loadEnabled)
+  self.frame.generalGear:EnableMouse(loadEnabled)
+  self.frame.visibilityGear:EnableMouse(loadEnabled)
+  self.frame.generalSummary:SetAlpha(loadEnabled and 1 or 0.42)
+  self.frame.visibilitySummary:SetAlpha(loadEnabled and 1 or 0.42)
+  self.frame.generalGear:SetAlpha(loadEnabled and 1 or 0.42)
+  self.frame.visibilityGear:SetAlpha(loadEnabled and 1 or 0.42)
   Theme.UpdateToggle(self.frame.enabledCheck)
   Theme.UpdateToggle(self.frame.talentEnabledCheck)
   if not loadEnabled then

@@ -28,6 +28,9 @@ Defaults.database = {
     },
   },
   exports = {},
+  sharing = {
+    ignoredPlayers = {},
+  },
 }
 
 Defaults.position = {
@@ -670,6 +673,9 @@ function Defaults:NewAura(kind, triggerType)
     aura.display.icon = false
     aura.position.width = 260
     aura.position.height = 40
+    if kind == "dynamic_group" then
+      aura.display.maintainAuraOrder = true
+    end
   elseif kind == "aura_bar_list" then
     aura.display.icon = true
     aura.display.showName = true

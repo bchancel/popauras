@@ -2,7 +2,7 @@
 ## Title: PopAuras Options
 ## Notes: Load-on-demand configuration editor for PopAuras
 ## Author: Popabeast-Sargeras
-## Version: 12.1.8
+## Version: 12.1.9
 ## Dependencies: PopAuras
 ## LoadOnDemand: 1
 
@@ -13,6 +13,7 @@ SoundPicker.lua
 
 UI\AuraTree.lua
 UI\ExportWindow.lua
+UI\AccountSyncWindow.lua
 UI\Toolbar.lua
 UI\CreateAuraDialog.lua
 UI\NewAuraPanel.lua
