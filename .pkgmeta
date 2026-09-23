@@ -15,3 +15,4 @@ ignore:
   - verify.ps1
   - .gitignore
   - update_and_push.ps1
+  - tests

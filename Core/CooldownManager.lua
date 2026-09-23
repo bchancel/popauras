@@ -257,7 +257,14 @@ function Manager:FindFramesByCooldownID(cooldownID, forceRefresh)
   cooldownID = Safe:Number(cooldownID)
   if not cooldownID or cooldownID <= 0 then return {} end
   if forceRefresh ~= true and self.frameCache[cooldownID] then
-    return self.frameCache[cooldownID]
+    local current = true
+    for _, frame in ipairs(self.frameCache[cooldownID]) do
+      if self:GetFrameCooldownID(frame) ~= cooldownID then
+        current = false
+        break
+      end
+    end
+    if current then return self.frameCache[cooldownID] end
   end
   local result, visited = {}, {}
   for _, name in ipairs(self.viewerNames) do

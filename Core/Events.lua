@@ -17,8 +17,11 @@ for index = 1, 40 do
   GROUP_UNIT_TOKENS[#GROUP_UNIT_TOKENS + 1] = "raid" .. index
 end
 
-local GLOBAL_REFRESH_EVENTS = {
+local FULL_REFRESH_EVENTS = {
   PLAYER_ENTERING_WORLD = true,
+}
+
+local LOAD_REFRESH_EVENTS = {
   PLAYER_EQUIPMENT_CHANGED = true,
   PLAYER_LEVEL_UP = true,
   PLAYER_TALENT_UPDATE = true,
@@ -38,6 +41,19 @@ local GLOBAL_REFRESH_EVENTS = {
   ENCOUNTER_END = true,
 }
 
+local LOAD_CACHE_INVALIDATION_EVENTS = {
+  PLAYER_ENTERING_WORLD = true,
+  PLAYER_TALENT_UPDATE = true,
+  PLAYER_SPECIALIZATION_CHANGED = true,
+  ACTIVE_PLAYER_SPECIALIZATION_CHANGED = true,
+  ACTIVE_TALENT_GROUP_CHANGED = true,
+  TRAIT_CONFIG_UPDATED = true,
+  TRAIT_CONFIG_LIST_UPDATED = true,
+  ACTIVE_COMBAT_CONFIG_CHANGED = true,
+  SELECTED_LOADOUT_CHANGED = true,
+  SPELLS_CHANGED = true,
+}
+
 local function AddAffectedAuraIds(target, source)
   if type(source) ~= "table" then
     return false
@@ -46,6 +62,18 @@ local function AddAffectedAuraIds(target, source)
   local added = false
   for _, auraId in ipairs(source) do
     if auraId and target[auraId] ~= true then
+      target[auraId] = true
+      added = true
+    end
+  end
+  return added
+end
+
+local function AddAffectedAuraIdSet(target, source)
+  if type(source) ~= "table" then return false end
+  local added = false
+  for auraId, enabled in pairs(source) do
+    if enabled == true and auraId and target[auraId] ~= true then
       target[auraId] = true
       added = true
     end
@@ -161,11 +189,12 @@ function Events:DispatchEvent(event, ...)
   local eventBucket = self.eventProfileBuckets and self.eventProfileBuckets[event]
     or ("event:" .. tostring(event or "UNKNOWN"))
   local eventProfile = ProfileStart(eventBucket)
-  local fullRefresh = GLOBAL_REFRESH_EVENTS[event] == true
+  local fullRefresh = FULL_REFRESH_EVENTS[event] == true
   local affectedAuraIds
   local hasAffectedAuras = false
 
-  if fullRefresh and ns.LoadEvaluator and ns.LoadEvaluator.InvalidateCache then
+  if LOAD_CACHE_INVALIDATION_EVENTS[event]
+      and ns.LoadEvaluator and ns.LoadEvaluator.InvalidateCache then
     ns.LoadEvaluator:InvalidateCache()
   end
   if ns.LoadEvaluator and ns.LoadEvaluator.SetCurrentEncounterId then
@@ -173,6 +202,18 @@ function Events:DispatchEvent(event, ...)
       ns.LoadEvaluator:SetCurrentEncounterId(...)
     elseif event == "ENCOUNTER_END" or event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
       ns.LoadEvaluator:SetCurrentEncounterId(0)
+    end
+  end
+
+  if not fullRefresh and ns.FeatureInventory and ns.FeatureInventory.GetSnapshot then
+    local snapshot = ns.FeatureInventory:GetSnapshot()
+    local loadAffected = snapshot and snapshot.loadAuraIDsByEvent
+      and snapshot.loadAuraIDsByEvent[event] or nil
+    if loadAffected then
+      affectedAuraIds = affectedAuraIds or AcquireScratchTable(self)
+      if AddAffectedAuraIdSet(affectedAuraIds, loadAffected) then
+        hasAffectedAuras = true
+      end
     end
   end
 
@@ -362,7 +403,10 @@ function Events:RebuildSubscriptions(snapshot)
       desiredEvents[event] = true
     end
   else
-    for event in pairs(GLOBAL_REFRESH_EVENTS) do
+    for event in pairs(FULL_REFRESH_EVENTS) do
+      desiredEvents[event] = true
+    end
+    for event in pairs(LOAD_REFRESH_EVENTS) do
       desiredEvents[event] = true
     end
   end

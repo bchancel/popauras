@@ -563,7 +563,8 @@ function provider:HandleEvent(event, ...)
     end
     self.indexBySpellID = nil
     self.allAuraIDs = nil
-    return true
+    self:RebuildIndex()
+    return self.allAuraIDs or EMPTY
   end
 
   if event == "UNIT_AURA" then

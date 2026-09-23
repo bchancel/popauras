@@ -263,6 +263,24 @@ ns.SpellAuraAliases = {
   },
 
   -- Monk
+  -- 12.1 spell data and combat logs confirm three timed self-buff variants:
+  -- normal, Unity Within, and Yu'lon's Avatar. Exclude the old stack counters.
+  [443294] = {
+    auraSpellIDs = { 443421, 443616, 1238904 },
+    name = "Heart of the Jade Serpent",
+    class = "MONK",
+    specs = { "MISTWEAVER", "WINDWALKER" },
+    verifiedBuild = 69933,
+    verification = "12.1 spell data; 443421/443616/1238904 self-buff applications confirmed in combat logs",
+  },
+  [443421] = {
+    auraSpellIDs = { 443421, 443616, 1238904 },
+    name = "Heart of the Jade Serpent",
+    class = "MONK",
+    specs = { "MISTWEAVER", "WINDWALKER" },
+    verifiedBuild = 69933,
+    verification = "Base buff also resolves Unity Within and Yu'lon's Avatar; preserve existing configured aura IDs",
+  },
   [115203] = {
     auraSpellIDs = { 115203, 120954 },
     name = "Fortifying Brew",

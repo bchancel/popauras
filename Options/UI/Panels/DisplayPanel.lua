@@ -951,6 +951,9 @@ function Panel:UpdateControlStates()
   frame.soundSection:SetHeight(soundEnabled and (dualTrinketSounds and 226 or 164) or 70)
   frame.blizzardSection:SetHeight(blizzardSpellAlertEnabled and 176 or 70)
   frame.raidFrameSection:SetHeight(showRaidFrameBody and 236 or 70)
+  if aura and self.ApplyCompactDisplayLayout then
+    self:ApplyCompactDisplayLayout(aura, isGroup, isNameplateAura)
+  end
   self:LayoutSections()
 
   if not soundEnabled or isGroup or isAuraBarList then
@@ -1397,12 +1400,12 @@ local function CreateDisplayGearControls(frame)
   })
   frame.backgroundGear:SetScript("OnClick", function() frame.backgroundPopover:ShowFor(frame.backgroundGear) end)
 
-  frame.noStacksGear = Frames.CreateGearButton(frame.canvasSection, "Choose the out-of-stacks color")
+  frame.noStacksGear = Frames.CreateGearButton(frame.canvasSection, "Configure the out-of-stacks appearance")
   frame.noStacksPopover = Frames.CreateSettingsPopover({
-    title = "Out-of-Stacks", width = 320, onChanged = Apply,
+    title = "Out-of-Stacks Appearance", width = 340, onChanged = Apply,
     rows = {
       {
-        type = "color", label = "Bar Color",
+        type = "color", label = "Out-of-Stacks Bar Color",
         get = function()
           local aura = GetEditedAura()
           return aura and aura.display and aura.display.noStacksBarColor
@@ -1812,7 +1815,8 @@ local function ApplyDisplayTwoColumnGrids(frame, aura, isGroup, isNameplateAura)
   }, frame.blizzardSpellAlertHint)
 end
 
-local function ApplyCompactDisplayLayout(frame, aura, isGroup, isNameplateAura)
+function Panel:ApplyCompactDisplayLayout(aura, isGroup, isNameplateAura)
+  local frame = self.frame
   if not frame or not aura then return end
 
   local useAnchorGear = not isNameplateAura
@@ -1995,11 +1999,11 @@ function Panel:Create(parent)
   frame.auraListSwipeCheck = Frames.CreateCheckbox(
     frame.canvasSection, "Show Cooldown Swipe")
   frame.auraListSwipeCheck:SetPoint("TOPLEFT", 12, -480)
-  frame.noStacksBarColorCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Out-of-Stacks Color")
+  frame.noStacksBarColorCheck = Frames.CreateLabeledToggle(frame.canvasSection, "Use Out-of-Stacks Color")
   frame.noStacksBarColorCheck:SetPoint("TOPLEFT", 12, -480)
   frame.noStacksBarColorWrap = CreateColorSwatch(frame.canvasSection, "Color", 220, -472)
   frame.chargeCooldownCheck = Frames.CreateLabeledToggle(
-    frame.canvasSection, "Show cooldown while charges remain")
+    frame.canvasSection, "Show Recharge While Charged")
   frame.chargeCooldownCheck:SetPoint("TOPLEFT", 12, -516)
   frame.barColorWrap.button:SetScript("OnClick", function()
     local widget = frame.barColorWrap
@@ -3212,7 +3216,6 @@ function Panel:Refresh(aura)
 
   self:ApplyCanvasLayout(isGroup, isNameplateAura, isIconAura, trigger.type == "death_alert")
   self:UpdateControlStates()
-  ApplyCompactDisplayLayout(self.frame, aura, isGroup, isNameplateAura)
   self:SetActiveSection(self.frame.activeSectionKey or "canvas")
   self.suppressUpdates = false
 end

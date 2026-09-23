@@ -47,13 +47,33 @@ local function VisibilityIsRestricted(visibility)
   return false
 end
 
-local function AddEvents(target, events)
-  for _, event in ipairs(events or {}) do
-    target[event] = true
+local function AddAuraSubtree(target, aura, visited)
+  if type(target) ~= "table" or type(aura) ~= "table" or not aura.id then return end
+  visited = visited or {}
+  if visited[aura.id] then return end
+  visited[aura.id] = true
+  target[aura.id] = true
+  for _, childID in ipairs(type(aura.children) == "table" and aura.children or {}) do
+    local child = ns.Registry and ns.Registry:GetAura(childID) or nil
+    if child then AddAuraSubtree(target, child, visited) end
   end
 end
 
-local function AddLoadDemand(snapshot, load)
+local function AddLoadEvent(snapshot, event, aura)
+  snapshot.loadEvents[event] = true
+  snapshot.loadAuraIDsByEvent[event] = snapshot.loadAuraIDsByEvent[event] or {}
+  -- A parent's load state is inherited by every descendant. Index the whole
+  -- subtree so a scoped load event cannot leave a child rendered from stale
+  -- ancestor state.
+  AddAuraSubtree(snapshot.loadAuraIDsByEvent[event], aura)
+end
+
+local function AddLoadEvents(snapshot, events, aura)
+  for _, event in ipairs(events or {}) do AddLoadEvent(snapshot, event, aura) end
+end
+
+local function AddLoadDemand(snapshot, aura)
+  local load = type(aura) == "table" and aura.load or nil
   if type(load) ~= "table" then
     return
   end
@@ -67,35 +87,35 @@ local function AddLoadDemand(snapshot, load)
     or HasAnyEntry(load.savedLoadoutSelections)
 
   if hasClassOrSpec or hasTalent or hasSavedLoadout then
-    AddEvents(snapshot.loadEvents, SPECIALIZATION_EVENTS)
+    AddLoadEvents(snapshot, SPECIALIZATION_EVENTS, aura)
   end
 
   if (tonumber(load.equippedItemId or 0) or 0) > 0
       or (type(load.equippedItemName) == "string" and load.equippedItemName ~= "") then
-    snapshot.loadEvents.PLAYER_EQUIPMENT_CHANGED = true
+    AddLoadEvent(snapshot, "PLAYER_EQUIPMENT_CHANGED", aura)
   end
 
   if (tonumber(load.level or 0) or 0) > 0 then
-    snapshot.loadEvents.PLAYER_LEVEL_UP = true
+    AddLoadEvent(snapshot, "PLAYER_LEVEL_UP", aura)
   end
 
   if tostring(load.combat or "any") ~= "any" then
-    snapshot.loadEvents.PLAYER_REGEN_DISABLED = true
-    snapshot.loadEvents.PLAYER_REGEN_ENABLED = true
+    AddLoadEvent(snapshot, "PLAYER_REGEN_DISABLED", aura)
+    AddLoadEvent(snapshot, "PLAYER_REGEN_ENABLED", aura)
   end
 
   local hasLocation = (tonumber(load.instanceId or 0) or 0) > 0
     or (type(load.instanceType) == "string" and load.instanceType ~= "")
     or VisibilityIsRestricted(load.visibility)
   if hasLocation then
-    snapshot.loadEvents.ZONE_CHANGED_NEW_AREA = true
-    snapshot.loadEvents.GROUP_ROSTER_UPDATE = true
+    AddLoadEvent(snapshot, "ZONE_CHANGED_NEW_AREA", aura)
+    AddLoadEvent(snapshot, "GROUP_ROSTER_UPDATE", aura)
   end
 
   if (tonumber(load.encounterId or 0) or 0) > 0 then
-    snapshot.loadEvents.ENCOUNTER_START = true
-    snapshot.loadEvents.ENCOUNTER_END = true
-    snapshot.loadEvents.ZONE_CHANGED_NEW_AREA = true
+    AddLoadEvent(snapshot, "ENCOUNTER_START", aura)
+    AddLoadEvent(snapshot, "ENCOUNTER_END", aura)
+    AddLoadEvent(snapshot, "ZONE_CHANGED_NEW_AREA", aura)
   end
 end
 
@@ -131,6 +151,7 @@ function FeatureInventory:BuildSnapshot()
   local snapshot = {
     providerTypes = {},
     loadEvents = { PLAYER_ENTERING_WORLD = true },
+    loadAuraIDsByEvent = {},
     configuredAuraCount = 0,
     enabledAuraCount = 0,
     needsInterruptTracker = false,
@@ -172,7 +193,7 @@ function FeatureInventory:BuildSnapshot()
         for _, trigger in ipairs(type(aura.triggers) == "table" and aura.triggers or {}) do
           AddTriggerDemand(snapshot, aura, trigger)
         end
-        AddLoadDemand(snapshot, aura.load)
+        AddLoadDemand(snapshot, aura)
       end
     end
   end

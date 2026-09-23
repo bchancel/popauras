@@ -39,9 +39,9 @@ $optionsTocText = Get-Content -LiteralPath $optionsToc -Raw
 if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
     throw "PopAuras.toc is not targeting PTR interface 120100"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.9\s*$' -or
-    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.9\s*$') {
-    throw "Core and options metadata are not aligned to release 12.1.9"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.9-3\s*$' -or
+    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.9-3\s*$') {
+    throw "Core and options metadata are not aligned to build 12.1.9-3"
 }
 if ($optionsTocText -notmatch '(?m)^## LoadOnDemand:\s*1\s*$' -or
     $optionsTocText -notmatch '(?m)^## Dependencies:\s*PopAuras\s*$') {
@@ -211,15 +211,24 @@ if ($nativeAuraRegionText -notmatch 'function Region:SetLayoutVisible' -or
 if ($nativeAuraRegionText -notmatch 'fallback\.countText' -or $nativeAuraRegionText -notmatch 'function Region:OnTimerUpdate') {
     throw "Native aura preview does not render stacks and animated duration state"
 }
-if ($nativeAuraRegionText -notmatch 'FindAuraDisplaySource' -or $nativeAuraRegionText -notmatch 'IsSecret\(auraSpellID\)') {
-    throw "Secret exact auras do not fall back to a compatible CDM rendered source"
+if ($nativeAuraRegionText -notmatch 'FindAuraStateSource' -or
+    $nativeAuraRegionText -notmatch 'function Region:SyncCDMDuration' -or
+    $nativeAuraRegionText -notmatch 'fallback\.bar:SetTimerDuration\(object' -or
+    $nativeAuraRegionText -notmatch 'TimerPresenter:BindText' -or
+    $nativeAuraRegionText -notmatch 'instanceID = okInstance and ns\.SafeValues:Number\(instanceID\)') {
+    throw "Native aura presentation does not support tracked CDM icons through an opaque duration object"
 }
-if ($nativeAuraRegionText -notmatch 'TriggerUsesAuraAlias' -or
-    $nativeAuraRegionText -notmatch 'cdmFallbackEligible == true') {
-    throw "CDM replacement is not restricted to ability-to-applied-aura relationships"
+if ($nativeAuraRegionText -match 'TriggerUsesAuraAlias|cdmFallbackEligible|pcall\(source\.GetAuraSpellID' -or
+    $nativeAuraRegionText -match 'GetAuraDataCached') {
+    throw "CDM aura rendering still depends on an alias whitelist or raw aura payload"
 }
-if ($nativeAuraRegionText -match 'GetAuraDataCached' -or $nativeAuraRegionText -match 'GetAuraSpellInstanceID') {
-    throw "Native aura rendering reads CDM secret aura data instead of mirroring supported widgets"
+if ($nativeAuraRegionText -notmatch 'self\.nativeDurationRequired = true' -or
+    $nativeAuraRegionText -notmatch 'SetNativeSuppressed\(self\.nativeDurationRequired ~= true\)' -or
+    $nativeAuraRegionText -notmatch 'LogPresentationDebug') {
+    throw "Restricted CDM instance IDs can disable both native and CDM aura presentation"
+}
+if ($nativeAuraRegionText -notmatch 'FindAuraStateSource\(spellIDs, unit, true\)') {
+    throw "Native aura CDM sources cannot recover from cached empty viewer frames"
 }
 if ($nativeAuraRegionText -notmatch 'hooksecurefunc\(sourceBar, "SetValue"' -or
     $nativeAuraRegionText -notmatch 'fallback\.bar:SetValue\(value\)') {
@@ -290,9 +299,24 @@ if ($auraProviderText -notmatch 'DEFERRED_GROUP_MISSING_SECONDS' -or
     $auraProviderText -notmatch 'HasImmediateConsumers') {
     throw "Presentation-only group missing auras are not safely coalesced"
 }
-if ($auraProviderText -notmatch 'provider\.deferredAuraIDs\[auraConfig\.id\]\s*==\s*true' -or
+if ($auraProviderText -notmatch 'local function GetCachedMissingGroupUnit' -or
+    $auraProviderText -notmatch 'function provider:MarkGroupUnitDirty' -or
+    $auraProviderText -notmatch 'groupUnitRevisions' -or
+    $auraProviderText -notmatch 'status == "unavailable"' -or
+    $auraProviderText -notmatch 'provider_group_missing_unit:aura' -or
     $auraProviderText -notmatch 'provider_deferred:aura') {
-    throw "Deferred group aura evaluation is not isolated or profiled"
+    throw "Group missing-aura evaluation is not incrementally cached or profiled"
+}
+if ($auraProviderText -match 'if event == "UNIT_AURA" and not IsEditorOpen') {
+    throw "UNIT_FLAGS bypasses the safe group missing-aura coalescing route"
+}
+
+$featureInventoryText = Get-Content -LiteralPath (Join-Path $root "Core\FeatureInventory.lua") -Raw
+if ($featureInventoryText -notmatch 'loadAuraIDsByEvent' -or
+    $featureInventoryText -notmatch 'local function AddAuraSubtree' -or
+    $eventsText -notmatch 'AddAffectedAuraIdSet' -or
+    $eventsText -match 'local GLOBAL_REFRESH_EVENTS') {
+    throw "Load events are not routed through the scoped aura dependency index"
 }
 
 $blizzardAuraFramesText = Get-Content -LiteralPath (Join-Path $root "Core\BlizzardAuraFrames.lua") -Raw
@@ -773,11 +797,11 @@ if ($displayPanelText -notmatch 'Out-of-Stacks Color' -or
     $defaultsText -notmatch 'noStacksBarColorEnabled\s*=\s*false') {
     throw "Spell Cooldown bars do not expose a saved Out-of-Stacks Color option"
 }
-if ($displayPanelText -notmatch 'Show cooldown while charges remain' -or
-    $displayPanelText -notmatch 'CreateLabeledToggle\([\s\S]{0,100}"Show cooldown while charges remain"' -or
+if ($displayPanelText -notmatch 'Show Recharge While Charged' -or
+    $displayPanelText -notmatch 'CreateLabeledToggle\([\s\S]{0,100}"Show Recharge While Charged"' -or
     $displayPanelText -notmatch 'chargeCooldownCheck:SetPoint\("TOPLEFT", 12, -516\)' -or
     $displayPanelText -notmatch 'trigger\.showChargeCooldown\s*=\s*frame\.chargeCooldownCheck:GetChecked' -or
-    $triggerPanelText -match 'Show cooldown while charges remain') {
+    $triggerPanelText -match 'Show Recharge While Charged') {
     throw "The partial-charge cooldown option is not owned exclusively by Display"
 }
 if ($displayPanelText -match 'showAuraWindow|Show CDM aura/proc' -or

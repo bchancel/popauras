@@ -231,8 +231,8 @@ local function BuildAbsent(trigger, auraConfig, helpful, spellID, missingMatched
   })
 end
 
-local function CollectMissingGroupUnit(absentUnits, unit, trigger, helpful, spellIDs)
-  if not UnitPassesFilters(unit, trigger) then return false end
+local function EvaluateMissingGroupUnit(unit, trigger, helpful, spellIDs)
+  if not UnitPassesFilters(unit, trigger) then return "excluded" end
 
   local unitAbsent = true
   local unitUnavailable = false
@@ -246,13 +246,60 @@ local function CollectMissingGroupUnit(absentUnits, unit, trigger, helpful, spel
       unitAbsent = false
     end
   end
-  if unitAbsent then absentUnits[#absentUnits + 1] = unit end
-  return unitUnavailable
+  if unitUnavailable then return "unavailable" end
+  return unitAbsent and "absent" or "present"
+end
+
+local function GetGroupUnitRevision(unit)
+  return provider.groupUnitRevisions and provider.groupUnitRevisions[unit] or 0
+end
+
+local function GetGroupMissingTracker(trigger)
+  provider.groupMissingTrackers = provider.groupMissingTrackers
+    or setmetatable({}, { __mode = "k" })
+  local tracker = provider.groupMissingTrackers[trigger]
+  local rosterRevision = provider.groupRosterRevision or 0
+  if not tracker or tracker.rosterRevision ~= rosterRevision then
+    tracker = {
+      rosterRevision = rosterRevision,
+      units = {},
+    }
+    provider.groupMissingTrackers[trigger] = tracker
+  end
+  return tracker
+end
+
+local function GetCachedMissingGroupUnit(tracker, unit, trigger, helpful, spellIDs)
+  local revision = GetGroupUnitRevision(unit)
+  local cached = tracker.units[unit]
+  if cached and cached.revision == revision then return cached.status end
+  local profileStart = ns.Profiler and ns.Profiler.IsEnabled and ns.Profiler:IsEnabled()
+    and ns.Profiler:Begin("provider_group_missing_unit:aura") or nil
+  local status = EvaluateMissingGroupUnit(unit, trigger, helpful, spellIDs)
+  if profileStart and ns.Profiler and ns.Profiler.Finish then
+    ns.Profiler:Finish("provider_group_missing_unit:aura", profileStart)
+  end
+  tracker.units[unit] = {
+    revision = revision,
+    status = status,
+  }
+  return status
 end
 
 local function EvaluateGroupMissing(trigger, auraConfig, helpful, spellIDs)
   local absentUnits = {}
-  local anyUnavailable = CollectMissingGroupUnit(absentUnits, "player", trigger, helpful, spellIDs)
+  local anyUnavailable = false
+  local tracker = GetGroupMissingTracker(trigger)
+  local function collect(unit)
+    local status = GetCachedMissingGroupUnit(tracker, unit, trigger, helpful, spellIDs)
+    if status == "unavailable" then
+      anyUnavailable = true
+    elseif status == "absent" then
+      absentUnits[#absentUnits + 1] = unit
+    end
+  end
+
+  collect("player")
   local units, count
   if IsInRaid and IsInRaid() then
     units = RAID_UNIT_TOKENS
@@ -262,9 +309,7 @@ local function EvaluateGroupMissing(trigger, auraConfig, helpful, spellIDs)
     count = math.min(Safe:Number(GetNumSubgroupMembers and GetNumSubgroupMembers()) or 0, #PARTY_UNIT_TOKENS)
   end
   for index = 1, count or 0 do
-    if CollectMissingGroupUnit(absentUnits, units[index], trigger, helpful, spellIDs) then
-      anyUnavailable = true
-    end
+    collect(units[index])
   end
 
   if anyUnavailable then return BuildUnavailable(trigger, auraConfig, helpful, spellIDs[1]) end
@@ -290,9 +335,7 @@ function provider:Evaluate(trigger, auraConfig)
   if #spellIDs == 0 then
     return BuildUnavailable(trigger, auraConfig, helpful, nil)
   end
-  if trigger.unit == "group" and trigger.auraFilter == "missing"
-      and auraConfig and provider.deferredAuraIDs
-      and provider.deferredAuraIDs[auraConfig.id] == true then
+  if trigger.unit == "group" and trigger.auraFilter == "missing" then
     return EvaluateGroupMissing(trigger, auraConfig, helpful, spellIDs)
   end
 
@@ -404,8 +447,8 @@ function provider:ScheduleDeferredAuraRefresh(auraIDs)
   if type(auraIDs) ~= "table" or #auraIDs == 0 or not (C_Timer and C_Timer.After) then
     return false
   end
-  -- Queue configuration IDs only. Aura payloads and presence results are
-  -- always queried fresh at execution time and never cross the secret boundary.
+  -- Queue configuration IDs only. The tracker retains sanitized semantic
+  -- states, never aura payloads or secret-backed presentation values.
   self.pendingDeferredAuraIDs = self.pendingDeferredAuraIDs or {}
   for _, auraID in ipairs(auraIDs) do self.pendingDeferredAuraIDs[auraID] = true end
   if self.deferredRefreshPending then return true end
@@ -440,6 +483,7 @@ function provider:RebuildIndex()
   self.unitAuraRoutes = {}
   self.deferredAuraIDs = {}
   self.compiledSpellIDsByTrigger = setmetatable({}, { __mode = "k" })
+  self.groupMissingTrackers = setmetatable({}, { __mode = "k" })
   local allSeen = {}
   local byUnitSeen = {}
   for _, auraID in ipairs(ns.Registry:GetFlatOrder()) do
@@ -474,9 +518,11 @@ function provider:RebuildIndex()
       end
 
       if aura and aura.enabled ~= false and needsLogicalRefresh
-          and CanCoalesceGroupMissing(aura, trigger) then
-        self.deferredAuraIDs[auraID] = true
+          and trigger.unit == "group" and trigger.auraFilter == "missing" then
         self.compiledSpellIDsByTrigger[trigger] = BuildSpellIDs(trigger)
+        if CanCoalesceGroupMissing(aura, trigger) then
+          self.deferredAuraIDs[auraID] = true
+        end
       end
 
       -- Blizzard's native AuraContainer receives UNIT_AURA directly. Avoid a
@@ -503,6 +549,23 @@ function provider:InvalidateCaches()
   self.deferredAuraIDs = nil
   self.compiledSpellIDsByTrigger = nil
   self.pendingDeferredAuraIDs = {}
+  self.groupMissingTrackers = nil
+  self.groupUnitRevisions = {}
+  self.groupRosterRevision = (self.groupRosterRevision or 0) + 1
+end
+
+function provider:MarkGroupUnitDirty(unit)
+  if type(unit) ~= "string"
+      or (unit ~= "player" and not unit:find("^party%d+$") and not unit:find("^raid%d+$")) then
+    return
+  end
+  self.groupUnitRevisions = self.groupUnitRevisions or {}
+  self.groupUnitRevisions[unit] = (self.groupUnitRevisions[unit] or 0) + 1
+end
+
+function provider:InvalidateGroupMissingState()
+  self.groupRosterRevision = (self.groupRosterRevision or 0) + 1
+  self.groupMissingTrackers = setmetatable({}, { __mode = "k" })
 end
 
 function provider:GetUnitEventUnits(event)
@@ -542,6 +605,7 @@ function provider:HandleEvent(event, ...)
     if unit and unit:find("^nameplate%d+$") then
       return
     end
+    self:MarkGroupUnitDirty(unit)
     if unit and ns.runtime and ns.runtime.RefreshNativeAuraSources then
       ns.runtime:RefreshNativeAuraSources(unit)
     end
@@ -550,6 +614,10 @@ function provider:HandleEvent(event, ...)
     unit = "target"
   elseif event == "UNIT_FLAGS" then
     unit = Safe:String((...))
+    self:MarkGroupUnitDirty(unit)
+  elseif event == "GROUP_ROSTER_UPDATE" then
+    self:InvalidateGroupMissingState()
+    return
   elseif event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_SPECIALIZATION_CHANGED"
       or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" or event == "SPELLS_CHANGED" then
     self:InvalidateCaches()
@@ -580,7 +648,7 @@ function provider:GetAffectedAuras(event, ...)
     -- if a future client does hide the token, native containers still update
     -- themselves and logical evaluation must wait for a scoped/global event.
     if not unit then return EMPTY end
-    if event == "UNIT_AURA" and not IsEditorOpen() then
+    if not IsEditorOpen() then
       local immediate, deferred = self:GetUnitAuraRoutes(unit)
       if self:ScheduleDeferredAuraRefresh(deferred) then return immediate end
     end

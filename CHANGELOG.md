@@ -1,3 +1,17 @@
+# v12.1.9-3
+- Kept Blizzard native aura duration presentation available when an active CDM icon has a restricted instance ID or inaccessible duration
+- Retained the chosen native duration path across combat transitions and added safe aura-render diagnostics
+
+# v12.1.9-2
+- Fixed combat aura bars missing when Blizzard tracks the buff as a CDM icon, using its public active state and opaque duration object
+- Added Heart of the Jade Serpent's Unity Within and Yu'lon's Avatar buff variants to the shared spell resolver
+- Preserved custom aura labels in CDM presentation and recovered late CDM frame acquisition
+
+# v12.1.9-1
+- Replaced repeated full-group missing-aura scans with secret-safe per-unit semantic tracking
+- Scoped combat, roster, specialization, and load events to affected aura subtrees instead of full-registry refreshes
+- Kept Ready and Out-of-Stacks appearance controls in distinct compact-menu rows and popovers
+
 # v12.1.9
 1. The settings window now uses clear sections, compact two column rows, consistent controls, and gear menus for related options.
 2. Account Sync exchanges a small comparison list before it sends the auras each player selects.

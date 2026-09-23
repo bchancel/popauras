@@ -84,23 +84,6 @@ local function GetCDMSpellIDs(trigger)
   return result
 end
 
-local function TriggerUsesAuraAlias(trigger)
-  local function related(value)
-    local spellID = ns.SafeValues:Number(value)
-    return spellID and ns.util.Spells:IsAuraAliasRelated(spellID) or false
-  end
-  if related(trigger and trigger.spellId) then return true end
-  for _, value in ipairs(type(trigger and trigger.spellIDs) == "table" and trigger.spellIDs or EMPTY) do
-    if related(value) then return true end
-  end
-  local names = type(trigger and trigger.spellNames) == "table" and trigger.spellNames
-    or type(trigger and trigger.exactSpellNames) == "table" and trigger.exactSpellNames or EMPTY
-  for _, name in ipairs(names) do
-    if related(ns.util.Spells:ResolveConfiguredSpellID(name)) then return true end
-  end
-  return false
-end
-
 local function GetCandidateSignature(trigger)
   local spellIDs = {}
   for spellID in pairs(GetSpellMap(trigger)) do
@@ -179,6 +162,7 @@ end
 function Region:StyleFallback(aura, isPreview, state)
   local fallback = self.fallback
   if not fallback then return end
+  self:ClearCDMTimer()
   local display = aura.display or {}
   local trigger = GetTrigger(aura)
   local spellID = GetPrimarySpellID(trigger)
@@ -239,7 +223,10 @@ function Region:StyleFallback(aura, isPreview, state)
 
   fallback.icon:SetTexture(spellIcon)
   fallback.icon:SetShown(display.icon ~= false)
-  fallback.nameText:SetText(spellName)
+  local nameOverride = ns.SafeValues:String(aura.text and aura.text.nameOverride)
+  local labelTemplate = ns.SafeValues:String(aura.text and aura.text.label) or "%n"
+  local label = nameOverride and nameOverride ~= "" and nameOverride or labelTemplate
+  fallback.nameText:SetText((label:gsub("%%n", spellName)))
   fallback.nameText:SetShown(display.showName == true)
   fallback.timerText:SetText(isPreview and ns.TextResolver:GetTimerText(state, aura)
     or (display.readyLook == true and (display.readyText or "Ready") or ""))
@@ -259,6 +246,12 @@ function Region:StyleFallback(aura, isPreview, state)
     display.timerAnchor, display.timerOffsetX, display.timerOffsetY)
   PositionText(fallback.countText, fallback.presentation, fallback.icon,
     display.stacksAnchor, display.stacksOffsetX, display.stacksOffsetY)
+  Frames.ConfigureBarTextBounds(fallback.nameText, fallback.timerText, fallback.presentation,
+    display, fallbackWidth, display.orientation or "HORIZONTAL")
+  local showSwipe = display.swipe == true and (aura.kind == "icon" or display.icon ~= false)
+  fallback.cooldown:SetDrawSwipe(showSwipe)
+  fallback.cooldown:SetDrawEdge(showSwipe and display.iconCooldownEdge == true)
+  fallback.cooldown:SetDrawBling(showSwipe and display.iconCooldownBling == true)
   ApplyRotation(fallback.nameText, display.nameRotation)
   ApplyRotation(fallback.timerText, display.timerRotation)
   ApplyRotation(fallback.countText, display.stacksRotation)
@@ -326,20 +319,77 @@ function Region:SetLayoutVisible(visible)
   end
 end
 
+function Region:LogPresentationDebug(reason)
+  local aura = self.currentAura
+  local trigger = GetTrigger(aura)
+  if not trigger or trigger.debug ~= true or not ns.Debug then return end
+  local sourceKind = self.cdmSource and (self.cdmSourceBar and "cdm-bar" or "cdm-icon") or "none"
+  local message = string.format("%s loaded=%s source=%s mode=%s layout=%s native=%s timer=%s",
+    aura.name or "Aura", tostring(self.loadMatched == true), sourceKind, reason,
+    tostring(self.layoutVisible == true), self.nativeSuppressed == true and "suppressed" or "enabled",
+    self.cdmDurationStatus or "not-requested")
+  if self.lastPresentationDebug == message then return end
+  self.lastPresentationDebug = message
+  ns.Debug:Log("Aura render", message)
+end
+
+function Region:ClearCDMTimer()
+  if ns.TimerPresenter then ns.TimerPresenter:UnbindText(self.fallback.timerText) end
+  self.fallback.cooldown:Clear()
+  self.fallback.bar:SetMinMaxValues(0, 1)
+  self.fallback.bar:SetValue(0)
+end
+
+function Region:SyncCDMDuration(source)
+  self.cdmDurationStatus = "duration-api-unavailable"
+  if type(source.GetAuraSpellInstanceID) ~= "function"
+      or not C_UnitAuras or not C_UnitAuras.GetAuraDuration then return false end
+  local okInstance, instanceID = pcall(source.GetAuraSpellInstanceID, source)
+  self.cdmDurationStatus = okInstance and ns.SafeValues:IsSecret(instanceID)
+    and "instance-restricted" or "instance-unavailable"
+  instanceID = okInstance and ns.SafeValues:Number(instanceID) or nil
+  if not instanceID then return false end
+  local trigger = GetTrigger(self.currentAura)
+  local okDuration, object = pcall(C_UnitAuras.GetAuraDuration, trigger.unit or "player", instanceID)
+  self.cdmDurationStatus = "duration-unavailable"
+  if not okDuration or ns.SafeValues:IsSecret(object) or object == nil then return false end
+  self.cdmDurationStatus = "duration-object"
+
+  -- Keep the opaque object entirely on the presentation path. Blizzard drives
+  -- the bar, swipe, and text; addon Lua never reads its restricted timing.
+  local display = self.currentAura.display or {}
+  if not self.cdmSourceBar then
+    local interpolation = Enum.StatusBarInterpolation.Immediate
+    self.fallback.bar:SetTimerDuration(object, interpolation, Enum.StatusBarTimerDirection.RemainingTime)
+    if ns.TimerPresenter and display.showTimer == true then
+      ns.TimerPresenter:BindText(self.fallback.timerText, object, {
+        formatter = GetDecimalFormatter(display.timerDecimals),
+        expiredText = "", zeroDurationText = "",
+      })
+    end
+  end
+  self.fallback.cooldown:SetCooldownFromDurationObject(object, true)
+  return true
+end
+
 function Region:SyncCDMRenderedState()
   local source = self.cdmSource
   local sourceBar = self.cdmSourceBar
-  if not source or not sourceBar or self.cdmMode ~= true then return end
-
-  local okRange, minimum, maximum = pcall(sourceBar.GetMinMaxValues, sourceBar)
-  if okRange then self.fallback.bar:SetMinMaxValues(minimum, maximum) end
-  local okValue, value = pcall(sourceBar.GetValue, sourceBar)
-  if okValue then
-    -- These widget setters explicitly accept secret arguments in tainted addon
-    -- code. The value goes directly back into display objects unchanged.
-    self.fallback.bar:SetValue(value)
-    if self.currentAura.display and self.currentAura.display.showTimer == true then
-      self.fallback.timerText:SetFormattedText(self.cdmTimerFormat or "%.1f", value)
+  if not source or self.cdmMode ~= true then return false end
+  local hasDuration = not sourceBar and self:SyncCDMDuration(source)
+  if not sourceBar and not hasDuration then return false end
+  if sourceBar then
+    self.cdmDurationStatus = "bar-widgets"
+    local okRange, minimum, maximum = pcall(sourceBar.GetMinMaxValues, sourceBar)
+    if okRange then self.fallback.bar:SetMinMaxValues(minimum, maximum) end
+    local okValue, value = pcall(sourceBar.GetValue, sourceBar)
+    if okValue then
+      -- These widget setters explicitly accept secret arguments. Pass the
+      -- presentation values directly to widgets without inspecting them.
+      self.fallback.bar:SetValue(value)
+      if self.currentAura.display and self.currentAura.display.showTimer == true then
+        self.fallback.timerText:SetFormattedText(self.cdmTimerFormat or "%.1f", value)
+      end
     end
   end
 
@@ -357,26 +407,32 @@ function Region:SyncCDMRenderedState()
     local okText, text = pcall(sourceApplications.GetText, sourceApplications)
     if okText then self.fallback.countText:SetText(text) end
   end
+  return true
 end
 
 function Region:SyncCDMSource()
   local source = self.cdmSource
   if not source or not self.currentAura then return false end
   if ns.CooldownManager:GetFrameCooldownID(source) ~= self.cdmCooldownID then
+    self:ClearCDMTimer()
     self.fallback:Hide()
     self:SetLayoutVisible(false)
-    return false
+    self:LogPresentationDebug("source-recycled")
+    return self.cdmMode == true
   end
 
+  if self.cdmMode ~= true then return false end
+  self:SetNativeSuppressed(self.nativeDurationRequired ~= true)
   local okActive, active = pcall(source.IsActive, source)
   active = okActive and ns.SafeValues:Boolean(active) or nil
   if active ~= true then
     local trigger = GetTrigger(self.currentAura)
     local showAlways = trigger and trigger.showAlways == true
     self:SetLayoutVisible(showAlways)
-    if self.cdmMode == true then
-      self.fallback:SetShown(showAlways)
-    end
+    if self.cdmPresentedActive ~= false then self:StyleFallback(self.currentAura, false) end
+    self.cdmPresentedActive = false
+    self.fallback:SetShown(showAlways)
+    self:LogPresentationDebug("inactive-or-unavailable")
     return self.cdmMode == true
   end
 
@@ -387,31 +443,49 @@ function Region:SyncCDMSource()
   if sourceUnit ~= requiredUnit then
     local showAlways = trigger and trigger.showAlways == true
     self:SetLayoutVisible(showAlways)
-    if self.cdmMode == true then self.fallback:SetShown(showAlways) end
+    if self.cdmPresentedActive ~= false then self:StyleFallback(self.currentAura, false) end
+    self.cdmPresentedActive = false
+    self.fallback:SetShown(showAlways)
+    self:LogPresentationDebug("unit-mismatch")
     return self.cdmMode == true
   end
   self:SetLayoutVisible(true)
-
-  -- issecretvalue is the only operation performed on the CDM aura spell ID.
-  -- The secret itself is never compared, formatted, cached, or persisted.
-  local okSpell, auraSpellID = pcall(source.GetAuraSpellID, source)
-  if okSpell and self.cdmFallbackEligible == true and ns.SafeValues:IsSecret(auraSpellID) then
-    self.cdmMode = true
+  self.cdmPresentedActive = true
+  if self.nativeDurationRequired == true then
+    self.fallback:Hide()
+    self:LogPresentationDebug("native-duration")
+    return true
   end
-  if self.cdmMode ~= true then return false end
 
-  self:SetNativeSuppressed(true)
   local display = self.currentAura.display or {}
   local color = display.color or { r = 1, g = 1, b = 1, a = 1 }
   self.fallback.bar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
   Colors.Apply(self.fallback.timerText, display.timerColor)
-  self:SyncCDMRenderedState()
+  if not self:SyncCDMRenderedState() then
+    self:ClearCDMTimer()
+    self.fallback:Hide()
+    -- CDM active state remains useful even when its instance ID cannot be
+    -- passed to GetAuraDuration. Retain native presentation for this region
+    -- from now on, rather than disabling both renderers or oscillating as
+    -- combat restrictions change. Only Blizzard's exact slot owns duration.
+    if self.container then
+      self.nativeDurationRequired = true
+      self:SetNativeSuppressed(false)
+    end
+    self:LogPresentationDebug(self.container and "native-duration" or "native-unavailable")
+    return true
+  end
   self.fallback:Show()
+  self:LogPresentationDebug("cdm-duration")
   return true
 end
 
 function Region:BindCDMSource(source, cooldownID)
   if self.cdmSource == source and self.cdmCooldownID == cooldownID then return end
+  self:ClearCDMTimer()
+  self.cdmMode = false
+  self.cdmPresentedActive = nil
+  self.fallback:Hide()
   self.cdmBindingToken = (self.cdmBindingToken or 0) + 1
   local token = self.cdmBindingToken
   self.cdmSource = source
@@ -429,9 +503,18 @@ function Region:BindCDMSource(source, cooldownID)
     return
   end
 
-  local okBar, sourceBar = pcall(source.GetBarFrame, source)
-  if not okBar or not sourceBar then return end
+  local sourceBar
+  if type(source.GetBarFrame) == "function" then
+    local okBar, bar = pcall(source.GetBarFrame, source)
+    if okBar then sourceBar = bar end
+  end
+  if not sourceBar and (type(source.GetAuraSpellInstanceID) ~= "function"
+      or not C_UnitAuras or not C_UnitAuras.GetAuraDuration
+      or not self.fallback.bar.SetTimerDuration) then return end
   self.cdmSourceBar = sourceBar
+  -- Select one authority as soon as a compatible tracked source is bound,
+  -- including while inactive. Combat must not switch native/CDM ownership.
+  self.cdmMode = true
 
   if type(source.GetDurationFontString) == "function" then
     local okDuration, duration = pcall(source.GetDurationFontString, source)
@@ -445,19 +528,21 @@ function Region:BindCDMSource(source, cooldownID)
   hooksecurefunc(source, "SetIsActive", function(owner)
     if self:IsCurrentCDMSource(owner, cooldownID, token) then self:SyncCDMSource() end
   end)
-  hooksecurefunc(sourceBar, "SetMinMaxValues", function(_, minimum, maximum)
-    if self:IsCurrentCDMSource(source, cooldownID, token) and self.cdmMode == true then
-      self.fallback.bar:SetMinMaxValues(minimum, maximum)
-    end
-  end)
-  hooksecurefunc(sourceBar, "SetValue", function(_, value)
-    if self:IsCurrentCDMSource(source, cooldownID, token) and self.cdmMode == true then
-      self.fallback.bar:SetValue(value)
-      if self.currentAura and self.currentAura.display and self.currentAura.display.showTimer == true then
-        self.fallback.timerText:SetFormattedText(self.cdmTimerFormat or "%.1f", value)
+  if sourceBar then
+    hooksecurefunc(sourceBar, "SetMinMaxValues", function(_, minimum, maximum)
+      if self:IsCurrentCDMSource(source, cooldownID, token) and self.cdmMode == true then
+        self.fallback.bar:SetMinMaxValues(minimum, maximum)
       end
-    end
-  end)
+    end)
+    hooksecurefunc(sourceBar, "SetValue", function(_, value)
+      if self:IsCurrentCDMSource(source, cooldownID, token) and self.cdmMode == true then
+        self.fallback.bar:SetValue(value)
+        if self.currentAura and self.currentAura.display and self.currentAura.display.showTimer == true then
+          self.fallback.timerText:SetFormattedText(self.cdmTimerFormat or "%.1f", value)
+        end
+      end
+    end)
+  end
   if self.cdmSourceDuration then
     hooksecurefunc(self.cdmSourceDuration, "SetText", function(_, text)
       if self:IsCurrentCDMSource(source, cooldownID, token) and self.cdmMode == true then
@@ -652,6 +737,11 @@ function Region:New(aura)
   instance.fallback.presentation:SetAllPoints()
   instance.fallback.presentation:SetFrameLevel(instance.fallback.bar:GetFrameLevel() + 10)
   instance.fallback.icon = instance.fallback.presentation:CreateTexture(nil, "ARTWORK")
+  instance.fallback.cooldown = CreateFrame("Cooldown", nil, instance.fallback.presentation, "CooldownFrameTemplate")
+  instance.fallback.cooldown:SetPoint("TOPLEFT", instance.fallback.icon, "TOPLEFT", 0, 0)
+  instance.fallback.cooldown:SetPoint("BOTTOMRIGHT", instance.fallback.icon, "BOTTOMRIGHT", 0, 0)
+  instance.fallback.cooldown:SetHideCountdownNumbers(true)
+  instance.fallback.cooldown:EnableMouse(false)
   instance.fallback.nameText = instance.fallback.presentation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   instance.fallback.timerText = instance.fallback.presentation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   instance.fallback.countText = instance.fallback.presentation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -667,11 +757,6 @@ function Region:Update(aura, state)
   self.frame:EnableMouse(BaseRegion:CanMove(aura))
   self.frame:SetAlpha((aura.display and aura.display.alpha) or 1)
   local trigger = GetTrigger(aura)
-  self.cdmFallbackEligible = TriggerUsesAuraAlias(trigger)
-  if self.cdmFallbackEligible ~= true then
-    self.cdmMode = false
-    self.fallback:Hide()
-  end
   local isPreview = state and state.source == "preview"
   local loadMatched = not state or state.loadMatched ~= false
   self.loadMatched = loadMatched
@@ -696,6 +781,7 @@ function Region:Update(aura, state)
     self:SetLayoutVisible(false)
     self.fallback:Hide()
     self:SetNativeSuppressed(true)
+    self:LogPresentationDebug("unloaded")
     return
   end
   if not self.container then self:CreateNative(aura) end
@@ -726,18 +812,16 @@ function Region:Update(aura, state)
 
   local decimals = math.max(0, math.min(2, tonumber(aura.display and aura.display.timerDecimals or 1) or 1))
   self.cdmTimerFormat = "%." .. decimals .. "f"
-  local source, cooldownID = ns.CooldownManager:FindAuraDisplaySource(
+  local source, cooldownID = ns.CooldownManager:FindAuraStateSource(
     GetCDMSpellIDs(trigger), trigger.unit or "player")
   self:BindCDMSource(source, cooldownID)
-  if self:SyncCDMSource() then
-    self:SetNativeSuppressed(true)
-    return
-  end
-  -- Without a CDM bar, Blizzard's native container remains authoritative and
-  -- intentionally opaque. Preserve its prior layout behavior rather than
+  if self:SyncCDMSource() then return end
+  -- Without a compatible CDM source, the native container remains authoritative
+  -- and intentionally opaque. Preserve its prior layout behavior rather than
   -- trying to observe a forbidden AuraButton.
   if not source then self:SetLayoutVisible(true) end
   self:SetNativeSuppressed(false)
+  self:LogPresentationDebug("native-only")
 end
 
 function Region:OnTimerUpdate(now)
@@ -773,12 +857,9 @@ function Region:RefreshNativeUnit(unit)
     return false
   end
 
-  local source, cooldownID = ns.CooldownManager:FindAuraDisplaySource(GetCDMSpellIDs(trigger), unit)
+  local source, cooldownID = ns.CooldownManager:FindAuraStateSource(GetCDMSpellIDs(trigger), unit)
   self:BindCDMSource(source, cooldownID)
-  if self.cdmSource and self:SyncCDMSource() then
-    self:SetNativeSuppressed(true)
-    return true
-  end
+  if self.cdmSource and self:SyncCDMSource() then return true end
   self:SetNativeSuppressed(false)
   if not self.container or self.nativeEnabled ~= true then return false end
 
@@ -797,18 +878,20 @@ function Region:RefreshCDMSource(unit)
   local trigger = GetTrigger(self.currentAura)
   if not trigger or (trigger.unit or "player") ~= unit then return false end
 
-  local sourceIsCurrent = self.cdmSource ~= nil
-    and ns.CooldownManager:GetFrameCooldownID(self.cdmSource) == self.cdmCooldownID
-  if sourceIsCurrent and self.cdmMode == true then return true end
-
-  if not sourceIsCurrent then
-    local source, cooldownID = ns.CooldownManager:FindAuraDisplaySource(GetCDMSpellIDs(trigger), unit)
-    self:BindCDMSource(source, cooldownID)
+  local spellIDs = GetCDMSpellIDs(trigger)
+  local source, cooldownID = ns.CooldownManager:FindAuraStateSource(spellIDs, unit)
+  if not source and (self.cdmRetryAt == nil or GetTime() >= self.cdmRetryAt) then
+    -- A cached miss must not prevent late acquisition. Bound retries for auras
+    -- with no CDM entry; UNIT_AURA can otherwise traverse viewers repeatedly.
+    self.cdmRetryAt = GetTime() + 0.25
+    source, cooldownID = ns.CooldownManager:FindAuraStateSource(spellIDs, unit, true)
   end
-  if self.cdmSource and self:SyncCDMSource() then
-    self:SetNativeSuppressed(true)
-    return true
-  end
+  if source and source == self.cdmSource and cooldownID == self.cdmCooldownID
+      and self.cdmMode == true then return true end
+  self:BindCDMSource(source, cooldownID)
+  if self.cdmSource and self:SyncCDMSource() then return true end
+  if not source then self:SetLayoutVisible(true) end
+  self:SetNativeSuppressed(false)
   return self.cdmSource ~= nil
 end
 
