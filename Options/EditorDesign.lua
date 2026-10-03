@@ -418,6 +418,15 @@ function Frames.CreateSettingsPopover(options)
   end
 
   local mouseWasDown = false
+  local function IsMouseOverDropdownList()
+    for level = 1, (UIDROPDOWNMENU_MAXLEVELS or 2) do
+      local list = _G["DropDownList" .. level]
+      if list and list:IsShown() and list:IsMouseOver() then
+        return true
+      end
+    end
+    return false
+  end
   popup:SetScript("OnHide", function(self)
     self:SetScript("OnUpdate", nil)
     self.anchor = nil
@@ -444,7 +453,8 @@ function Frames.CreateSettingsPopover(options)
       frame:SetPoint("TOPRIGHT", anchor, "BOTTOMRIGHT", 0, -6 + (8 * (1 - progress)))
       if progress >= 1 then
         local mouseDown = IsMouseButtonDown("LeftButton")
-        if mouseDown and not mouseWasDown and not frame:IsMouseOver() and not anchor:IsMouseOver() then
+        if mouseDown and not mouseWasDown and not frame:IsMouseOver() and not anchor:IsMouseOver()
+            and not IsMouseOverDropdownList() then
           frame:Hide()
           return
         end

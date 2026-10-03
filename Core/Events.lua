@@ -185,6 +185,12 @@ local function GetProviderUnitDemand(provider, event)
   return nil
 end
 
+local function RefreshArrangeLoadState(event)
+  if not (LOAD_REFRESH_EVENTS[event] or FULL_REFRESH_EVENTS[event]) then return end
+  local arrange = ns.ui and ns.ui.ArrangeMode
+  if arrange and arrange:IsActive() then arrange:RefreshMovers() end
+end
+
 function Events:DispatchEvent(event, ...)
   local eventBucket = self.eventProfileBuckets and self.eventProfileBuckets[event]
     or ("event:" .. tostring(event or "UNKNOWN"))
@@ -258,6 +264,7 @@ function Events:DispatchEvent(event, ...)
 
   if fullRefresh then
     ns.runtime:RefreshAll()
+    RefreshArrangeLoadState(event)
     ReleaseScratchTable(self, affectedAuraIds)
     ProfileFinish(eventBucket, eventProfile)
     return
@@ -272,6 +279,7 @@ function Events:DispatchEvent(event, ...)
     ReleaseScratchTable(self, auraIds)
   end
   ReleaseScratchTable(self, affectedAuraIds)
+  RefreshArrangeLoadState(event)
   ProfileFinish(eventBucket, eventProfile)
 end
 

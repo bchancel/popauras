@@ -182,6 +182,7 @@ local function GetHelpLines()
   return {
     "PopAuras commands:",
     "/pa - toggle the main window",
+    "/pa arrange - arrange groups and standalone auras",
     "/pa account sync - compare and selectively copy auras with another online account",
     "/pa ignore <Name-Realm> - block account-sync and aura-share traffic from that player",
     "/pa unignore <Name-Realm> - allow PopAuras sharing with that player again",
@@ -350,6 +351,16 @@ end
 local function HandleSlashCommand(msg)
   local rawMsg = tostring(msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
   msg = rawMsg:lower()
+  if msg == "arrange" then
+    local opened, reason = ns.OptionsLoader:Run(function()
+      if not ns.ui.MainWindow.frame then ns.ui.MainWindow:Create() end
+      ns.ui.ArrangeMode:Start()
+    end)
+    if not opened and reason ~= "queued" then
+      WriteChatLine(string.format("|cffff4444PopAuras:|r Could not open Arrange: %s", tostring(reason)))
+    end
+    return
+  end
   if msg == "debug" then
     if ns.Debug and ns.Debug.ToggleWindow then
       ns.Debug:ToggleWindow()

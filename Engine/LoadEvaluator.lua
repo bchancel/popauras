@@ -584,6 +584,27 @@ function LoadEvaluator:Matches(aura)
   return true
 end
 
+local function IsGroupAura(aura)
+  return aura and (aura.kind == "group" or aura.kind == "dynamic_group")
+end
+
+local function HasLoadableDescendant(evaluator, group, visited)
+  if visited[group] then return false end
+  visited[group] = true
+
+  -- Check saved Load rules only. Inactive triggers still count as loaded;
+  -- native button visibility and restricted aura payloads never decide this.
+  for _, childId in ipairs(group.children or {}) do
+    local child = ns.Registry and ns.Registry:GetAura(childId) or nil
+    if child and evaluator:Matches(child) then
+      if not IsGroupAura(child) or HasLoadableDescendant(evaluator, child, visited) then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 function LoadEvaluator:MatchesWithAncestors(aura)
   local cursor = aura
   local visited = {}
@@ -603,7 +624,8 @@ function LoadEvaluator:MatchesWithAncestors(aura)
 
     local parentId = cursor.parentId
     if not parentId then
-      return true
+      -- A group needs one loadable aura anywhere below it, not every child.
+      return not IsGroupAura(aura) or HasLoadableDescendant(self, aura, {})
     end
     cursor = ns.Registry and ns.Registry:GetAura(parentId) or nil
     if not cursor then

@@ -318,6 +318,10 @@ function BaseRegion:ApplyAnchor(aura, frame)
   end
   frame:ClearAllPoints()
   local position = aura.position or {}
+  local arrange = ns.ui and ns.ui.ArrangeMode
+  if arrange and arrange:IsActive() then
+    position = arrange:GetPosition(aura) or position
+  end
   local relative = Anchors.Resolve(position.relativeTo)
   frame:SetPoint(position.point or "CENTER", relative, position.relativePoint or "CENTER", position.x or 0, position.y or 0)
   frame:SetSize(position.width or aura.display.width or 100, position.height or aura.display.height or 32)

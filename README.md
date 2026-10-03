@@ -40,10 +40,48 @@ PopAuras is a saved-variable-compatible aura addon for WoW Retail 12.1.
 Existing PopAuras saved variables, imports, groups, actions, conditions, load
 rules, and editor panels are retained.
 
+## Arrange your layout
+
+Type `/pa arrange`, or open `/pa` and click **Arrange** beside **New Aura**.
+Drag a group to move all
+its children together, or drag an aura that is outside a group. Handles also
+appear for inactive auras, so you can place them before their triggers activate.
+
+- Hover the compact **Arrange** tab to reveal the grid, snapping, and spacing
+  controls. The controls fade away when you leave and during aura drags, so the
+  area behind them remains available for positioning. Drag the tab to move it;
+  **Pin** keeps its controls open between drags.
+- **Loaded Only** starts checked and shows items that match their Load rules.
+  A group must match its own and its ancestors' Load rules and contain at least
+  one loaded aura, including inside nested groups. Other children may be unloaded.
+  Uncheck it to also arrange unloaded items, which have a light grey background.
+  A small green **G** in a group's upper-left corner marks a regular group;
+  dynamic groups have a green arrow showing their growth direction.
+- Hold Shift while dragging to bypass snapping. Select a handle and use the
+  arrow keys to move one pixel, or Shift and an arrow key to move ten pixels.
+- Hover a handle for compact **Anchor**, **Center**, **Reset**, and **Configure**
+  icons. Hover an icon to see its name and what it does.
+  Changing an anchor or attachment point preserves the current screen position.
+  Reset restores that item's position from before entering Arrange.
+- **Save & Exit** keeps the layout and returns to the game. **Configure** keeps
+  the layout and opens that item's Display options. **Cancel** or Escape discards
+  the changes and returns to the editor. Entering combat discards unsaved changes
+  and closes Arrange.
+
+Nameplate auras remain attached to nameplates and use their Display options for
+positioning. Arrange uses separate PopAuras handles and does not unlock
+Blizzard's native aura buttons.
+
 ## Verify
 
 Run the static API-boundary and packaging checks with:
 
 ```powershell
 .\verify.ps1
+```
+
+The Arrange behavior checks use Python with `lupa` installed:
+
+```powershell
+python tests/arrange_mode_test.py
 ```

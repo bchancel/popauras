@@ -39,9 +39,9 @@ $optionsTocText = Get-Content -LiteralPath $optionsToc -Raw
 if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
     throw "PopAuras.toc is not targeting PTR interface 120100"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.10\s*$' -or
-    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.10\s*$') {
-    throw "Core and options metadata are not aligned to release 12.1.10"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.11\s*$' -or
+    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.11\s*$') {
+    throw "Core and options metadata are not aligned to release 12.1.11"
 }
 if ($optionsTocText -notmatch '(?m)^## LoadOnDemand:\s*1\s*$' -or
     $optionsTocText -notmatch '(?m)^## Dependencies:\s*PopAuras\s*$') {

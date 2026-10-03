@@ -704,6 +704,7 @@ function MainWindow:RefreshSelection()
 end
 
 function MainWindow:OpenNewAuraPicker()
+  if ns.ui.ArrangeMode and ns.ui.ArrangeMode:IsActive() then ns.ui.ArrangeMode:Finish(false, false) end
   if not self.frame then
     self:Create()
   end
@@ -716,6 +717,7 @@ function MainWindow:OpenNewAuraPicker()
 end
 
 function MainWindow:OpenGlobalImport()
+  if ns.ui.ArrangeMode and ns.ui.ArrangeMode:IsActive() then ns.ui.ArrangeMode:Finish(false, false) end
   if not self.frame then
     self:Create()
   end
@@ -730,6 +732,10 @@ function MainWindow:OpenGlobalImport()
 end
 
 function MainWindow:Toggle()
+  if ns.ui.ArrangeMode and ns.ui.ArrangeMode:IsActive() then
+    ns.ui.ArrangeMode:Finish(false, true)
+    return
+  end
   if not self.frame then
     self:Create()
   end

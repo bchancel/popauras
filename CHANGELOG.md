@@ -1,3 +1,6 @@
+# v12.1.11
+- Added an Arrange screen to adjust auras and groups using a grid.
+
 # v12.1.10
 - Fixed some player buffs disappearing or losing their timer during combat when Blizzard displays the buff through the Cooldown Manager.
 - Fixed Cooldown Manager icons occasionally using stale data after Blizzard rebuilds its cooldown UI.
