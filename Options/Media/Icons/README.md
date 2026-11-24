@@ -40,3 +40,35 @@ The selected silhouettes were refined with this final shared edit prompt:
 The final prompts also required a completely empty, transparent anchor eye,
 gaps between the center arrows and dot, space inside and outside the reset
 arrow, and gear center, respectively.
+
+# Editor UI glyphs
+
+Generated procedurally (signed-distance shapes, 4x4 supersampled) as flat
+white glyphs on transparent alpha, in the same 64x64 uncompressed 32-bit RGBA
+TGA format. They are tinted in code with `SetVertexColor`.
+
+- `UiEye.tga`: header Preview Animation toggle.
+- `UiBug.tga`: header Debug Trigger toggle.
+- `UiMore.tga`: the aura row actions (...) button.
+- `UiGrip.tga`: six-dot drag grip shown on hovered or selected aura rows.
+- `UiSearch.tga`: settings search box.
+- `UiPill.tga` (64x32): rounded switch track and three-slice chip background.
+- `UiKnob.tga` (32x32): round switch knob and slider thumb.
+- `UiChevron.tga`: dropdown arrow.
+- `UiRing.tga`: sidebar brand mark ring.
+- `UiGroup.tga`: group glyph in the aura list.
+
+## Aura-type glyphs (New Aura picker and create dialog)
+
+Same format and grid: 64px canvas, drawing area 6-58, 4.5px outlines, 7px
+solid strokes, round ends. Generated with signed-distance shapes.
+
+- `UiTypeDynamic.tga`: Dynamic Group (stacked bars, growth arrow).
+- `UiTypeGroup.tga`: Group (corner brackets around two squares).
+- `UiTypeIcon.tga`: Icon Aura (frame with a cooldown sweep).
+- `UiTypeBar.tga`: Bar Aura (bar with fill and spark).
+- `UiTypeText.tga`: Text Aura (heavy T on a baseline).
+- `UiTypeDeath.tga`: Death Alert (skull).
+- `UiTypeInterrupt.tga`: Interrupt Tracker (bolt splitting a cast bar).
+- `UiTypeAuraBars.tga`: Buffs and Debuffs (icon and bar rows).
+- `UiTypeNameplate.tga`: Nameplate Buffs (icons above a nameplate).

@@ -3,463 +3,359 @@ local _, ns = ...
 local Frames = ns.util.Frames
 local Theme = ns.util.Theme
 
+-- "Create a New Aura" picker. Types are grouped into categories and shown as
+-- flat tiles on alternating row bands, each with one monochrome glyph from the
+-- shared UiType* set (neutral at rest, accent on hover, bright when selected).
+-- Choosing a tile opens CreateAuraDialog; creation behaviour is unchanged.
 local NewAuraPanel = {}
 ns.ui.NewAuraPanel = NewAuraPanel
 
-local GRID_COLUMNS = 3
-local GRID_ROWS = 3
-local TILE_WIDTH = 224
-local TILE_HEIGHT = 154
-local TILE_GAP_X = 16
-local TILE_GAP_Y = 14
-local TILE_LEFT_MARGIN = 18
-local TILE_TOP_OFFSET = 72
+local COLUMNS = 3
+local TILE_HEIGHT = 76
+local GLYPH_BOX = 44
+local GLYPH_SIZE = 28
+local CATEGORY_HEADER_HEIGHT = 32
+local CATEGORY_GAP = 14
+local CONTENT_TOP = 10
 
-local auraOptions = {
+local categories = {
   {
-    kind = "dynamic_group",
-    title = "Dynamic Group",
-    description = "Automatically arrange child auras with growth, spacing, and sorting rules.",
-    accent = { 0.16, 0.78, 0.34 },
-    art = "dynamic",
+    title = "Containers",
+    note = "hold and arrange other auras",
+    options = {
+      {
+        kind = "dynamic_group",
+        title = "Dynamic Group",
+        description = "Automatically arrange child auras with growth, spacing, and sorting rules.",
+        glyph = "UiTypeDynamic",
+      },
+      {
+        kind = "group",
+        title = "Group",
+        description = "A fixed container for related auras that you position as a unit.",
+        glyph = "UiTypeGroup",
+      },
+    },
   },
   {
-    kind = "group",
-    title = "Group",
-    description = "Create a fixed container for related auras that you position as a unit.",
-    accent = { 0.82, 0.66, 0.18 },
-    art = "group",
+    title = "Displays",
+    note = "one element driven by triggers",
+    options = {
+      {
+        kind = "icon",
+        title = "Icon Aura",
+        description = "A single icon with optional timer text, stacks, glow, and cooldown swipe.",
+        glyph = "UiTypeIcon",
+      },
+      {
+        kind = "bar",
+        title = "Bar Aura",
+        description = "A timed status bar for cooldowns, buffs, debuffs, casts, or manual timers.",
+        glyph = "UiTypeBar",
+      },
+      {
+        kind = "text",
+        preset = "text",
+        title = "Text Aura",
+        description = "Configurable text with custom font, color, anchor, and trigger-driven values.",
+        glyph = "UiTypeText",
+      },
+    },
   },
   {
-    kind = "icon",
-    title = "Icon Aura",
-    description = "Display a single icon with optional timer text, stacks, glow, and cooldown swipe.",
-    accent = { 0.88, 0.20, 0.20 },
-    art = "icon",
-  },
-  {
-    kind = "bar",
-    title = "Bar Aura",
-    description = "Show a timed status bar for cooldowns, buffs, debuffs, casts, or manual timers.",
-    accent = { 0.96, 0.44, 0.18 },
-    art = "bar",
-  },
-  {
-    kind = "text",
-    preset = "text",
-    title = "Text Aura",
-    description = "Display configurable text with custom font, color, anchor, and trigger-driven values.",
-    accent = { 0.72, 0.30, 0.92 },
-    art = "text_aura",
-  },
-  {
-    kind = "text",
-    preset = "death_alert_text",
-    title = "Death Alert",
-    description = "Show class-colored text when someone in your party or raid dies, with role filters and sounds.",
-    accent = { 0.58, 0.24, 0.82 },
-    art = "death_alert",
-  },
-  {
-    kind = "interrupt_tracker",
-    title = "Interrupt Tracker",
-    description = "Track party interrupt cooldowns with sharing, sounds, and sound/role filters.",
-    accent = { 0.90, 0.78, 0.12 },
-    art = "interrupt",
-  },
-  {
-    kind = "aura_bar_list",
-    title = "Buffs and Debuffs",
-    description = "Render player or target buffs and debuffs as a growing list of timed bars instead of icons.",
-    accent = { 0.22, 0.78, 0.66 },
-    art = "aura_bars",
-  },
-  {
-    kind = "icon",
-    preset = "nameplate_buffs",
-    feature = "feature_nameplate_buffs",
-    title = "Nameplate Buffs",
-    description = "Show Blizzard-owned, category-filtered buff icons above hostile NPC nameplates.",
-    accent = { 0.24, 0.72, 0.96 },
-    art = "nameplate",
+    title = "Trackers",
+    note = "ready-made, preconfigured",
+    options = {
+      {
+        kind = "text",
+        preset = "death_alert_text",
+        title = "Death Alert",
+        description = "Class-colored text when someone in your party or raid dies, with role filters and sounds.",
+        glyph = "UiTypeDeath",
+      },
+      {
+        kind = "interrupt_tracker",
+        title = "Interrupt Tracker",
+        description = "Party interrupt cooldowns with sharing, sounds, and role filters.",
+        glyph = "UiTypeInterrupt",
+      },
+      {
+        kind = "aura_bar_list",
+        title = "Buffs and Debuffs",
+        description = "Player or target buffs and debuffs as a growing list of timed bars.",
+        glyph = "UiTypeAuraBars",
+      },
+      {
+        kind = "icon",
+        preset = "nameplate_buffs",
+        feature = "feature_nameplate_buffs",
+        title = "Nameplate Buffs",
+        description = "Blizzard-owned, category-filtered buff icons above hostile NPC nameplates.",
+        glyph = "UiTypeNameplate",
+      },
+    },
   },
 }
 
-local function CreateArtHost(parent)
-  local host = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-  host:SetSize(104, 70)
-  Theme.StyleSurface(host, "canvas", "border")
-  return host
+local function IsOptionEnabled(option)
+  return not option.feature
+    or (ns.Features and ns.Features:IsEnabled(option.feature) == true)
 end
 
-local function CreatePlaceholderTile(parent)
-  local tile = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-  tile:SetSize(TILE_WIDTH, TILE_HEIGHT)
-  Theme.StyleSurface(tile, "canvas", "border")
+local function StyleTile(tile)
+  local selected = NewAuraPanel.selectedTile == tile
+  local hovered = tile._popAurasHovered == true
+  if selected then
+    Theme.SetTexture(tile.background, "accentSoft")
+    Theme.SetTexture(tile.glyph, "accentBright")
+    Theme.SetText(tile.title, "accentBright")
+    Theme.SetBackdrop(tile.glyphBox, "accentSoft", "accent")
+  elseif hovered then
+    Theme.SetTexture(tile.background, "surfaceHover")
+    Theme.SetTexture(tile.glyph, "accent")
+    Theme.SetText(tile.title, "text")
+    Theme.SetBackdrop(tile.glyphBox, "surfaceRaised", "borderStrong")
+  else
+    Theme.SetTexture(tile.background, tile.bandColor or "rowOdd")
+    Theme.SetTexture(tile.glyph, "textSecondary")
+    Theme.SetText(tile.title, "text")
+    Theme.SetBackdrop(tile.glyphBox, "surfaceRaised", "border")
+  end
+  tile.accentBar:SetShown(selected or hovered)
+  tile.chevron:SetShown(hovered and not selected)
+end
 
-  tile.accentLine = tile:CreateTexture(nil, "ARTWORK")
-  tile.accentLine:SetTexture("Interface\\Buttons\\WHITE8x8")
-  tile.accentLine:SetVertexColor(0.34, 0.40, 0.48, 0.95)
-  tile.accentLine:SetPoint("TOPLEFT", 0, -1)
-  tile.accentLine:SetPoint("TOPRIGHT", 0, -1)
-  tile.accentLine:SetHeight(2)
+function NewAuraPanel:SelectTile(tile)
+  local previous = self.selectedTile
+  self.selectedTile = tile
+  if previous and previous ~= tile then
+    StyleTile(previous)
+  end
+  if tile then
+    StyleTile(tile)
+  end
+end
 
-  tile.art = CreateArtHost(tile)
-  tile.art:SetPoint("TOP", 0, -14)
-  tile.art:SetAlpha(0.85)
+function NewAuraPanel:OpenOption(tile)
+  if not tile or not tile.option then
+    return
+  end
+  self:SelectTile(tile)
+  local option = tile.option
+  ns.ui.CreateAuraDialog:Show(option.kind, option.preset, {
+    title = option.title,
+    category = tile.categoryTitle,
+    description = option.description,
+    glyph = option.glyph,
+    onHide = function()
+      if NewAuraPanel.selectedTile == tile then
+        NewAuraPanel:SelectTile(nil)
+        StyleTile(tile)
+      end
+    end,
+  })
+end
 
-  local plus = tile.art:CreateFontString(nil, "OVERLAY")
-  Theme.ApplyTypography(plus, "illustration")
-  plus:SetPoint("CENTER", 0, 2)
-  plus:SetText("+")
-  Theme.SetText(plus, "textMuted")
+local function CreateTile(parent, option, categoryTitle)
+  local tile = CreateFrame("Button", nil, parent)
+  tile:SetHeight(TILE_HEIGHT)
+  tile.option = option
+  tile.categoryTitle = categoryTitle
+
+  tile.background = tile:CreateTexture(nil, "BACKGROUND")
+  tile.background:SetAllPoints()
+  tile.background:SetTexture("Interface\\Buttons\\WHITE8x8")
+
+  tile.divider = tile:CreateTexture(nil, "BORDER")
+  tile.divider:SetTexture("Interface\\Buttons\\WHITE8x8")
+  tile.divider:SetPoint("TOPLEFT", 0, 0)
+  tile.divider:SetPoint("BOTTOMLEFT", 0, 0)
+  tile.divider:SetWidth(1)
+  Theme.SetTexture(tile.divider, "canvas")
+
+  tile.accentBar = tile:CreateTexture(nil, "ARTWORK")
+  tile.accentBar:SetTexture("Interface\\Buttons\\WHITE8x8")
+  tile.accentBar:SetPoint("TOPLEFT", 0, 0)
+  tile.accentBar:SetPoint("BOTTOMLEFT", 0, 0)
+  tile.accentBar:SetWidth(2)
+  Theme.SetTexture(tile.accentBar, "accent")
+  tile.accentBar:Hide()
+
+  tile.glyphBox = CreateFrame("Frame", nil, tile, "BackdropTemplate")
+  tile.glyphBox:SetSize(GLYPH_BOX, GLYPH_BOX)
+  tile.glyphBox:SetPoint("LEFT", 16, 0)
+  tile.glyph = tile.glyphBox:CreateTexture(nil, "ARTWORK")
+  tile.glyph:SetSize(GLYPH_SIZE, GLYPH_SIZE)
+  tile.glyph:SetPoint("CENTER")
+  tile.glyph:SetTexture(Frames.UI_ICON_PATH .. option.glyph)
+
+  tile.chevron = tile:CreateTexture(nil, "ARTWORK")
+  tile.chevron:SetTexture(Frames.UI_ICON_PATH .. "UiChevron")
+  tile.chevron:SetSize(12, 12)
+  tile.chevron:SetPoint("RIGHT", -12, 0)
+  tile.chevron:SetRotation(math.pi / 2)
+  Theme.SetTexture(tile.chevron, "textMuted")
+  tile.chevron:Hide()
 
   tile.title = tile:CreateFontString(nil, "OVERLAY")
-  Theme.ApplyTypography(tile.title, "cardTitle")
-  tile.title:SetPoint("TOPLEFT", 12, -96)
-  tile.title:SetPoint("TOPRIGHT", -12, -96)
-  tile.title:SetJustifyH("CENTER")
-  tile.title:SetText("Coming Soon")
-  Theme.SetText(tile.title, "textSecondary")
-
-  tile.desc = tile:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  tile.desc:SetPoint("TOPLEFT", tile.title, "BOTTOMLEFT", 0, -10)
-  tile.desc:SetPoint("TOPRIGHT", tile.title, "BOTTOMRIGHT", 0, -10)
-  tile.desc:SetJustifyH("CENTER")
-  tile.desc:SetJustifyV("TOP")
-  tile.desc:SetText("Reserved for future aura types as the catalog grows.")
-  Theme.SetText(tile.desc, "textMuted")
-
-  return tile
-end
-
-local function GetTilePoint(index)
-  local column = (index - 1) % GRID_COLUMNS
-  local row = math.floor((index - 1) / GRID_COLUMNS)
-  return "TOPLEFT", TILE_LEFT_MARGIN + (column * (TILE_WIDTH + TILE_GAP_X)), -TILE_TOP_OFFSET - (row * (TILE_HEIGHT + TILE_GAP_Y))
-end
-
-local function BuildIconArt(host)
-  local plate = CreateFrame("Frame", nil, host, "BackdropTemplate")
-  plate:SetSize(62, 62)
-  plate:SetPoint("CENTER")
-  plate:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  plate:SetBackdropColor(0.12, 0.04, 0.05, 0.98)
-  plate:SetBackdropBorderColor(0.40, 0.40, 0.45, 1)
-
-  local question = plate:CreateFontString(nil, "OVERLAY")
-  Theme.ApplyTypography(question, "illustration")
-  question:SetPoint("CENTER")
-  question:SetText("?")
-  question:SetTextColor(0.98, 0.20, 0.16)
-end
-
-local function BuildBarArt(host)
-  local glow = host:CreateTexture(nil, "ARTWORK")
-  glow:SetTexture("Interface\\Buttons\\WHITE8x8")
-  glow:SetSize(14, 22)
-  glow:SetPoint("LEFT", 6, 0)
-  glow:SetVertexColor(1, 0.58, 0.14, 0.92)
-
-  local barFrame = CreateFrame("Frame", nil, host, "BackdropTemplate")
-  barFrame:SetSize(74, 18)
-  barFrame:SetPoint("LEFT", glow, "RIGHT", 3, 0)
-  barFrame:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  barFrame:SetBackdropColor(0.09, 0.07, 0.07, 0.96)
-  barFrame:SetBackdropBorderColor(0.38, 0.38, 0.42, 1)
-
-  local fill = barFrame:CreateTexture(nil, "ARTWORK")
-  fill:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
-  fill:SetVertexColor(0.92, 0.22, 0.16, 1)
-  fill:SetPoint("TOPLEFT", 2, -2)
-  fill:SetPoint("BOTTOMLEFT", 2, 2)
-  fill:SetWidth(62)
-end
-
-local function BuildInterruptArt(host)
-  local colors = {
-    { 0.96, 0.84, 0.10 },
-    { 0.16, 0.62, 0.98 },
-    { 0.24, 0.88, 0.18 },
-    { 0.98, 0.58, 0.16 },
-    { 0.92, 0.18, 0.58 },
-  }
-
-  for index, color in ipairs(colors) do
-    local row = CreateFrame("Frame", nil, host, "BackdropTemplate")
-    row:SetSize(84, 9)
-    row:SetPoint("TOP", 0, -8 - ((index - 1) * 12))
-    row:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1,
-    })
-    row:SetBackdropColor(0.06, 0.08, 0.10, 0.96)
-    row:SetBackdropBorderColor(0.28, 0.30, 0.34, 1)
-
-    local fill = row:CreateTexture(nil, "ARTWORK")
-    fill:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    fill:SetVertexColor(color[1], color[2], color[3], 1)
-    fill:SetPoint("TOPLEFT", 2, -2)
-    fill:SetPoint("BOTTOMLEFT", 2, 2)
-    fill:SetWidth(58 + ((index % 2 == 0) and 6 or 0))
-  end
-end
-
-local function BuildGroupArt(host)
-  local frame = CreateFrame("Frame", nil, host, "BackdropTemplate")
-  frame:SetSize(70, 70)
-  frame:SetPoint("CENTER")
-  frame:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  frame:SetBackdropColor(0.05, 0.06, 0.08, 0.98)
-  frame:SetBackdropBorderColor(0.44, 0.44, 0.48, 1)
-
-  local pieces = {
-    { 10, -12, 18, 18, 0.82, 0.68, 0.18 },
-    { 32, -32, 18, 18, 0.56, 0.26, 0.92 },
-    { 52, -16, 14, 24, 0.88, 0.88, 0.88 },
-  }
-
-  for _, piece in ipairs(pieces) do
-    local block = frame:CreateTexture(nil, "ARTWORK")
-    block:SetTexture("Interface\\Buttons\\WHITE8x8")
-    block:SetPoint("TOPLEFT", piece[1], piece[2])
-    block:SetSize(piece[3], piece[4])
-    block:SetVertexColor(piece[5], piece[6], piece[7], 1)
-  end
-end
-
-local function BuildDynamicArt(host)
-  local rows = {
-    { -12, 52 },
-    { 6, 42 },
-    { 24, 34 },
-  }
-
-  for index, rowInfo in ipairs(rows) do
-    local row = CreateFrame("Frame", nil, host, "BackdropTemplate")
-    row:SetSize(rowInfo[2], 14)
-    row:SetPoint("CENTER", rowInfo[1], 14 - ((index - 1) * 20))
-    row:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1,
-    })
-    row:SetBackdropColor(0.10, 0.38, 0.72, 0.96)
-    row:SetBackdropBorderColor(0.18, 0.72, 1.0, 1)
-  end
-
-  local arrow = host:CreateFontString(nil, "OVERLAY")
-  Theme.ApplyTypography(arrow, "glyphLarge")
-  arrow:SetPoint("CENTER", 0, 6)
-  arrow:SetText(">>")
-  arrow:SetTextColor(0.28, 0.96, 0.22)
-end
-
-local function BuildTextAuraArt(host)
-  local label = host:CreateFontString(nil, "OVERLAY")
-  Theme.ApplyTypography(label, "hero")
-  label:SetPoint("CENTER", 0, 2)
-  label:SetText("Abc")
-  label:SetTextColor(0.82, 0.72, 0.98)
-end
-
-local function BuildDeathAlertArt(host)
-  local skullFrame = CreateFrame("Frame", nil, host, "BackdropTemplate")
-  skullFrame:SetSize(38, 42)
-  skullFrame:SetPoint("CENTER", 0, 2)
-  skullFrame:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  skullFrame:SetBackdropColor(0.18, 0.06, 0.10, 0.98)
-  skullFrame:SetBackdropBorderColor(0.52, 0.18, 0.30, 1)
-
-  local leftEye = skullFrame:CreateTexture(nil, "ARTWORK")
-  leftEye:SetTexture("Interface\\Buttons\\WHITE8x8")
-  leftEye:SetSize(8, 8)
-  leftEye:SetPoint("CENTER", -8, 6)
-  leftEye:SetVertexColor(0.92, 0.20, 0.20, 1)
-
-  local rightEye = skullFrame:CreateTexture(nil, "ARTWORK")
-  rightEye:SetTexture("Interface\\Buttons\\WHITE8x8")
-  rightEye:SetSize(8, 8)
-  rightEye:SetPoint("CENTER", 8, 6)
-  rightEye:SetVertexColor(0.92, 0.20, 0.20, 1)
-
-  local jaw = skullFrame:CreateTexture(nil, "ARTWORK")
-  jaw:SetTexture("Interface\\Buttons\\WHITE8x8")
-  jaw:SetSize(20, 4)
-  jaw:SetPoint("CENTER", 0, -10)
-  jaw:SetVertexColor(0.68, 0.22, 0.30, 0.90)
-
-  local crossV = host:CreateTexture(nil, "OVERLAY")
-  crossV:SetTexture("Interface\\Buttons\\WHITE8x8")
-  crossV:SetSize(4, 56)
-  crossV:SetPoint("CENTER", 0, 0)
-  crossV:SetVertexColor(0.58, 0.20, 0.28, 0.35)
-
-  local crossH = host:CreateTexture(nil, "OVERLAY")
-  crossH:SetTexture("Interface\\Buttons\\WHITE8x8")
-  crossH:SetSize(56, 4)
-  crossH:SetPoint("CENTER", 0, 0)
-  crossH:SetVertexColor(0.58, 0.20, 0.28, 0.35)
-end
-
-local function BuildAuraBarsArt(host)
-  for index = 1, 3 do
-    local row = CreateFrame("Frame", nil, host, "BackdropTemplate")
-    row:SetSize(84, 12)
-    row:SetPoint("TOP", 0, -8 - ((index - 1) * 18))
-    row:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1,
-    })
-    row:SetBackdropColor(0.08, 0.10, 0.12, 0.96)
-    row:SetBackdropBorderColor(0.20, 0.26, 0.32, 1)
-
-    local icon = row:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(12, 12)
-    icon:SetPoint("RIGHT", row, "LEFT", -4, 0)
-    icon:SetTexture("Interface\\Icons\\spell_holy_renew")
-
-    local fill = row:CreateTexture(nil, "ARTWORK")
-    fill:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    fill:SetVertexColor(0.22, 0.78, 0.66, 1)
-    fill:SetPoint("TOPLEFT", 2, -2)
-    fill:SetPoint("BOTTOMLEFT", 2, 2)
-    fill:SetWidth(58 - ((index - 1) * 10))
-  end
-end
-
-local function BuildNameplateArt(host)
-  local bar = CreateFrame("Frame", nil, host, "BackdropTemplate")
-  bar:SetSize(82, 12)
-  bar:SetPoint("BOTTOM", 0, 12)
-  Theme.StyleSurface(bar, "control", "border")
-
-  local health = bar:CreateTexture(nil, "ARTWORK")
-  health:SetTexture("Interface\\Buttons\\WHITE8x8")
-  health:SetPoint("TOPLEFT", 2, -2)
-  health:SetPoint("BOTTOMLEFT", 2, 2)
-  health:SetWidth(58)
-  health:SetVertexColor(0.18, 0.68, 0.38, 1)
-
-  local iconColors = {
-    { 0.18, 0.72, 0.98 },
-    { 0.62, 0.36, 0.94 },
-    { 0.96, 0.58, 0.18 },
-  }
-  for index, color in ipairs(iconColors) do
-    local icon = CreateFrame("Frame", nil, host, "BackdropTemplate")
-    icon:SetSize(18, 18)
-    icon:SetPoint("BOTTOM", bar, "TOP", (index - 2) * 21, 4)
-    Theme.StyleSurface(icon, "surfaceRaised", "borderStrong")
-    local fill = icon:CreateTexture(nil, "ARTWORK")
-    fill:SetTexture("Interface\\Buttons\\WHITE8x8")
-    fill:SetPoint("TOPLEFT", 3, -3)
-    fill:SetPoint("BOTTOMRIGHT", -3, 3)
-    fill:SetVertexColor(color[1], color[2], color[3], 1)
-  end
-end
-
-local function BuildArt(host, art)
-  if art == "aura_bars" then
-    BuildAuraBarsArt(host)
-  elseif art == "nameplate" then
-    BuildNameplateArt(host)
-  elseif art == "icon" then
-    BuildIconArt(host)
-  elseif art == "bar" then
-    BuildBarArt(host)
-  elseif art == "interrupt" then
-    BuildInterruptArt(host)
-  elseif art == "group" then
-    BuildGroupArt(host)
-  elseif art == "text_aura" then
-    BuildTextAuraArt(host)
-  elseif art == "death_alert" then
-    BuildDeathAlertArt(host)
-  else
-    BuildDynamicArt(host)
-  end
-end
-
-local function StyleTile(tile, hovered)
-  local accent = tile.accent or { 0.18, 0.52, 0.88 }
-  if hovered then
-    local hover = Theme.GetColor("surfaceHover")
-    tile:SetBackdropColor(hover[1], hover[2], hover[3], hover[4])
-    tile:SetBackdropBorderColor(accent[1], accent[2], accent[3], 1)
-    Theme.SetText(tile.title, "text")
-  else
-    Theme.SetBackdrop(tile, "surface", "border")
-    Theme.SetText(tile.title, "text")
-  end
-end
-
-local function CreateTile(parent, option)
-  local tile = CreateFrame("Button", nil, parent, "BackdropTemplate")
-  tile:SetSize(TILE_WIDTH, TILE_HEIGHT)
-  tile:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-  })
-  tile:SetScript("OnClick", function()
-    ns.ui.CreateAuraDialog:Show(option.kind, option.preset)
-  end)
-  tile:SetScript("OnEnter", function(self)
-    StyleTile(self, true)
-  end)
-  tile:SetScript("OnLeave", function(self)
-    StyleTile(self, false)
-  end)
-
-  tile.accent = option.accent
-
-  tile.accentLine = tile:CreateTexture(nil, "ARTWORK")
-  tile.accentLine:SetTexture("Interface\\Buttons\\WHITE8x8")
-  tile.accentLine:SetVertexColor(option.accent[1], option.accent[2], option.accent[3], 1)
-  tile.accentLine:SetPoint("TOPLEFT", 0, -1)
-  tile.accentLine:SetPoint("TOPRIGHT", 0, -1)
-  tile.accentLine:SetHeight(2)
-
-  tile.art = CreateArtHost(tile)
-  tile.art:SetPoint("TOP", 0, -14)
-  BuildArt(tile.art, option.art)
-
-  tile.title = tile:CreateFontString(nil, "OVERLAY")
-  Theme.ApplyTypography(tile.title, "sectionTitle", "OUTLINE")
-  tile.title:SetPoint("TOPLEFT", 10, -94)
-  tile.title:SetPoint("TOPRIGHT", -10, -94)
-  tile.title:SetJustifyH("CENTER")
+  Theme.ApplyTypography(tile.title, "controlEmphasis")
+  tile.title:SetPoint("TOPLEFT", tile.glyphBox, "TOPRIGHT", 14, -2)
+  tile.title:SetPoint("RIGHT", tile, "RIGHT", -28, 0)
+  tile.title:SetJustifyH("LEFT")
+  tile.title:SetWordWrap(false)
   tile.title:SetText(option.title)
 
-  tile.desc = tile:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  tile.desc:SetPoint("TOPLEFT", tile.title, "BOTTOMLEFT", 0, -8)
-  tile.desc:SetPoint("TOPRIGHT", tile.title, "BOTTOMRIGHT", 0, -8)
-  tile.desc:SetJustifyH("CENTER")
+  tile.desc = tile:CreateFontString(nil, "OVERLAY")
+  Theme.ApplyTypography(tile.desc, "bodySmall")
+  tile.desc:SetPoint("TOPLEFT", tile.title, "BOTTOMLEFT", 0, -4)
+  tile.desc:SetPoint("RIGHT", tile, "RIGHT", -28, 0)
+  tile.desc:SetJustifyH("LEFT")
   tile.desc:SetJustifyV("TOP")
+  tile.desc:SetWordWrap(true)
+  if tile.desc.SetMaxLines then
+    tile.desc:SetMaxLines(2)
+  end
   tile.desc:SetText(option.description)
-  Theme.SetText(tile.desc, "textSecondary")
+  Theme.SetText(tile.desc, "textMuted")
 
-  StyleTile(tile, false)
+  tile:SetScript("OnClick", function(self)
+    NewAuraPanel:OpenOption(self)
+  end)
+  tile:SetScript("OnEnter", function(self)
+    self._popAurasHovered = true
+    StyleTile(self)
+  end)
+  tile:SetScript("OnLeave", function(self)
+    self._popAurasHovered = false
+    StyleTile(self)
+  end)
+  StyleTile(tile)
   return tile
+end
+
+local function CreateCategoryHeader(parent, category)
+  local header = CreateFrame("Frame", nil, parent)
+  header:SetHeight(CATEGORY_HEADER_HEIGHT)
+  header.title = header:CreateFontString(nil, "OVERLAY")
+  Theme.ApplyTypography(header.title, "controlSmall")
+  header.title:SetPoint("LEFT", 0, 0)
+  header.title:SetText(string.upper(category.title))
+  Theme.SetText(header.title, "navigation")
+  header.note = header:CreateFontString(nil, "OVERLAY")
+  Theme.ApplyTypography(header.note, "caption")
+  header.note:SetPoint("LEFT", header.title, "RIGHT", 10, 0)
+  header.note:SetText(category.note)
+  Theme.SetText(header.note, "textMuted")
+  return header
+end
+
+local function Matches(option, categoryTitle, query)
+  if query == "" then
+    return true
+  end
+  local haystack = string.lower(option.title .. " " .. option.description .. " " .. categoryTitle)
+  return haystack:find(query, 1, true) ~= nil
+end
+
+function NewAuraPanel:Layout()
+  local frame = self.frame
+  if not frame then
+    return
+  end
+  local width = math.floor(frame.scroll:GetWidth() or 0)
+  if width < 300 then
+    width = 720
+  end
+  frame.content:SetWidth(width)
+  local tileWidth = math.floor(width / COLUMNS)
+  local query = string.lower(frame.filter and frame.filter.input:GetText() or "")
+  query = query:gsub("^%s+", ""):gsub("%s+$", "")
+
+  local y = -CONTENT_TOP
+  local anyVisible = false
+  for _, section in ipairs(frame.sections) do
+    local visibleTiles = {}
+    for _, tile in ipairs(section.tiles) do
+      local show = Matches(tile.option, section.category.title, query)
+      tile:SetShown(show)
+      if show then
+        visibleTiles[#visibleTiles + 1] = tile
+      end
+    end
+    section.header:SetShown(#visibleTiles > 0)
+    if #visibleTiles > 0 then
+      anyVisible = true
+      section.header:ClearAllPoints()
+      section.header:SetPoint("TOPLEFT", frame.content, "TOPLEFT", 0, y)
+      section.header:SetPoint("TOPRIGHT", frame.content, "TOPRIGHT", 0, y)
+      y = y - CATEGORY_HEADER_HEIGHT
+      for index, tile in ipairs(visibleTiles) do
+        local row = math.floor((index - 1) / COLUMNS)
+        local column = (index - 1) % COLUMNS
+        tile.bandColor = row % 2 == 0 and "rowOdd" or "rowEven"
+        tile.divider:SetShown(column > 0)
+        tile:ClearAllPoints()
+        tile:SetPoint("TOPLEFT", frame.content, "TOPLEFT", column * tileWidth, y - (row * TILE_HEIGHT))
+        tile:SetWidth(column == COLUMNS - 1 and (width - (column * tileWidth)) or tileWidth)
+        StyleTile(tile)
+      end
+      y = y - (math.ceil(#visibleTiles / COLUMNS) * TILE_HEIGHT) - CATEGORY_GAP
+    end
+  end
+
+  frame.empty:SetShown(not anyVisible)
+  frame.empty:ClearAllPoints()
+  frame.empty:SetPoint("TOPLEFT", frame.content, "TOPLEFT", 0, -CONTENT_TOP - 8)
+  frame.content:SetHeight(math.max(1, -y + 8))
+end
+
+function NewAuraPanel:FirstVisibleTile()
+  for _, section in ipairs(self.frame and self.frame.sections or {}) do
+    for _, tile in ipairs(section.tiles) do
+      if tile:IsShown() then
+        return tile
+      end
+    end
+  end
+  return nil
+end
+
+local function CreateFilter(panel, host)
+  local filter = CreateFrame("Frame", "PopAurasNewAuraFilter", host)
+  filter:SetSize(220, 26)
+  filter.input = Frames.CreateInput(filter, 220, 26)
+  filter.input:SetAllPoints()
+  filter.input:SetTextInsets(26, 8, 0, 0)
+  filter.icon = filter:CreateTexture(nil, "OVERLAY")
+  filter.icon:SetTexture(Frames.UI_ICON_PATH .. "UiSearch")
+  filter.icon:SetSize(12, 12)
+  filter.icon:SetPoint("LEFT", 9, 0)
+  Theme.SetTexture(filter.icon, "textSecondary")
+  filter.placeholder = filter:CreateFontString(nil, "OVERLAY")
+  Theme.ApplyTypography(filter.placeholder, "bodySmall")
+  filter.placeholder:SetPoint("LEFT", 26, 0)
+  filter.placeholder:SetText("Filter aura types")
+  Theme.SetText(filter.placeholder, "textSecondary")
+
+  filter.input:SetScript("OnTextChanged", function(selfInput)
+    filter.placeholder:SetShown((selfInput:GetText() or "") == "" and not selfInput:HasFocus())
+    panel:Layout()
+  end)
+  filter.input:HookScript("OnEditFocusGained", function()
+    filter.placeholder:Hide()
+  end)
+  filter.input:HookScript("OnEditFocusLost", function(selfInput)
+    filter.placeholder:SetShown((selfInput:GetText() or "") == "")
+  end)
+  filter.input:SetScript("OnEnterPressed", function(selfInput)
+    selfInput:ClearFocus()
+    panel:OpenOption(panel:FirstVisibleTile())
+  end)
+  filter.input:SetScript("OnEscapePressed", function(selfInput)
+    selfInput:SetText("")
+    selfInput:ClearFocus()
+  end)
+  return filter
 end
 
 function NewAuraPanel:Create(parent)
@@ -468,51 +364,79 @@ function NewAuraPanel:Create(parent)
 
   frame.scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
   frame.scroll:SetPoint("TOPLEFT", 0, 0)
-  frame.scroll:SetPoint("BOTTOMRIGHT", -28, 0)
+  frame.scroll:SetPoint("BOTTOMRIGHT", -20, 0)
   Theme.StyleScrollFrame(frame.scroll)
 
   frame.content = CreateFrame("Frame", nil, frame.scroll)
+  frame.content:SetSize(720, 400)
   frame.scroll:SetScrollChild(frame.content)
 
-  local contentWidth = (GRID_COLUMNS * TILE_WIDTH) + ((GRID_COLUMNS - 1) * TILE_GAP_X) + (TILE_LEFT_MARGIN * 2)
-  local contentHeight = TILE_TOP_OFFSET + (GRID_ROWS * TILE_HEIGHT) + ((GRID_ROWS - 1) * TILE_GAP_Y) + 24
-  frame.content:SetSize(contentWidth, contentHeight)
-
-  frame.summary = Frames.CreateLabel(frame.content, "Choose an aura type to start building.", "GameFontNormalLarge")
-  frame.summary:SetPoint("TOPLEFT", 18, -20)
-  Theme.ApplyTypography(frame.summary, "panelTitle", "OUTLINE")
-  Theme.SetText(frame.summary, "text")
-
-  frame.hint = Frames.CreateLabel(frame.content, "Pick a base layout first, then give it a name in the create dialog.", "GameFontHighlight")
-  frame.hint:SetPoint("TOPLEFT", frame.summary, "BOTTOMLEFT", 0, -6)
-  Theme.SetText(frame.hint, "textSecondary")
-
-  frame.tiles = {}
-  local visibleOptionCount = 0
-  for _, option in ipairs(auraOptions) do
-    local enabled = not option.feature
-      or (ns.Features and ns.Features:IsEnabled(option.feature) == true)
-    if enabled then
-      visibleOptionCount = visibleOptionCount + 1
-      local tile = CreateTile(frame.content, option)
-      tile:SetPoint(GetTilePoint(visibleOptionCount))
-      frame.tiles[visibleOptionCount] = tile
+  frame.sections = {}
+  for _, category in ipairs(categories) do
+    local section = { category = category, tiles = {} }
+    section.header = CreateCategoryHeader(frame.content, category)
+    for _, option in ipairs(category.options) do
+      if IsOptionEnabled(option) then
+        section.tiles[#section.tiles + 1] = CreateTile(frame.content, option, category.title)
+      end
     end
+    frame.sections[#frame.sections + 1] = section
   end
 
-  frame.placeholders = {}
-  for index = visibleOptionCount + 1, (GRID_COLUMNS * GRID_ROWS) do
-    local tile = CreatePlaceholderTile(frame.content)
-    tile:SetPoint(GetTilePoint(index))
-    frame.placeholders[#frame.placeholders + 1] = tile
+  frame.empty = frame.content:CreateFontString(nil, "OVERLAY")
+  Theme.ApplyTypography(frame.empty, "body")
+  frame.empty:SetText("No aura types match that filter.")
+  Theme.SetText(frame.empty, "textMuted")
+  frame.empty:Hide()
+
+  -- The filter lives in the editor header (where settings search sits in other
+  -- modes) and follows this panel's visibility.
+  local mainFrame = ns.ui.MainWindow and ns.ui.MainWindow.frame
+  local host = mainFrame and mainFrame.editor or parent
+  frame.filter = CreateFilter(self, host)
+  if mainFrame and mainFrame.closeButton then
+    frame.filter:SetPoint("RIGHT", mainFrame.closeButton, "LEFT", -12, 0)
+  else
+    frame.filter:SetPoint("TOPRIGHT", host, "TOPRIGHT", -56, -16)
   end
+
+  frame:SetScript("OnSizeChanged", function()
+    NewAuraPanel:Layout()
+  end)
+  frame:SetScript("OnShow", function()
+    frame.filter:Show()
+    NewAuraPanel:Layout()
+    NewAuraPanel:ResetScroll()
+  end)
+  frame:SetScript("OnHide", function()
+    frame.filter:Hide()
+    if ns.ui.CreateAuraDialog and ns.ui.CreateAuraDialog.frame then
+      ns.ui.CreateAuraDialog.frame:Hide()
+    end
+  end)
 
   self.frame = frame
+  self:Layout()
   return frame
 end
 
-function NewAuraPanel:Refresh()
-  if self.frame and self.frame.scroll and self.frame.scroll.SetVerticalScroll then
-    self.frame.scroll:SetVerticalScroll(0)
+-- Reset now and again next frame: on first show the scroll range is not known
+-- until layout completes, which left the page scrolled part-way down.
+function NewAuraPanel:ResetScroll()
+  local frame = self.frame
+  if not frame or not frame.scroll then
+    return
   end
+  frame.scroll:SetVerticalScroll(0)
+  C_Timer.After(0, function()
+    if frame:IsShown() then
+      NewAuraPanel:Layout()
+      frame.scroll:SetVerticalScroll(0)
+    end
+  end)
+end
+
+function NewAuraPanel:Refresh()
+  self:Layout()
+  self:ResetScroll()
 end

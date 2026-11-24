@@ -42,64 +42,6 @@ local function ShowTooltip(owner, title, body)
   GameTooltip:Show()
 end
 
-local function AddIconLine(icon, width, height, point, x, y, rotation)
-  local line = icon:CreateTexture(nil, "OVERLAY")
-  line:SetTexture("Interface\\Buttons\\WHITE8x8")
-  line:SetSize(width, height)
-  line:SetPoint(point or "CENTER", icon, point or "CENTER", x or 0, y or 0)
-  if rotation and line.SetRotation then
-    line:SetRotation(rotation)
-  end
-  icon.lines[#icon.lines + 1] = line
-  return line
-end
-
-local function AddOutlineSquare(icon, x, y, size)
-  AddIconLine(icon, size, 1, "TOPLEFT", x, y)
-  AddIconLine(icon, size, 1, "TOPLEFT", x, y - size + 1)
-  AddIconLine(icon, 1, size, "TOPLEFT", x, y)
-  AddIconLine(icon, 1, size, "TOPLEFT", x + size - 1, y)
-end
-
-local function CreateActionIcon(button, kind)
-  local icon = CreateFrame("Frame", nil, button)
-  icon:SetSize(16, 16)
-  icon:SetPoint("CENTER")
-  icon.lines = {}
-  icon.kind = kind
-
-  if kind == "copy" then
-    AddOutlineSquare(icon, 2, -2, 8)
-    AddOutlineSquare(icon, 6, -6, 8)
-  elseif kind == "trash" then
-    AddIconLine(icon, 8, 1, "TOPLEFT", 4, -4)
-    AddIconLine(icon, 4, 1, "TOPLEFT", 6, -2)
-    AddIconLine(icon, 1, 8, "TOPLEFT", 5, -6)
-    AddIconLine(icon, 1, 8, "TOPLEFT", 11, -6)
-    AddIconLine(icon, 7, 1, "TOPLEFT", 5, -13)
-    AddIconLine(icon, 1, 5, "TOPLEFT", 7, -7)
-    AddIconLine(icon, 1, 5, "TOPLEFT", 9, -7)
-  elseif kind == "up" or kind == "down" then
-    local direction = kind == "up" and 1 or -1
-    AddIconLine(icon, 1, 8, "CENTER", 0, -direction)
-    AddIconLine(icon, 1, 6, "CENTER", -2, direction * 3, -math.rad(45) * direction)
-    AddIconLine(icon, 1, 6, "CENTER", 2, direction * 3, math.rad(45) * direction)
-  end
-
-  button._popAurasActionIcon = icon
-  return icon
-end
-
-local function SetActionIconColor(button, color)
-  local icon = button and button._popAurasActionIcon
-  if not icon then
-    return
-  end
-  for _, line in ipairs(icon.lines or {}) do
-    Theme.SetTexture(line, color)
-  end
-end
-
 local function IsGroupAura(aura)
   return aura and (aura.kind == "group" or aura.kind == "dynamic_group")
 end
@@ -128,6 +70,30 @@ local function GetSiblingInfo(aura)
   end
 
   return container, 0, #container
+end
+
+local QUESTION_MARK_ICON = 134400
+
+-- Row icon from the aura's own configuration (icon override, else the first
+-- configured trigger spell). Reads saved settings only, never live aura state;
+-- the Spells helper drops any secret texture value.
+local function GetAuraListIcon(aura)
+  local Spells = ns.util.Spells
+  if not aura or not Spells or not Spells.GetSpellTextureByOverride then
+    return QUESTION_MARK_ICON
+  end
+  local display = aura.display or {}
+  local texture = Spells:GetSpellTextureByOverride(display.iconOverrideId, display.iconOverrideName)
+  if not texture and type(aura.triggers) == "table" then
+    for _, trigger in ipairs(aura.triggers) do
+      local spellId = type(trigger) == "table" and tonumber(trigger.spellId) or nil
+      if spellId and spellId > 0 then
+        texture = Spells:GetSpellTextureByOverride(spellId)
+        break
+      end
+    end
+  end
+  return texture or QUESTION_MARK_ICON
 end
 
 local function IsAuraLoadedForList(aura)
@@ -626,6 +592,246 @@ function AuraTree:UpdateDragSession()
   self:FinishDrag()
 end
 
+local function RefreshAfterTreeChange()
+  ns.runtime:RefreshAll()
+  ns.ui.MainWindow:Refresh()
+end
+
+function AuraTree:MoveAuraBy(auraId, delta)
+  local aura = ns.Registry:GetAura(auraId)
+  local _, currentIndex, count = GetSiblingInfo(aura)
+  local target = currentIndex + (delta or 0)
+  if not aura or not aura.parentId or currentIndex < 1 or target < 1 or target > count then
+    return
+  end
+  ns.Registry:MoveAura(aura.id, target, aura.parentId)
+  RefreshAfterTreeChange()
+end
+
+function AuraTree:DuplicateAura(auraId)
+  local copy = ns.Registry:DuplicateAura(auraId)
+  if copy then
+    ns.db.ui.editorMode = "config"
+    ns.db.ui.selectedAuraId = copy.id
+    RefreshAfterTreeChange()
+  end
+end
+
+function AuraTree:RemoveAuraFromGroup(auraId)
+  local aura = ns.Registry:GetAura(auraId)
+  if aura and aura.parentId and ns.Registry:RemoveFromGroup(aura.id) then
+    RefreshAfterTreeChange()
+  end
+end
+
+function AuraTree:AddAuraToGroup(auraId, groupId)
+  local aura = ns.Registry:GetAura(auraId)
+  if aura and not aura.parentId and ns.Registry:AssignToGroup(aura.id, groupId) then
+    ns.db.ui.collapsedGroups[groupId] = nil
+    RefreshAfterTreeChange()
+  end
+end
+
+function AuraTree:ConfirmDeleteAura(auraId)
+  GameTooltip:Hide()
+  local aura = ns.Registry:GetAura(auraId)
+  if not aura then
+    return
+  end
+
+  local descendantCount = ns.Registry:CountDescendants(aura.id)
+  local isGroup = IsGroupAura(aura)
+  local message = string.format("Are you sure you want to delete \"%s\"?", tostring(aura.name or "Aura"))
+  if descendantCount > 0 then
+    local noun = descendantCount == 1 and "aura" or "auras"
+    message = string.format(
+      "%s\n\nThis group contains %d nested %s. Deleting the group will permanently delete %s as well.",
+      message,
+      descendantCount,
+      noun,
+      descendantCount == 1 and "it" or "them"
+    )
+  end
+
+  Frames.ShowConfirmation({
+    title = isGroup and "Delete Group" or "Delete Aura",
+    message = message,
+    acceptText = "Delete",
+    cancelText = "Cancel",
+    acceptStyle = "danger",
+    cancelStyle = "secondary",
+    onAccept = function()
+      if not ns.Registry:GetAura(aura.id) then
+        return
+      end
+      ns.db.ui.editorMode = "config"
+      ns.Registry:DeleteAura(aura.id)
+      RefreshAfterTreeChange()
+    end,
+  })
+end
+
+local function GetGroupMenuEntries(excludeAuraId)
+  local groups = {}
+  for _, aura in pairs(ns.Registry:GetAuras() or {}) do
+    if IsGroupAura(aura) and aura.id ~= excludeAuraId then
+      groups[#groups + 1] = aura
+    end
+  end
+  table.sort(groups, function(left, right)
+    local leftName = tostring(left.name or ""):lower()
+    local rightName = tostring(right.name or ""):lower()
+    if leftName ~= rightName then
+      return leftName < rightName
+    end
+    return tostring(left.id or "") < tostring(right.id or "")
+  end)
+  return groups
+end
+
+-- Builds a flat, renderer-agnostic description of the row menu so the modern
+-- Menu API and the UIDropDownMenu fallback show exactly the same actions.
+local function BuildRowMenuItems(aura)
+  local items = {}
+  local _, index, count = GetSiblingInfo(aura)
+  local inGroup = aura.parentId ~= nil
+  local isGroup = IsGroupAura(aura)
+  local auraId = aura.id
+
+  if inGroup then
+    items[#items + 1] = { text = "Move Up", enabled = index > 1,
+      func = function() AuraTree:MoveAuraBy(auraId, -1) end }
+    items[#items + 1] = { text = "Move Down", enabled = index > 0 and index < count,
+      func = function() AuraTree:MoveAuraBy(auraId, 1) end }
+    items[#items + 1] = { divider = true }
+  end
+
+  items[#items + 1] = { text = "Duplicate", enabled = true,
+    func = function() AuraTree:DuplicateAura(auraId) end }
+
+  if inGroup then
+    items[#items + 1] = { text = "Remove from Group", enabled = true,
+      func = function() AuraTree:RemoveAuraFromGroup(auraId) end }
+  elseif not isGroup then
+    local children = {}
+    for _, group in ipairs(GetGroupMenuEntries(auraId)) do
+      local groupId = group.id
+      children[#children + 1] = { text = group.name or "Unnamed Group", enabled = true,
+        func = function() AuraTree:AddAuraToGroup(auraId, groupId) end }
+    end
+    items[#items + 1] = { text = "Add to Group", enabled = #children > 0, children = children }
+  end
+
+  if isGroup then
+    local collapsed = ns.db.ui.collapsedGroups and ns.db.ui.collapsedGroups[auraId]
+    items[#items + 1] = { text = collapsed and "Expand Group" or "Collapse Group", enabled = true,
+      func = function()
+        ns.db.ui.collapsedGroups[auraId] = not ns.db.ui.collapsedGroups[auraId] or nil
+        AuraTree:Refresh()
+      end }
+  end
+
+  items[#items + 1] = { divider = true }
+  items[#items + 1] = { text = isGroup and "Delete Group..." or "Delete...", enabled = true, danger = true,
+    func = function() AuraTree:ConfirmDeleteAura(auraId) end }
+  return items
+end
+
+local DANGER_TEXT_FORMAT = "|cffe0585e%s|r"
+
+local function AddMenuItems(description, items)
+  for _, item in ipairs(items) do
+    if item.divider then
+      description:CreateDivider()
+    else
+      local text = item.danger and string.format(DANGER_TEXT_FORMAT, item.text) or item.text
+      local element = description:CreateButton(text, item.func)
+      if item.children then
+        AddMenuItems(element, item.children)
+      end
+      if item.enabled == false and element.SetEnabled then
+        element:SetEnabled(false)
+      end
+    end
+  end
+end
+
+local function ShowFallbackRowMenu(owner, title, items)
+  local dropdown = AuraTree.fallbackMenu
+  if not dropdown then
+    dropdown = CreateFrame("Frame", "PopAurasAuraRowMenu", UIParent, "UIDropDownMenuTemplate")
+    AuraTree.fallbackMenu = dropdown
+  end
+  UIDropDownMenu_Initialize(dropdown, function(_, level, menuList)
+    local list = level == 1 and items or menuList
+    if level == 1 then
+      local header = UIDropDownMenu_CreateInfo()
+      header.text = title
+      header.isTitle = true
+      header.notCheckable = true
+      UIDropDownMenu_AddButton(header, level)
+    end
+    for _, item in ipairs(list or {}) do
+      local info = UIDropDownMenu_CreateInfo()
+      info.notCheckable = true
+      if item.divider then
+        info.text = ""
+        info.disabled = true
+        info.isTitle = true
+      else
+        info.text = item.danger and string.format(DANGER_TEXT_FORMAT, item.text) or item.text
+        info.disabled = item.enabled == false
+        if item.children then
+          info.hasArrow = true
+          info.menuList = item.children
+        else
+          info.func = function()
+            CloseDropDownMenus()
+            item.func()
+          end
+        end
+      end
+      UIDropDownMenu_AddButton(info, level)
+    end
+  end, "MENU")
+  ToggleDropDownMenu(1, nil, dropdown, owner or "cursor", 0, 0)
+end
+
+function AuraTree:ShowRowMenu(auraId, owner)
+  local aura = ns.Registry:GetAura(auraId)
+  if not aura then
+    return
+  end
+  GameTooltip:Hide()
+  local title = aura.name or "Aura"
+  local items = BuildRowMenuItems(aura)
+  if MenuUtil and MenuUtil.CreateContextMenu then
+    -- The menu frame belongs to Blizzard's Menu system (and may be reused for
+    -- other context menus), so its strata is left untouched.
+    MenuUtil.CreateContextMenu(owner, function(_, rootDescription)
+      rootDescription:CreateTitle(title)
+      AddMenuItems(rootDescription, items)
+    end)
+  else
+    ShowFallbackRowMenu(owner, title, items)
+  end
+end
+
+-- Grip and the ... button only show on hover or for the selected row, so idle
+-- rows stay quiet while the drag and action affordances stay discoverable.
+local function UpdateRowChrome(row)
+  if not row or not row.auraId then
+    return
+  end
+  local selected = row.auraId == ns.db.ui.selectedAuraId
+  local hovered = row:IsMouseOver() and not AuraTree.draggingAuraId
+  local show = selected or hovered
+  row.grip:SetShown(show)
+  row.grip:SetAlpha(hovered and 1 or 0.6)
+  row.moreButton:SetShown(show)
+end
+AuraTree.UpdateRowChrome = UpdateRowChrome
+
 function AuraTree:Create(parent)
   local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
   Theme.StyleSurface(frame, "transparent", "transparent")
@@ -760,7 +966,7 @@ function AuraTree:Refresh()
     header:ClearAllPoints()
     header:SetPoint("TOPLEFT", 0, -yOffset)
     header:SetText(text:upper())
-    Theme.SetText(header, text:find("Not Loaded", 1, true) and "textMuted" or "textAccent")
+    Theme.SetText(header, text:find("Not Loaded", 1, true) and "textMuted" or "navigation")
     header:Show()
     header.line:ClearAllPoints()
     header.line:SetPoint("LEFT", header, "RIGHT", 10, 0)
@@ -778,7 +984,12 @@ function AuraTree:Refresh()
     row:SetFrameStrata("FULLSCREEN_DIALOG")
     row:SetFrameLevel(self.frame:GetFrameLevel() + 40)
     row:EnableMouse(false)
-    Theme.StyleSurface(row, "surface", "border")
+    Theme.StyleSurface(row, "transparent", "transparent")
+
+    -- Spell icon (or a group glyph) gives each row an at-a-glance identity.
+    row.icon = row:CreateTexture(nil, "ARTWORK")
+    row.icon:SetSize(24, 24)
+    row.icon:SetPoint("LEFT", 24, 0)
 
     row.button = CreateFrame("Button", nil, row, "BackdropTemplate")
     row.button:SetPoint("LEFT", 0, 0)
@@ -789,7 +1000,7 @@ function AuraTree:Refresh()
     Theme.StyleSurface(row.button, "transparent", "transparent")
     row.button.text = row.button:CreateFontString(nil, "OVERLAY")
     Theme.ApplyTypography(row.button.text, "control")
-    row.button.text:SetPoint("TOPLEFT", 12, -5)
+    row.button.text:SetPoint("TOPLEFT", 56, -5)
     row.button.text:SetPoint("TOPRIGHT", -8, -5)
     row.button.text:SetJustifyH("LEFT")
     row.button.text:SetJustifyV("TOP")
@@ -800,7 +1011,7 @@ function AuraTree:Refresh()
 
     row.button.kindText = row.button:CreateFontString(nil, "OVERLAY")
     Theme.ApplyTypography(row.button.kindText, "caption")
-    row.button.kindText:SetPoint("BOTTOMLEFT", 12, 5)
+    row.button.kindText:SetPoint("BOTTOMLEFT", 56, 5)
     row.button.kindText:SetPoint("BOTTOMRIGHT", -8, 5)
     row.button.kindText:SetJustifyH("LEFT")
     Theme.SetText(row.button.kindText, "textMuted")
@@ -814,9 +1025,9 @@ function AuraTree:Refresh()
 
     row.groupIndicator = Theme.CreateAccentLine(row, 1, "groupAccent")
     row.groupIndicator:ClearAllPoints()
-    row.groupIndicator:SetPoint("TOPLEFT", 5, -5)
-    row.groupIndicator:SetPoint("BOTTOMLEFT", 5, 5)
-    row.groupIndicator:SetWidth(3)
+    row.groupIndicator:SetPoint("TOPLEFT", 1, -8)
+    row.groupIndicator:SetPoint("BOTTOMLEFT", 1, 8)
+    row.groupIndicator:SetWidth(2)
     row.groupIndicator:Hide()
 
     row.previewOutline = CreateFrame("Frame", nil, row, "BackdropTemplate")
@@ -850,7 +1061,7 @@ function AuraTree:Refresh()
     row.topDottedLine:SetPoint("TOPRIGHT", -6, -1)
     row.topDottedLine:SetJustifyH("CENTER")
     row.topDottedLine:SetText(string.rep(". ", 40))
-    Theme.SetText(row.topDottedLine, "textMuted")
+    Theme.SetText(row.topDottedLine, "border")
     row.topDottedLine:Hide()
 
     row.bottomDottedLine = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -858,10 +1069,19 @@ function AuraTree:Refresh()
     row.bottomDottedLine:SetPoint("BOTTOMRIGHT", -6, 1)
     row.bottomDottedLine:SetJustifyH("CENTER")
     row.bottomDottedLine:SetText(string.rep(". ", 40))
-    Theme.SetText(row.bottomDottedLine, "textMuted")
+    Theme.SetText(row.bottomDottedLine, "border")
     row.bottomDottedLine:Hide()
 
-    row.button:SetScript("OnClick", function(selfButton)
+    row.button:SetScript("OnClick", function(selfButton, mouseButton, down)
+      if mouseButton == "RightButton" then
+        if not down then
+          ns.db.ui.editorMode = "config"
+          ns.db.ui.selectedAuraId = selfButton.auraId
+          ns.ui.MainWindow:RefreshSelection()
+          AuraTree:ShowRowMenu(selfButton.auraId, selfButton)
+        end
+        return
+      end
       ns.db.ui.editorMode = "config"
       ns.db.ui.selectedAuraId = selfButton.auraId
       ns.ui.MainWindow:RefreshSelection()
@@ -884,17 +1104,20 @@ function AuraTree:Refresh()
       end
       local aura = ns.Registry:GetAura(selfButton.auraId)
       if aura and aura.id ~= ns.db.ui.selectedAuraId then
-        Theme.StyleSurface(row, "surfaceHover", "borderStrong")
+        Theme.StyleSurface(row, "surfaceHover", "transparent")
       end
+      UpdateRowChrome(row)
       if aura then
-        ShowTooltip(selfButton, aura.name or "Aura", GetAuraKindLabel(aura) .. " — drag to reorder")
+        ShowTooltip(selfButton, aura.name or "Aura",
+          GetAuraKindLabel(aura) .. "\nDrag to reorder or move into a group. Right-click for actions.")
       end
     end)
     row.button:SetScript("OnLeave", function()
       GameTooltip:Hide()
       if row.auraId ~= ns.db.ui.selectedAuraId and not AuraTree.draggingAuraId then
-        Theme.StyleSurface(row, "surface", "border")
+        Theme.StyleSurface(row, "transparent", "transparent")
       end
+      UpdateRowChrome(row)
       if AuraTree.draggingAuraId then
         AuraTree:UpdateDragSession()
       end
@@ -929,175 +1152,28 @@ function AuraTree:Refresh()
       GameTooltip:Hide()
     end)
 
-    row.upButton = CreateFrame("Button", nil, row, "BackdropTemplate")
-    row.upButton:SetSize(20, 20)
-    row.upButton:SetFrameStrata("FULLSCREEN_DIALOG")
-    row.upButton:SetFrameLevel(row:GetFrameLevel() + 2)
-    row.upButton:EnableMouse(true)
-    row.upButton:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1,
-    })
-    row.upButton.text = row.upButton:CreateFontString(nil, "OVERLAY")
-    row.upButton.Text = row.upButton.text
-    Theme.ApplyTypography(row.upButton.text, "caption")
-    row.upButton.text:SetPoint("CENTER")
-    row.upButton.text:SetText("")
-    CreateActionIcon(row.upButton, "up")
-    SetActionIconColor(row.upButton, "textMuted")
-    row.upButton:SetScript("OnClick", function(selfButton)
-      local aura = ns.Registry:GetAura(selfButton.auraId)
-      local _, currentIndex = GetSiblingInfo(aura)
-      if aura and currentIndex > 1 then
-        ns.Registry:MoveAura(aura.id, currentIndex - 1, aura.parentId)
-        ns.runtime:RefreshAll()
-        ns.ui.MainWindow:Refresh()
-      end
-    end)
-    row.upButton:SetScript("OnEnter", function(selfButton)
-      SetActionIconColor(selfButton, "text")
-      ShowTooltip(selfButton, "Move Up", "Moves this aura earlier in its current list or group.")
-    end)
-    row.upButton:SetScript("OnLeave", function(selfButton)
-      SetActionIconColor(selfButton, "textMuted")
-      GameTooltip:Hide()
-    end)
+    row.grip = row:CreateTexture(nil, "OVERLAY")
+    row.grip:SetTexture(Frames.UI_ICON_PATH .. "UiGrip")
+    row.grip:SetSize(14, 14)
+    row.grip:SetPoint("LEFT", 6, 0)
+    Theme.SetTexture(row.grip, "textMuted")
+    row.grip:Hide()
 
-    row.downButton = CreateFrame("Button", nil, row, "BackdropTemplate")
-    row.downButton:SetSize(20, 20)
-    row.downButton:SetFrameStrata("FULLSCREEN_DIALOG")
-    row.downButton:SetFrameLevel(row:GetFrameLevel() + 2)
-    row.downButton:EnableMouse(true)
-    row.downButton:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1,
-    })
-    row.downButton.text = row.downButton:CreateFontString(nil, "OVERLAY")
-    row.downButton.Text = row.downButton.text
-    Theme.ApplyTypography(row.downButton.text, "caption")
-    row.downButton.text:SetPoint("CENTER")
-    row.downButton.text:SetText("")
-    CreateActionIcon(row.downButton, "down")
-    SetActionIconColor(row.downButton, "textMuted")
-    row.downButton:SetScript("OnClick", function(selfButton)
-      local aura = ns.Registry:GetAura(selfButton.auraId)
-      local _, currentIndex, count = GetSiblingInfo(aura)
-      if aura and currentIndex > 0 and currentIndex < count then
-        ns.Registry:MoveAura(aura.id, currentIndex + 1, aura.parentId)
-        ns.runtime:RefreshAll()
-        ns.ui.MainWindow:Refresh()
-      end
+    row.moreButton = Frames.CreateIconButton(row, "UiMore", 24, 14, "Actions",
+      "Move, duplicate, group or delete. You can also right-click the row.", true)
+    row.moreButton:SetFrameStrata("FULLSCREEN_DIALOG")
+    row.moreButton:SetFrameLevel(row:GetFrameLevel() + 2)
+    row.moreButton:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+    row.moreButton:SetScript("OnClick", function(selfButton)
+      AuraTree:ShowRowMenu(selfButton.auraId, selfButton)
     end)
-    row.downButton:SetScript("OnEnter", function(selfButton)
-      SetActionIconColor(selfButton, "text")
-      ShowTooltip(selfButton, "Move Down", "Moves this aura later in its current list or group.")
+    row.moreButton:HookScript("OnEnter", function()
+      UpdateRowChrome(row)
     end)
-    row.downButton:SetScript("OnLeave", function(selfButton)
-      SetActionIconColor(selfButton, "textMuted")
-      GameTooltip:Hide()
+    row.moreButton:HookScript("OnLeave", function()
+      UpdateRowChrome(row)
     end)
-
-    row.duplicateButton = CreateFrame("Button", nil, row, "BackdropTemplate")
-    row.duplicateButton:SetSize(20, 20)
-    row.duplicateButton:SetFrameStrata("FULLSCREEN_DIALOG")
-    row.duplicateButton:SetFrameLevel(row:GetFrameLevel() + 2)
-    row.duplicateButton:EnableMouse(true)
-    row.duplicateButton:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1,
-    })
-    row.duplicateButton.text = row.duplicateButton:CreateFontString(nil, "OVERLAY")
-    row.duplicateButton.Text = row.duplicateButton.text
-    Theme.ApplyTypography(row.duplicateButton.text, "caption")
-    row.duplicateButton.text:SetPoint("CENTER")
-    row.duplicateButton.text:SetText("")
-    CreateActionIcon(row.duplicateButton, "copy")
-    SetActionIconColor(row.duplicateButton, "textSecondary")
-    row.duplicateButton:SetScript("OnClick", function(selfButton)
-      local copy = ns.Registry:DuplicateAura(selfButton.auraId)
-      if copy then
-        ns.db.ui.editorMode = "config"
-        ns.db.ui.selectedAuraId = copy.id
-        ns.runtime:RefreshAll()
-        ns.ui.MainWindow:Refresh()
-      end
-    end)
-    row.duplicateButton:SetScript("OnEnter", function(selfButton)
-      SetActionIconColor(selfButton, "text")
-      ShowTooltip(selfButton, "Duplicate Aura", "Creates a copy of this aura or group.")
-    end)
-    row.duplicateButton:SetScript("OnLeave", function(selfButton)
-      SetActionIconColor(selfButton, "textSecondary")
-      GameTooltip:Hide()
-    end)
-
-    row.deleteButton = CreateFrame("Button", nil, row, "BackdropTemplate")
-    row.deleteButton:SetSize(20, 20)
-    row.deleteButton:SetFrameStrata("FULLSCREEN_DIALOG")
-    row.deleteButton:SetFrameLevel(row:GetFrameLevel() + 2)
-    row.deleteButton:EnableMouse(true)
-    row.deleteButton:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1,
-    })
-    row.deleteButton.text = row.deleteButton:CreateFontString(nil, "OVERLAY")
-    row.deleteButton.Text = row.deleteButton.text
-    Theme.ApplyTypography(row.deleteButton.text, "caption")
-    row.deleteButton.text:SetPoint("CENTER")
-    row.deleteButton.text:SetText("")
-    CreateActionIcon(row.deleteButton, "trash")
-    SetActionIconColor(row.deleteButton, "dangerBorder")
-    row.deleteButton:SetScript("OnClick", function(selfButton)
-      GameTooltip:Hide()
-      local aura = ns.Registry:GetAura(selfButton.auraId)
-      if not aura then
-        return
-      end
-
-      local descendantCount = ns.Registry:CountDescendants(aura.id)
-      local isGroup = IsGroupAura(aura)
-      local message = string.format("Are you sure you want to delete \"%s\"?", tostring(aura.name or "Aura"))
-      if descendantCount > 0 then
-        local noun = descendantCount == 1 and "aura" or "auras"
-        message = string.format(
-          "%s\n\nThis group contains %d nested %s. Deleting the group will permanently delete %s as well.",
-          message,
-          descendantCount,
-          noun,
-          descendantCount == 1 and "it" or "them"
-        )
-      end
-
-      Frames.ShowConfirmation({
-        title = isGroup and "Delete Group" or "Delete Aura",
-        message = message,
-        acceptText = "Delete",
-        cancelText = "Cancel",
-        acceptStyle = "danger",
-        cancelStyle = "secondary",
-        onAccept = function()
-          if not ns.Registry:GetAura(aura.id) then
-            return
-          end
-          ns.db.ui.editorMode = "config"
-          ns.Registry:DeleteAura(aura.id)
-          ns.runtime:RefreshAll()
-          ns.ui.MainWindow:Refresh()
-        end,
-      })
-    end)
-    row.deleteButton:SetScript("OnEnter", function(selfButton)
-      SetActionIconColor(selfButton, "text")
-      ShowTooltip(selfButton, "Delete Aura", "Deletes this aura. Groups delete their child auras too.")
-    end)
-    row.deleteButton:SetScript("OnLeave", function(selfButton)
-      SetActionIconColor(selfButton, "dangerBorder")
-      GameTooltip:Hide()
-    end)
+    row.moreButton:Hide()
 
     self.frame.rows[i] = row
     return row
@@ -1127,7 +1203,7 @@ function AuraTree:Refresh()
     row.button.text:SetText(label)
     row.button.kindText:SetText(kindLabel)
     row.button.text:ClearAllPoints()
-    row.button.text:SetPoint("TOPLEFT", 12, -5)
+    row.button.text:SetPoint("TOPLEFT", 56, -5)
     row.button.text:SetPoint("TOPRIGHT", -8, -5)
     row.button.auraId = aura.id
     row.auraId = aura.id
@@ -1136,19 +1212,29 @@ function AuraTree:Refresh()
     row.button:Show()
     row.button.text:Show()
     if aura.id == ns.db.ui.selectedAuraId then
-      Theme.StyleSurface(row, "surfaceHover", "borderFocus")
+      Theme.StyleSurface(row, "accentSoft", "transparent")
       row.button.selectionBar:Show()
     else
       local isGroupDropTarget = AuraTree.dropTargetAuraId == aura.id and AuraTree.dropMode == "group" and (aura.kind == "group" or aura.kind == "dynamic_group")
       local isReorderTarget = AuraTree.dropTargetAuraId == aura.id and AuraTree.dropMode == "reorder"
       Theme.StyleSurface(
         row,
-        (isGroupDropTarget or isReorderTarget) and "accentSoft" or "surface",
-        (isGroupDropTarget or isReorderTarget) and "borderFocus" or "border"
+        (isGroupDropTarget or isReorderTarget) and "accentSoft" or "transparent",
+        (isGroupDropTarget or isReorderTarget) and "borderFocus" or "transparent"
       )
       row.button.selectionBar:Hide()
     end
     Theme.StyleSurface(row.button, "transparent", "transparent")
+
+    if IsGroupAura(aura) then
+      row.icon:SetTexture(Frames.UI_ICON_PATH .. "UiGroup")
+      row.icon:SetTexCoord(0, 1, 0, 1)
+      Theme.SetTexture(row.icon, "groupAccent")
+    else
+      row.icon:SetTexture(GetAuraListIcon(aura))
+      row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+      row.icon:SetVertexColor(1, 1, 1, 1)
+    end
 
     local contentAlpha = isLoaded and 1 or 0.52
     local buttonAlpha = isLoaded and 1 or 0.66
@@ -1159,6 +1245,8 @@ function AuraTree:Refresh()
     row.button:SetAlpha(1)
     row.button.text:SetAlpha(contentAlpha)
     row.button.kindText:SetAlpha(contentAlpha)
+    row.icon:SetAlpha(contentAlpha)
+    row.icon:SetDesaturated(not isLoaded)
     row.topDottedLine:SetShown(not isLoaded)
     row.bottomDottedLine:SetShown(not isLoaded)
     row.topDottedLine:SetAlpha(contentAlpha)
@@ -1179,27 +1267,11 @@ function AuraTree:Refresh()
       Theme.StyleButton(row.expandButton, "ghost")
     end
 
-    local _, siblingIndex, siblingCount = GetSiblingInfo(aura)
-    row.upButton.auraId = aura.id
-    row.upButton:SetShown(aura.parentId ~= nil and siblingIndex > 1)
-    row.upButton.text:SetShown(aura.parentId ~= nil and siblingIndex > 1)
-    Theme.StyleButton(row.upButton, "ghost")
+    row.moreButton.auraId = aura.id
+    row.moreButton:SetAlpha(1)
 
-    row.downButton.auraId = aura.id
-    row.downButton:SetShown(aura.parentId ~= nil and siblingIndex > 0 and siblingIndex < siblingCount)
-    row.downButton.text:SetShown(aura.parentId ~= nil and siblingIndex > 0 and siblingIndex < siblingCount)
-    Theme.StyleButton(row.downButton, "ghost")
-
-    row.duplicateButton.auraId = aura.id
-    row.duplicateButton:SetShown(true)
-    Theme.StyleButton(row.duplicateButton, "ghost")
-
-    row.deleteButton.auraId = aura.id
-    row.deleteButton:SetShown(true)
-    Theme.StyleButton(row.deleteButton, "ghostDanger")
-
-    local actionCount = 2 + (isGroup and 1 or 0) + (row.upButton:IsShown() and 1 or 0) + (row.downButton:IsShown() and 1 or 0)
-    local buttonWidth = rowWidth - 4 - (actionCount * 22)
+    local reservedWidth = 28 + (row.expandButton:IsShown() and 22 or 0)
+    local buttonWidth = rowWidth - 4 - reservedWidth
     row.button:SetWidth(math.max(112, buttonWidth))
     row.button:ClearAllPoints()
     row.button:SetPoint("LEFT", 0, 0)
@@ -1210,38 +1282,18 @@ function AuraTree:Refresh()
     end
     row.button.text:ClearAllPoints()
     if showKind then
-      row.button.text:SetPoint("TOPLEFT", 12, -5)
+      row.button.text:SetPoint("TOPLEFT", 56, -5)
       row.button.text:SetPoint("TOPRIGHT", -8, -5)
     else
-      row.button.text:SetPoint("LEFT", 12, 0)
+      row.button.text:SetPoint("LEFT", 56, 0)
       row.button.text:SetPoint("RIGHT", -8, 0)
     end
-    local anchor = row.button
     if row.expandButton:IsShown() then
       row.expandButton:ClearAllPoints()
-      row.expandButton:SetPoint("LEFT", anchor, "RIGHT", 2, 0)
-      anchor = row.expandButton
+      row.expandButton:SetPoint("RIGHT", row.moreButton, "LEFT", -2, 0)
     end
-    if row.upButton:IsShown() then
-      row.upButton:ClearAllPoints()
-      row.upButton:SetPoint("LEFT", anchor, "RIGHT", 2, 0)
-      anchor = row.upButton
-    end
-    if row.downButton:IsShown() then
-      row.downButton:ClearAllPoints()
-      row.downButton:SetPoint("LEFT", anchor, "RIGHT", 2, 0)
-      anchor = row.downButton
-    end
-    row.duplicateButton:ClearAllPoints()
-    row.duplicateButton:SetPoint("LEFT", anchor, "RIGHT", 2, 0)
-    row.deleteButton:ClearAllPoints()
-    row.deleteButton:SetPoint("LEFT", row.duplicateButton, "RIGHT", 2, 0)
-
     row.expandButton:SetAlpha(contentAlpha)
-    row.upButton:SetAlpha(contentAlpha)
-    row.downButton:SetAlpha(contentAlpha)
-    row.duplicateButton:SetAlpha(contentAlpha)
-    row.deleteButton:SetAlpha(contentAlpha)
+    UpdateRowChrome(row)
     yOffset = yOffset + Theme.layout.auraRowStep
 
   end

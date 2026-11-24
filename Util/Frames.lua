@@ -307,13 +307,19 @@ function Frames.CreateCheckbox(parent, labelText)
     check.Text = text
   end
   Theme.ApplyTypography(text, "control")
-  Theme.StyleCheckbox(check)
+  -- Every on/off control uses the same switch visual; the CheckButton API
+  -- (GetChecked/SetChecked/OnClick) is unchanged for existing callers.
+  Theme.PixelSetSize(check, 44, 24)
+  text:ClearAllPoints()
+  text:SetPoint("LEFT", check, "RIGHT", 6, 0)
+  Theme.StyleToggle(check)
+  Theme.SetText(text, "textSecondary")
   return check
 end
 
 function Frames.CreateToggle(parent)
   local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-  Theme.PixelSetSize(check, 42, Layout.controlHeight)
+  Theme.PixelSetSize(check, 44, Layout.controlHeight)
   if check.Text then
     check.Text:SetText("")
     check.Text:Hide()

@@ -36,12 +36,13 @@ if ($missingOptions.Count -gt 0) {
 
 $tocText = Get-Content -LiteralPath $toc -Raw
 $optionsTocText = Get-Content -LiteralPath $optionsToc -Raw
-if ($tocText -notmatch '(?m)^## Interface:\s*120100\s*$') {
-    throw "PopAuras.toc is not targeting PTR interface 120100"
+if ($tocText -notmatch '(?m)^## Interface:\s*120100,\s*120107\s*$' -or
+    $optionsTocText -notmatch '(?m)^## Interface:\s*120100,\s*120107\s*$') {
+    throw "Core and options TOCs must target interfaces 120100 and 120107"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.11\s*$' -or
-    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.11\s*$') {
-    throw "Core and options metadata are not aligned to release 12.1.11"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.12\s*$' -or
+    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.12\s*$') {
+    throw "Core and options metadata are not aligned to release 12.1.12"
 }
 if ($optionsTocText -notmatch '(?m)^## LoadOnDemand:\s*1\s*$' -or
     $optionsTocText -notmatch '(?m)^## Dependencies:\s*PopAuras\s*$') {
@@ -706,8 +707,9 @@ foreach ($label in @('Trinket 1 (Top)', 'Trinket 2 (Bottom)')) {
 }
 if ($displayPanelText -notmatch 'ApplyTwoColumnSettingsGrid' -or
     $displayPanelText -notmatch 'settingsGridCells' -or
-    $displayPanelText -notmatch 'Theme\.SetTexture\(cell, "canvasAlt"\)' -or
-    $displayPanelText -notmatch 'cell:SetSize\(cellWidth, 48\)' -or
+    $displayPanelText -notmatch 'settingsGridBands' -or
+    $displayPanelText -notmatch 'Theme\.SetTexture\(band, row % 2 == 0 and "rowOdd" or "rowEven"\)' -or
+    $displayPanelText -notmatch 'cell:SetSize\(cellWidth, rowHeight\)' -or
     $displayPanelText -notmatch 'section\.insetLeft = 22' -or
     $displayPanelText -notmatch 'cellGap = 2' -or
     $displayPanelText -notmatch 'math\.floor\(\(index - 1\) / 2\)' -or
@@ -945,7 +947,7 @@ if ($mainWindowText -notmatch 'removeFromGroupButton' -or
 if ($mainWindowText -notmatch 'addToGroupDropdown' -or
     $mainWindowText -notmatch 'Loaded Groups' -or
     $mainWindowText -notmatch 'Registry:AssignToGroup\(aura\.id,\s*groupId\)' -or
-    $mainWindowText -notmatch 'Theme\.StyleDropdown\(frame\.addToGroupDropdown,\s*"success"\)') {
+    $mainWindowText -notmatch 'Theme\.StyleDropdown\(frame\.addToGroupDropdown,\s*"secondary"\)') {
     throw "Standalone auras do not expose a loaded-first Add to Group header menu"
 }
 $toolbarText = Get-Content -LiteralPath (Join-Path $optionsRoot "UI\Toolbar.lua") -Raw
@@ -994,10 +996,14 @@ if ($auraTreeText -notmatch '"Loaded Auras"' -or
     $auraTreeText -notmatch 'topDottedLine:SetShown\(not isLoaded\)') {
     throw "Aura library no longer preserves the distinct loaded and unloaded treatments"
 }
-if ($auraTreeText -notmatch 'CreateActionIcon\(row\.duplicateButton,\s*"copy"\)' -or
-    $auraTreeText -notmatch 'CreateActionIcon\(row\.deleteButton,\s*"trash"\)' -or
+if ($auraTreeText -notmatch 'row\.moreButton' -or
+    $auraTreeText -notmatch 'function AuraTree:ShowRowMenu' -or
+    $auraTreeText -notmatch 'MenuUtil\.CreateContextMenu' -or
+    $auraTreeText -notmatch '"RightButton"' -or
+    $auraTreeText -notmatch 'row\.grip' -or
+    $auraTreeText -notmatch '"Remove from Group"' -or
     $auraTreeText -notmatch 'and "\+" or "-"') {
-    throw "Aura row actions are missing the modern copy, delete, or expand/collapse icon treatment"
+    throw "Aura rows are missing the actions menu (... button and right-click), drag grip, or expand/collapse control"
 }
 if ($auraTreeText -match 'ungroupButton') {
     throw "Aura rows still expose the legacy inline remove-from-group control"

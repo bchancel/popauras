@@ -179,10 +179,30 @@ local function LayoutTabs(frame, aura)
     if previousVisible then
       tab:SetPoint("TOPLEFT", previousVisible, "TOPRIGHT", 4, 0)
     else
-      tab:SetPoint("TOPLEFT", Theme.layout.panelPadding, -84)
+      tab:SetPoint("TOPLEFT", Theme.layout.panelPadding, -110)
     end
     previousVisible = tab
   end
+end
+
+-- The header is tall in config mode (preview + tabs + search) but collapses in
+-- the New Aura picker, which has neither tabs nor a preview.
+local HEADER_FULL = { divider = -150, content = -166, glow = 149 }
+local HEADER_COMPACT = { divider = -84, content = -96, glow = 83 }
+
+local function ApplyHeaderMode(frame, compact)
+  local metrics = compact and HEADER_COMPACT or HEADER_FULL
+  if frame._popAurasHeaderCompact == compact then
+    return
+  end
+  frame._popAurasHeaderCompact = compact
+  frame.editorDivider:ClearAllPoints()
+  frame.editorDivider:SetPoint("TOPLEFT", 0, metrics.divider)
+  frame.editorDivider:SetPoint("TOPRIGHT", 0, metrics.divider)
+  frame.content:ClearAllPoints()
+  frame.content:SetPoint("TOPLEFT", Theme.layout.panelPadding, metrics.content)
+  frame.content:SetPoint("BOTTOMRIGHT", -18, 14)
+  frame.headerGlow:SetHeight(metrics.glow)
 end
 
 local function ApplyWindowDragClamp(frame)
@@ -296,10 +316,14 @@ function MainWindow:Create()
   frame.brandMark = CreateFrame("Frame", nil, frame.header, "BackdropTemplate")
   frame.brandMark:SetSize(36, 36)
   frame.brandMark:SetPoint("LEFT", 18, 0)
-  Theme.StyleSurface(frame.brandMark, "accentSoft", "accent")
+  Theme.StyleSurface(frame.brandMark, "transparent", "transparent")
+  frame.brandRing = frame.brandMark:CreateTexture(nil, "ARTWORK")
+  frame.brandRing:SetAllPoints()
+  frame.brandRing:SetTexture(Frames.UI_ICON_PATH .. "UiRing")
+  Theme.SetTexture(frame.brandRing, "accent")
 
   frame.brandText = frame.brandMark:CreateFontString(nil, "OVERLAY")
-  Theme.ApplyTypography(frame.brandText, "brand")
+  Theme.ApplyTypography(frame.brandText, "caption")
   frame.brandText:SetPoint("CENTER", 0, 1)
   frame.brandText:SetText("/PA")
   Theme.SetText(frame.brandText, "accentBright")
@@ -309,19 +333,21 @@ function MainWindow:Create()
   frame.headerText:SetPoint("LEFT", frame.brandMark, "RIGHT", 10, 1)
   local version = GetAddonVersion()
   frame.headerText:SetText("PopAuras")
-  Theme.SetText(frame.headerText, "accentBright")
+  Theme.SetText(frame.headerText, "text")
 
-  frame.accent = Theme.CreateAccentLine(frame, 2, "accent")
+  frame.accent = Theme.CreateAccentLine(frame, 1, "border")
   frame.accent:SetPoint("TOPLEFT", frame.sidebar, "TOPLEFT", 16, -70)
   frame.accent:SetPoint("TOPRIGHT", frame.sidebar, "TOPRIGHT", -16, -70)
 
+  -- Global actions live in one compact row at the bottom of the sidebar so the
+  -- aura list gets the vertical space.
   frame.toolbar = ns.ui.Toolbar:Create(frame.sidebar)
-  frame.toolbar:SetPoint("TOPLEFT", 18, -84)
-  frame.toolbar:SetPoint("TOPRIGHT", -18, -84)
+  frame.toolbar:SetPoint("BOTTOMLEFT", 18, 52)
+  frame.toolbar:SetPoint("BOTTOMRIGHT", -18, 52)
 
   frame.tree = ns.ui.AuraTree:Create(frame.sidebar)
-  frame.tree:SetPoint("TOPLEFT", 18, -146)
-  frame.tree:SetPoint("BOTTOMRIGHT", -18, 48)
+  frame.tree:SetPoint("TOPLEFT", 18, -82)
+  frame.tree:SetPoint("BOTTOMRIGHT", -18, 90)
   frame.tree:SetFrameStrata("FULLSCREEN_DIALOG")
   frame.tree:SetFrameLevel(frame:GetFrameLevel() + 60)
 
@@ -344,6 +370,20 @@ function MainWindow:Create()
   frame.editorSubtitle:SetText("Configure the selected aura.")
   Theme.SetText(frame.editorSubtitle, "textMuted")
 
+  -- Header glow: a soft accent wash behind the title, EllesmereUI-style.
+  frame.headerGlow = frame.editor:CreateTexture(nil, "BACKGROUND", nil, 1)
+  frame.headerGlow:SetTexture("Interface\\Buttons\\WHITE8x8")
+  frame.headerGlow:SetPoint("TOPLEFT", 1, -1)
+  frame.headerGlow:SetSize(520, 149)
+  local glowColor = Theme.GetColor("accent")
+  if frame.headerGlow.SetGradient and CreateColor then
+    frame.headerGlow:SetGradient("HORIZONTAL",
+      CreateColor(glowColor[1], glowColor[2], glowColor[3], 0.18),
+      CreateColor(glowColor[1], glowColor[2], glowColor[3], 0))
+  else
+    frame.headerGlow:SetVertexColor(glowColor[1], glowColor[2], glowColor[3], 0.04)
+  end
+
   frame.closeButton = Frames.CreateButton(frame.editor, "x", 28, 28, function()
     frame:Hide()
   end)
@@ -351,13 +391,11 @@ function MainWindow:Create()
   Theme.StyleButton(frame.closeButton, "ghost")
   Theme.ApplyTypography(frame.closeButton:GetFontString(), "glyph", "")
 
-  frame.previewAnimateCheck = Frames.CreateToggle(frame.editor)
-  frame.previewAnimateCheck:SetPoint("RIGHT", frame.closeButton, "LEFT", -18, 0)
-  frame.previewAnimateLabel = frame.editor:CreateFontString(nil, "OVERLAY")
-  Theme.ApplyTypography(frame.previewAnimateLabel, "bodySmall")
-  frame.previewAnimateLabel:SetPoint("RIGHT", frame.previewAnimateCheck, "LEFT", -8, 0)
-  frame.previewAnimateLabel:SetText("Preview Animation")
-  Theme.SetText(frame.previewAnimateLabel, "textSecondary")
+  -- Header tools are quiet icon toggles (eye = preview, bug = debug) with
+  -- tooltips, instead of labelled switches crowding the title row.
+  frame.previewAnimateCheck = Frames.CreateIconToggle(frame.editor, "UiEye", "Preview Animation",
+    "Plays this aura in the world as if it were active, so you can position and style it.")
+  frame.previewAnimateCheck:SetPoint("RIGHT", frame.closeButton, "LEFT", -10, 0)
   frame.previewAnimateCheck:SetScript("OnClick", function(selfCheck)
     local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
     if not aura then
@@ -376,13 +414,9 @@ function MainWindow:Create()
     end
   end)
 
-  frame.triggerDebugCheck = Frames.CreateToggle(frame.editor)
-  frame.triggerDebugCheck:SetPoint("RIGHT", frame.previewAnimateLabel, "LEFT", -24, 0)
-  frame.triggerDebugLabel = frame.editor:CreateFontString(nil, "OVERLAY")
-  Theme.ApplyTypography(frame.triggerDebugLabel, "bodySmall")
-  frame.triggerDebugLabel:SetPoint("RIGHT", frame.triggerDebugCheck, "LEFT", -8, 0)
-  frame.triggerDebugLabel:SetText("Debug Trigger")
-  Theme.SetText(frame.triggerDebugLabel, "textSecondary")
+  frame.triggerDebugCheck = Frames.CreateIconToggle(frame.editor, "UiBug", "Debug Trigger",
+    "Turns on trigger diagnostics for the selected trigger of this aura.")
+  frame.triggerDebugCheck:SetPoint("RIGHT", frame.previewAnimateCheck, "LEFT", -6, 0)
   frame.triggerDebugCheck:SetScript("OnClick", function(selfCheck)
     local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)
     local trigger = GetSelectedAuraTrigger(aura)
@@ -416,8 +450,8 @@ function MainWindow:Create()
       ns.ui.MainWindow:Refresh()
     end
   end)
-  frame.removeFromGroupButton:SetPoint("RIGHT", frame.triggerDebugLabel, "LEFT", -18, 0)
-  Frames.StyleDangerButton(frame.removeFromGroupButton)
+  frame.removeFromGroupButton:SetPoint("RIGHT", frame.triggerDebugCheck, "LEFT", -12, 0)
+  Theme.StyleButton(frame.removeFromGroupButton, "ghost")
   Theme.ApplyTypography(frame.removeFromGroupButton:GetFontString(), "caption")
 
   frame.addToGroupDropdown = Frames.CreateDropdown(frame.editor, 122, function(_, level)
@@ -468,14 +502,28 @@ function MainWindow:Create()
       UIDropDownMenu_AddButton(info, level)
     end
   end)
-  frame.addToGroupDropdown:SetPoint("RIGHT", frame.triggerDebugLabel, "LEFT", -2, 0)
+  frame.addToGroupDropdown:SetPoint("RIGHT", frame.triggerDebugCheck, "LEFT", 4, 0)
   UIDropDownMenu_SetText(frame.addToGroupDropdown, "Add to Group")
-  Theme.StyleDropdown(frame.addToGroupDropdown, "success")
+  Theme.StyleDropdown(frame.addToGroupDropdown, "secondary")
   Theme.ApplyTypography(frame.addToGroupDropdown.Text, "caption")
 
-  frame.editorDivider = Theme.CreateAccentLine(frame.editor, 1, "borderStrong")
-  frame.editorDivider:SetPoint("TOPLEFT", 0, -124)
-  frame.editorDivider:SetPoint("TOPRIGHT", 0, -124)
+  frame.editorDivider = Theme.CreateAccentLine(frame.editor, 1, "border")
+  frame.editorDivider:SetPoint("TOPLEFT", 0, -150)
+  frame.editorDivider:SetPoint("TOPRIGHT", 0, -150)
+
+  -- Live sample of the selected aura, built only from its saved settings.
+  frame.headerPreview = ns.ui.HeaderPreview:Create(frame.editor)
+  frame.headerPreview:SetPoint("TOPRIGHT", -16, -48)
+  frame.editorTitle:SetPoint("RIGHT", frame.headerPreview, "LEFT", -16, 0)
+  frame.editorTitle:SetJustifyH("LEFT")
+  frame.editorTitle:SetWordWrap(false)
+  frame.editorSubtitle:SetPoint("RIGHT", frame.headerPreview, "LEFT", -16, 0)
+  frame.editorSubtitle:SetJustifyH("LEFT")
+  frame.editorSubtitle:SetWordWrap(false)
+
+  -- Search across settings, on the right end of the tab row.
+  frame.settingsSearch = ns.ui.SettingsSearch:Create(frame.editor)
+  frame.settingsSearch:SetPoint("TOPRIGHT", -18, -116)
 
   frame.tabs = {}
   for _, key in ipairs(ns.Constants.TAB_KEYS) do
@@ -490,7 +538,7 @@ function MainWindow:Create()
   end
 
   frame.content = CreateFrame("Frame", nil, frame.editor)
-  frame.content:SetPoint("TOPLEFT", Theme.layout.panelPadding, -140)
+  frame.content:SetPoint("TOPLEFT", Theme.layout.panelPadding, -166)
   frame.content:SetPoint("BOTTOMRIGHT", -18, 14)
 
   frame.sidebarFooterLine = Theme.CreateAccentLine(frame.sidebar, 1, "border")
@@ -623,13 +671,9 @@ function MainWindow:RefreshSelection()
   local selectedTrigger = GetSelectedAuraTrigger(aura)
 
   self.frame.previewAnimateCheck:SetShown(showPreviewToggle)
-  self.frame.previewAnimateLabel:SetShown(showPreviewToggle)
   self.frame.previewAnimateCheck:SetChecked(showPreviewToggle and aura and aura.display and aura.display.previewAnimate == true or false)
-  Theme.UpdateToggle(self.frame.previewAnimateCheck)
   self.frame.triggerDebugCheck:SetShown(hasTrigger)
-  self.frame.triggerDebugLabel:SetShown(hasTrigger)
   self.frame.triggerDebugCheck:SetChecked(hasTrigger and selectedTrigger and selectedTrigger.debug == true or false)
-  Theme.UpdateToggle(self.frame.triggerDebugCheck)
   self.frame.removeFromGroupButton:SetShown(editorMode ~= "new_aura" and aura ~= nil and aura.parentId ~= nil)
   local isGroup = aura and (aura.kind == "group" or aura.kind == "dynamic_group")
   local showAddToGroup = editorMode ~= "new_aura" and aura ~= nil and aura.parentId == nil and not isGroup
@@ -637,8 +681,14 @@ function MainWindow:RefreshSelection()
   if showAddToGroup then
     UIDropDownMenu_SetSelectedValue(self.frame.addToGroupDropdown, nil)
     UIDropDownMenu_SetText(self.frame.addToGroupDropdown, "Add to Group")
-    Theme.StyleDropdown(self.frame.addToGroupDropdown, "success")
+    Theme.StyleDropdown(self.frame.addToGroupDropdown, "secondary")
   end
+
+  ApplyHeaderMode(self.frame, editorMode == "new_aura")
+  local showHeaderTools = editorMode ~= "new_aura" and not isGlobalImport and aura ~= nil
+  self.frame.headerPreview:SetShown(showHeaderTools)
+  ns.ui.HeaderPreview:SetAura(showHeaderTools and aura or nil)
+  self.frame.settingsSearch:SetShown(showHeaderTools)
 
   self:HideAllPanels()
 

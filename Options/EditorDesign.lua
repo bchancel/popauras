@@ -39,7 +39,7 @@ function Frames.CreateSectionCard(parent, title, y, height, options)
   section.title = Frames.CreateLabel(section.header, title, "GameFontNormal", "control")
   section.title:SetPoint("LEFT", options.titleInset or 10, 0)
   section.title:SetText(string.upper(title or ""))
-  Theme.SetText(section.title, "groupAccent")
+  Theme.SetText(section.title, "navigation")
 
   if options.bodyDivider then
     section.bodyTop = section:CreateTexture(nil, "BORDER")
@@ -213,18 +213,18 @@ function Frames.CreateCompactSlider(parent, minimum, maximum, step)
   slider.track:SetPoint("LEFT", 0, 0)
   slider.track:SetPoint("RIGHT", 0, 0)
   slider.track:SetHeight(4)
-  Theme.SetTexture(slider.track, "border")
+  Theme.SetTexture(slider.track, "toggleTrackOff")
 
   slider.fill = slider:CreateTexture(nil, "ARTWORK")
   slider.fill:SetTexture("Interface\\Buttons\\WHITE8x8")
   slider.fill:SetPoint("LEFT", slider.track, "LEFT", 0, 0)
   slider.fill:SetHeight(4)
-  Theme.SetTexture(slider.fill, "navigation")
+  Theme.SetTexture(slider.fill, "accent")
 
   slider.thumb = slider:CreateTexture(nil, "OVERLAY")
-  slider.thumb:SetTexture("Interface\\Buttons\\WHITE8x8")
-  slider.thumb:SetSize(10, 18)
-  Theme.SetTexture(slider.thumb, "accentBright")
+  slider.thumb:SetTexture(Theme.SHAPE_PATH .. "UiKnob")
+  slider.thumb:SetSize(14, 14)
+  Theme.SetTexture(slider.thumb, "toggleKnobOn")
   slider:SetThumbTexture(slider.thumb)
 
   slider:HookScript("OnValueChanged", function(self)
@@ -465,4 +465,195 @@ function Frames.CreateSettingsPopover(options)
   end
 
   return popup
+end
+
+-------------------------------------------------------------------------------
+-- Icon buttons (EllesmereUI-style quiet square controls with tooltips)
+-------------------------------------------------------------------------------
+Frames.UI_ICON_PATH = "Interface\\AddOns\\PopAuras_Options\\Media\\Icons\\"
+
+local function ShowIconTooltip(owner, title, body)
+  if not title or title == "" then return end
+  GameTooltip:SetOwner(owner, "ANCHOR_BOTTOM")
+  GameTooltip:SetText(title)
+  if body and body ~= "" then
+    GameTooltip:AddLine(body, 0.8, 0.8, 0.8, true)
+  end
+  GameTooltip:Show()
+end
+
+local function ApplyIconButtonState(button)
+  local hovered = button._popAurasHovered == true
+  local active = button.GetChecked and button:GetChecked() and true or false
+  local enabled = not button.IsEnabled or button:IsEnabled()
+  if button._popAurasGhost then
+    Theme.SetBackdrop(button, hovered and "surfaceHover" or "transparent", "transparent")
+  elseif active then
+    Theme.SetBackdrop(button, "accentSoft", hovered and "accentBright" or "accent")
+  else
+    Theme.SetBackdrop(button, hovered and "surfaceRaised" or "control", hovered and "borderStrong" or "border")
+  end
+  Theme.SetTexture(button.icon, active and "accentBright" or (hovered and "text" or "textSecondary"))
+  button:SetAlpha(enabled and 1 or 0.4)
+end
+
+local function SetupIconButton(button, iconName, size, iconSize, title, body)
+  Theme.PixelSetSize(button, size or 30, size or 30)
+  button.icon = button:CreateTexture(nil, "ARTWORK")
+  button.icon:SetPoint("CENTER")
+  button.icon:SetSize(iconSize or 16, iconSize or 16)
+  button.icon:SetTexture(Frames.UI_ICON_PATH .. iconName)
+  button._popAurasTooltipTitle = title
+  button._popAurasTooltipBody = body
+  button:HookScript("OnEnter", function(self)
+    self._popAurasHovered = true
+    ApplyIconButtonState(self)
+    ShowIconTooltip(self, self._popAurasTooltipTitle, self._popAurasTooltipBody)
+  end)
+  button:HookScript("OnLeave", function(self)
+    self._popAurasHovered = false
+    ApplyIconButtonState(self)
+    GameTooltip:Hide()
+  end)
+  ApplyIconButtonState(button)
+end
+
+-- A CheckButton so callers keep GetChecked/SetChecked/OnClick semantics.
+function Frames.CreateIconToggle(parent, iconName, title, body)
+  local button = CreateFrame("CheckButton", nil, parent, "BackdropTemplate")
+  SetupIconButton(button, iconName, 30, 16, title, body)
+  button:HookScript("OnClick", ApplyIconButtonState)
+  if type(hooksecurefunc) == "function" then
+    hooksecurefunc(button, "SetChecked", ApplyIconButtonState)
+  end
+  return button
+end
+
+function Frames.CreateIconButton(parent, iconName, size, iconSize, title, body, ghost)
+  local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
+  button._popAurasGhost = ghost == true
+  SetupIconButton(button, iconName, size, iconSize, title, body)
+  return button
+end
+
+function Frames.RefreshIconButton(button)
+  if button and button.icon then ApplyIconButtonState(button) end
+end
+
+-------------------------------------------------------------------------------
+-- Chips: compact pill-style multi-select options laid out in a wrapping flow.
+-- A chip is a CheckButton, so GetChecked/SetChecked/OnClick callers are unchanged.
+-------------------------------------------------------------------------------
+local CHIP_HEIGHT = 24
+local CHIP_PAD_X = 12
+
+-- Three-slice pill (round caps + stretchable middle) cut from UiPill, so a
+-- pill keeps round ends at any width. inset shrinks it inside its owner.
+function Frames.CreatePillSlices(owner, layer, sublevel, inset)
+  inset = inset or 0
+  local texture = Theme.SHAPE_PATH .. "UiPill"
+  local slices = { inset = inset }
+  slices.left = owner:CreateTexture(nil, layer or "BACKGROUND", nil, sublevel or 0)
+  slices.left:SetTexture(texture)
+  slices.left:SetTexCoord(0, 0.25, 0, 1)
+  slices.left:SetPoint("TOPLEFT", inset, -inset)
+  slices.left:SetPoint("BOTTOMLEFT", inset, inset)
+  slices.right = owner:CreateTexture(nil, layer or "BACKGROUND", nil, sublevel or 0)
+  slices.right:SetTexture(texture)
+  slices.right:SetTexCoord(0.75, 1, 0, 1)
+  slices.right:SetPoint("TOPRIGHT", -inset, -inset)
+  slices.right:SetPoint("BOTTOMRIGHT", -inset, inset)
+  slices.mid = owner:CreateTexture(nil, layer or "BACKGROUND", nil, sublevel or 0)
+  slices.mid:SetTexture(texture)
+  slices.mid:SetTexCoord(0.25, 0.75, 0, 1)
+  slices.mid:SetPoint("TOPLEFT", slices.left, "TOPRIGHT", 0, 0)
+  slices.mid:SetPoint("BOTTOMRIGHT", slices.right, "BOTTOMLEFT", 0, 0)
+  function slices:SetHeightCaps(height)
+    local cap = math.max(1, ((height or CHIP_HEIGHT) - (self.inset * 2)) / 2)
+    self.left:SetWidth(cap)
+    self.right:SetWidth(cap)
+  end
+  function slices:SetColor(color, alpha)
+    local value = Theme.GetColor(color)
+    local a = alpha or value[4] or 1
+    for _, part in ipairs({ self.left, self.mid, self.right }) do
+      part:SetVertexColor(value[1], value[2], value[3], a)
+    end
+  end
+  slices:SetHeightCaps(CHIP_HEIGHT)
+  return slices
+end
+
+local function ApplyChipState(chip)
+  local checked = chip:GetChecked() and true or false
+  local hovered = chip._popAurasHovered == true
+  if checked then
+    chip._popAurasEdge:SetColor(hovered and "accentBright" or "accent")
+    chip._popAurasFill:SetColor("accentSoft")
+    Theme.SetText(chip.Text, "accentBright")
+  else
+    chip._popAurasEdge:SetColor(hovered and "textMuted" or "borderStrong")
+    chip._popAurasFill:SetColor(hovered and "surfaceRaised" or "canvas")
+    Theme.SetText(chip.Text, hovered and "text" or "textSecondary")
+  end
+end
+
+local function SizeChip(chip)
+  local width = math.ceil(chip.Text:GetStringWidth() or 0) + (CHIP_PAD_X * 2)
+  Theme.PixelSetSize(chip, math.max(44, width), CHIP_HEIGHT)
+end
+
+function Frames.CreateChip(parent, labelText)
+  local chip = CreateFrame("CheckButton", nil, parent)
+  chip._popAurasEdge = Frames.CreatePillSlices(chip, "BACKGROUND", 1, 0)
+  chip._popAurasFill = Frames.CreatePillSlices(chip, "BACKGROUND", 2, 1)
+  chip.Text = chip:CreateFontString(nil, "OVERLAY")
+  Theme.ApplyTypography(chip.Text, "controlSmall")
+  chip.Text:SetPoint("CENTER", 0, 0)
+  chip.Text:SetText(labelText or "")
+  SizeChip(chip)
+  chip:HookScript("OnClick", ApplyChipState)
+  chip:HookScript("OnEnter", function(self)
+    self._popAurasHovered = true
+    ApplyChipState(self)
+  end)
+  chip:HookScript("OnLeave", function(self)
+    self._popAurasHovered = false
+    ApplyChipState(self)
+  end)
+  if type(hooksecurefunc) == "function" then
+    hooksecurefunc(chip, "SetChecked", ApplyChipState)
+  end
+  function chip:SetLabel(text)
+    self.Text:SetText(text or "")
+    SizeChip(self)
+  end
+  ApplyChipState(chip)
+  return chip
+end
+
+-- Places visible chips left-to-right, wrapping at maxWidth. Returns the height used.
+function Frames.LayoutChipFlow(container, chips, maxWidth, gapX, gapY)
+  gapX = gapX or 6
+  gapY = gapY or 6
+  maxWidth = maxWidth or container:GetWidth() or 700
+  local x, y = 0, 0
+  local placed = 0
+  for _, chip in ipairs(chips or {}) do
+    if chip:IsShown() then
+      SizeChip(chip)
+      local width = chip:GetWidth()
+      if x > 0 and x + width > maxWidth then
+        x = 0
+        y = y + CHIP_HEIGHT + gapY
+      end
+      chip:ClearAllPoints()
+      chip:SetPoint("TOPLEFT", container, "TOPLEFT", x, -y)
+      x = x + width + gapX
+      placed = placed + 1
+    end
+  end
+  local height = placed > 0 and (y + CHIP_HEIGHT) or 1
+  container:SetHeight(height)
+  return height
 end

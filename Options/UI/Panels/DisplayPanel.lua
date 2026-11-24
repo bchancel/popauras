@@ -1582,22 +1582,56 @@ local function ApplyTwoColumnSettingsGrid(section, entries, hint)
   for _, band in ipairs(section.rowBands or {}) do band:Hide() end
   if section.settingsGridDivider then section.settingsGridDivider:Hide() end
 
+  -- Cells are invisible layout anchors; each row gets one continuous band
+  -- (alternating shades) with a hairline between its two settings.
   section.settingsGridCells = section.settingsGridCells or {}
+  section.settingsGridBands = section.settingsGridBands or {}
+  section.settingsGridDividers = section.settingsGridDividers or {}
+  section.settingsGridSubs = section.settingsGridSubs or {}
+  section.settingsGridRowByTarget = {}
   local function GetCell(index, row, column)
     local cell = section.settingsGridCells[index]
     if not cell then
       cell = section:CreateTexture(nil, "BACKGROUND", nil, -2)
       cell:SetTexture("Interface\\Buttons\\WHITE8x8")
-      Theme.SetTexture(cell, "canvasAlt")
+      cell:SetVertexColor(0, 0, 0, 0)
       section.settingsGridCells[index] = cell
     end
     cell:ClearAllPoints()
     cell:SetPoint("TOPLEFT", section, "TOPLEFT",
       contentInset + (column * (cellWidth + cellGap)),
       -headerHeight - (row * rowHeight))
-    cell:SetSize(cellWidth, 48)
+    cell:SetSize(cellWidth, rowHeight)
     cell:Show()
     return cell
+  end
+
+  local function GetBand(row)
+    local band = section.settingsGridBands[row + 1]
+    if not band then
+      band = section:CreateTexture(nil, "BACKGROUND", nil, -3)
+      band:SetTexture("Interface\\Buttons\\WHITE8x8")
+      section.settingsGridBands[row + 1] = band
+    end
+    band:ClearAllPoints()
+    band:SetPoint("TOPLEFT", section, "TOPLEFT", contentInset, -headerHeight - (row * rowHeight))
+    band:SetSize(sectionWidth - (contentInset * 2), rowHeight)
+    Theme.SetTexture(band, row % 2 == 0 and "rowOdd" or "rowEven")
+    band:SetAlpha(1)
+    band:Show()
+
+    local divider = section.settingsGridDividers[row + 1]
+    if not divider then
+      divider = section:CreateTexture(nil, "BACKGROUND", nil, -1)
+      divider:SetTexture("Interface\\Buttons\\WHITE8x8")
+      section.settingsGridDividers[row + 1] = divider
+    end
+    divider:ClearAllPoints()
+    divider:SetPoint("TOP", band, "TOPLEFT", cellWidth + 1, -8)
+    divider:SetSize(1, rowHeight - 16)
+    Theme.SetTexture(divider, "border")
+    divider:Show()
+    return band
   end
 
   local function PlaceLabel(label, cell, controlWidth)
@@ -1611,11 +1645,55 @@ local function ApplyTwoColumnSettingsGrid(section, entries, hint)
     Theme.SetText(label, "text")
   end
 
+  -- Optional one-line explanation under a setting's label (replaces the old
+  -- paragraph hints that sat below a whole section).
+  local function PlaceSubtitle(index, label, cell, entry, controlWidth)
+    local sub = section.settingsGridSubs[index]
+    if not entry.sub or not label then
+      if sub then sub:Hide() end
+      return
+    end
+    if not sub then
+      sub = section:CreateFontString(nil, "OVERLAY")
+      section.settingsGridSubs[index] = sub
+    end
+    Theme.ApplyTypography(sub, "caption")
+    Theme.SetText(sub, "textMuted")
+    sub:SetText(entry.sub)
+    sub:SetJustifyH("LEFT")
+    sub:SetWordWrap(false)
+    sub:SetWidth(math.max(100, cellWidth - controlWidth - 48))
+    label:ClearAllPoints()
+    label:SetPoint("LEFT", cell, "LEFT", 14, 7)
+    sub:ClearAllPoints()
+    sub:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -2)
+    sub:Show()
+  end
+
+  local rowsUsed = math.ceil(#visible / 2)
+  for row = 0, rowsUsed - 1 do
+    GetBand(row)
+  end
+  for index = rowsUsed + 1, #section.settingsGridBands do
+    section.settingsGridBands[index]:Hide()
+    if section.settingsGridDividers[index] then section.settingsGridDividers[index]:Hide() end
+  end
+  if #visible % 2 == 1 and section.settingsGridDividers[rowsUsed] then
+    section.settingsGridDividers[rowsUsed]:Hide()
+  end
+
+  -- Visible rows, recorded for the settings search (label text is addon-owned).
+  section.searchEntries = {}
   for index, entry in ipairs(visible) do
     local row = math.floor((index - 1) / 2)
     local column = (index - 1) % 2
     local cell = GetCell(index, row, column)
+    section.settingsGridRowByTarget[GetGridEntryTarget(entry)] = row
     local label = GetGridEntryLabel(entry)
+    local labelText = label and label.GetText and label:GetText() or nil
+    if type(labelText) == "string" and labelText ~= "" then
+      section.searchEntries[#section.searchEntries + 1] = { label = labelText, row = row }
+    end
     local hasGear = entry.gear and entry.gear:IsShown()
     local gearWidth = hasGear and 34 or 0
 
@@ -1664,10 +1742,12 @@ local function ApplyTwoColumnSettingsGrid(section, entries, hint)
         entry.gear:SetPoint("RIGHT", cell, "RIGHT", -10, 0)
       end
     end
+    PlaceSubtitle(index, label, cell, entry, entry.kind == "toggle" and (hasGear and 78 or 48) or 200)
   end
 
   for index = #visible + 1, #section.settingsGridCells do
     section.settingsGridCells[index]:Hide()
+    if section.settingsGridSubs[index] then section.settingsGridSubs[index]:Hide() end
   end
 
   local rows = math.max(1, math.ceil(#visible / 2))
@@ -1717,17 +1797,22 @@ local function ApplyDisplayTwoColumnGrids(frame, aura, isGroup, isNameplateAura)
     { kind = "toggle", control = frame.chargeCooldownCheck },
   }
 
+  local altIconSub = "Spell name, spell ID or texture file ID"
+  local hideCDMSub = "Only mapped tracked-buff icons"
   if isIconAura then
     canvasEntries[#canvasEntries + 1] = { kind = "toggle", control = frame.showIconCheck }
-    canvasEntries[#canvasEntries + 1] = { kind = "toggle", control = frame.hideCDMIconCheck }
-    canvasEntries[#canvasEntries + 1] = { kind = "input", widget = frame.altIconIdWrap, width = 220 }
+    canvasEntries[#canvasEntries + 1] = { kind = "toggle", control = frame.hideCDMIconCheck, sub = hideCDMSub }
+    canvasEntries[#canvasEntries + 1] = { kind = "input", widget = frame.altIconIdWrap, width = 200, sub = altIconSub }
     canvasEntries[#canvasEntries + 1] = { kind = "toggle", control = frame.iconEdgeCheck }
     canvasEntries[#canvasEntries + 1] = { kind = "toggle", control = frame.iconFinishFlashCheck }
     canvasEntries[#canvasEntries + 1] = { kind = "color", widget = frame.iconSwipeColorWrap }
   end
 
+  -- The icon hint paragraph is now carried as per-setting subtitles; nameplate
+  -- auras keep it because their hint explains native-slot sizing instead.
+  if frame.iconHint and not isNameplateAura then frame.iconHint:Hide() end
   local canvasHint = trigger.type == "death_alert" and frame.deathAlertHint
-    or isIconAura and frame.iconHint or nil
+    or (isIconAura and isNameplateAura and frame.iconHint) or nil
   ApplyTwoColumnSettingsGrid(frame.canvasSection, canvasEntries, canvasHint)
 
   ApplyTwoColumnSettingsGrid(frame.groupSection, {
@@ -1739,7 +1824,7 @@ local function ApplyDisplayTwoColumnGrids(frame, aura, isGroup, isNameplateAura)
   if not isIconAura then
     ApplyTwoColumnSettingsGrid(frame.iconSection, {
       { kind = "toggle", control = frame.showIconCheck },
-      { kind = "toggle", control = frame.hideCDMIconCheck },
+      { kind = "toggle", control = frame.hideCDMIconCheck, sub = hideCDMSub },
       { kind = "toggle", control = frame.iconMatchSizeCheck },
       { kind = "toggle", control = frame.iconEdgeCheck },
       { kind = "toggle", control = frame.iconFinishFlashCheck },
@@ -1747,9 +1832,9 @@ local function ApplyDisplayTwoColumnGrids(frame, aura, isGroup, isNameplateAura)
       { kind = "dropdown", widget = frame.iconAnchorWrap, width = 190 },
       { kind = "input", widget = frame.iconXWrap, width = 100 },
       { kind = "input", widget = frame.iconYWrap, width = 100 },
-      { kind = "input", widget = frame.altIconIdWrap, width = 220 },
+      { kind = "input", widget = frame.altIconIdWrap, width = 200, sub = altIconSub },
       { kind = "color", widget = frame.iconSwipeColorWrap },
-    }, frame.iconHint)
+    })
   end
 
   ApplyTwoColumnSettingsGrid(frame.raidFrameSection, {
@@ -1764,38 +1849,42 @@ local function ApplyDisplayTwoColumnGrids(frame, aura, isGroup, isNameplateAura)
     { kind = "input", widget = frame.raidFrameYWrap, width = 100 },
   }, frame.raidFrameHint)
 
-  ApplyTwoColumnSettingsGrid(frame.nameSection, {
-    { kind = "toggle", control = frame.nameControls.showCheck },
-    { kind = "input", widget = frame.nameControls.altNameWrap, width = 170 },
-    { kind = "dropdown", widget = frame.nameControls.fontWrap },
-    { kind = "input", widget = frame.nameControls.sizeWrap },
-    { kind = "dropdown", widget = frame.nameControls.anchorWrap },
-    { kind = "dropdown", widget = frame.nameControls.rotationWrap },
-    { kind = "input", widget = frame.nameControls.xWrap },
-    { kind = "input", widget = frame.nameControls.yWrap },
-    { kind = "color", widget = frame.nameControls.colorWrap },
-  })
-  ApplyTwoColumnSettingsGrid(frame.timerSection, {
-    { kind = "toggle", control = frame.timerControls.showCheck },
-    { kind = "dropdown", widget = frame.timerControls.fontWrap },
-    { kind = "input", widget = frame.timerControls.sizeWrap },
-    { kind = "dropdown", widget = frame.timerControls.anchorWrap },
-    { kind = "dropdown", widget = frame.timerControls.rotationWrap },
-    { kind = "input", widget = frame.timerControls.xWrap },
-    { kind = "input", widget = frame.timerControls.yWrap },
-    { kind = "dropdown", widget = frame.timerControls.decimalsWrap },
-    { kind = "color", widget = frame.timerControls.colorWrap },
-  })
-  ApplyTwoColumnSettingsGrid(frame.stacksSection, {
-    { kind = "toggle", control = frame.stacksControls.showCheck },
-    { kind = "dropdown", widget = frame.stacksControls.fontWrap },
-    { kind = "input", widget = frame.stacksControls.sizeWrap },
-    { kind = "dropdown", widget = frame.stacksControls.anchorWrap },
-    { kind = "dropdown", widget = frame.stacksControls.rotationWrap },
-    { kind = "input", widget = frame.stacksControls.xWrap },
-    { kind = "input", widget = frame.stacksControls.yWrap },
-    { kind = "color", widget = frame.stacksControls.colorWrap },
-  })
+  -- Name / Duration / Stacks each collapse to one row: the on/off switch, a
+  -- one-line summary of the current style, and a gear that opens the full
+  -- settings popover. The underlying controls stay alive (hidden) because the
+  -- popover writes through them.
+  local display = aura.display or {}
+  local fontNames = { FRIZQT = "Friz Quadrata", MORPHEUS = "Morpheus", SKURRI = "Skurri" }
+  local function TextSummary(prefix)
+    local style = tostring(display[prefix .. "FontStyle"] or "FRIZQT")
+    local base, flag = style:match("^([^_]+)_?(.*)$")
+    local parts = { fontNames[base or style] or (base or style), tostring(display[prefix .. "FontSize"] or 12) }
+    if flag == "OUTLINE" then
+      parts[#parts + 1] = "Outline"
+    elseif flag == "THICK" then
+      parts[#parts + 1] = "Thick outline"
+    end
+    parts[#parts + 1] = tostring(display[prefix .. "Anchor"] or "CENTER")
+    return table.concat(parts, "  \194\183  ")
+  end
+  local function CollapseTextSection(section, controls, gear, prefix)
+    for _, key in ipairs({ "altNameWrap", "sizeWrap", "xWrap", "yWrap" }) do
+      if controls[key] then SetLabeledInputShown(controls[key], false) end
+    end
+    for _, key in ipairs({ "fontWrap", "anchorWrap", "rotationWrap", "decimalsWrap" }) do
+      if controls[key] then SetLabeledDropdownShown(controls[key], false) end
+    end
+    if controls.colorWrap then SetColorWidgetShown(controls.colorWrap, false) end
+    local enabled = controls.showCheck:IsShown() and controls.showCheck:GetChecked() == true
+    gear:SetShown(enabled)
+    ApplyTwoColumnSettingsGrid(section, {
+      { kind = "toggle", control = controls.showCheck, gear = gear,
+        sub = enabled and TextSummary(prefix) or nil },
+    })
+  end
+  CollapseTextSection(frame.nameSection, frame.nameControls, frame.nameGear, "name")
+  CollapseTextSection(frame.timerSection, frame.timerControls, frame.timerGear, "timer")
+  CollapseTextSection(frame.stacksSection, frame.stacksControls, frame.stacksGear, "stacks")
 
   ApplyTwoColumnSettingsGrid(frame.soundSection, {
     { kind = "toggle", control = frame.soundEnabledCheck },
@@ -2813,6 +2902,83 @@ function Panel:SetActiveSection(key)
   self:LayoutSections()
 end
 
+-- Settings search: list every visible Display setting as { sectionKey, section, label, row }.
+function Panel:GetSearchEntries()
+  local results = {}
+  if not self.frame or not self.frame.sectionEntries then
+    return results
+  end
+  for _, entry in ipairs(self.frame.sectionEntries) do
+    local section = entry.section
+    if section and section:IsShown() then
+      local sectionTitle = section.title and section.title:GetText() or entry.label
+      for _, item in ipairs(section.searchEntries or {}) do
+        results[#results + 1] = {
+          sectionKey = entry.key,
+          section = sectionTitle,
+          label = item.label,
+          row = item.row,
+        }
+      end
+    end
+  end
+  return results
+end
+
+-- Scrolls a setting into view and pulses its row band so the eye lands on it.
+function Panel:RevealSearchResult(sectionKey, row)
+  local frame = self.frame
+  if not frame or not frame.sectionEntries then
+    return
+  end
+  local section
+  for _, entry in ipairs(frame.sectionEntries) do
+    if entry.key == sectionKey then
+      section = entry.section
+      break
+    end
+  end
+  if not section or not section:IsShown() then
+    return
+  end
+
+  local contentTop = frame.content:GetTop()
+  local sectionTop = section:GetTop()
+  if contentTop and sectionTop then
+    local offset = (contentTop - sectionTop) + 34 + ((tonumber(row) or 0) * 50) - 60
+    local maxScroll = frame.scroll:GetVerticalScrollRange() or 0
+    frame.scroll:SetVerticalScroll(math.max(0, math.min(maxScroll, offset)))
+  end
+
+  local band = section.settingsGridBands and section.settingsGridBands[(tonumber(row) or 0) + 1]
+  if not band then
+    return
+  end
+  if not frame.searchFlash then
+    frame.searchFlash = CreateFrame("Frame", nil, frame.content)
+    frame.searchFlash.texture = frame.searchFlash:CreateTexture(nil, "ARTWORK")
+    frame.searchFlash.texture:SetAllPoints()
+    frame.searchFlash.texture:SetTexture("Interface\\Buttons\\WHITE8x8")
+  end
+  local flash = frame.searchFlash
+  flash:SetParent(section)
+  flash:SetFrameLevel(section:GetFrameLevel() + 1)
+  flash:ClearAllPoints()
+  flash:SetAllPoints(band)
+  local accent = Theme.GetColor("accent")
+  local elapsedTotal = 0
+  flash:Show()
+  flash:SetScript("OnUpdate", function(selfFlash, elapsed)
+    elapsedTotal = elapsedTotal + (tonumber(elapsed) or 0)
+    local alpha = math.max(0, 0.28 * (1 - (elapsedTotal / 1.4)))
+    selfFlash.texture:SetVertexColor(accent[1], accent[2], accent[3], alpha)
+    if elapsedTotal >= 1.4 then
+      selfFlash:SetScript("OnUpdate", nil)
+      selfFlash:Hide()
+    end
+  end)
+end
+
 function Panel:LayoutSections()
   if not self.frame or not self.frame.sections then
     return
@@ -3150,7 +3316,7 @@ function Panel:Refresh(aura)
   self.frame.iconXWrap.input:SetShown(not isIconAura and not isNameplateAura)
   self.frame.iconYWrap.label:SetShown(not isIconAura and not isNameplateAura)
   self.frame.iconYWrap.input:SetShown(not isIconAura and not isNameplateAura)
-  self.frame.iconHint:SetShown(not isAuraBarList and not isGroup and not isText)
+  self.frame.iconHint:SetShown(isNameplateAura and not isAuraBarList and not isGroup and not isText)
   if isNameplateAura then
     self.frame.iconHint:SetText(
       "Each native slot uses Width and Height from Look. Cooldown shading and finish effects remain configurable here.")

@@ -1515,20 +1515,24 @@ function Panel:RefreshSpecSection(aura)
   self.frame.classSection:ClearAllPoints()
   self.frame.classSection:SetPoint("TOPLEFT", self.frame.classHeader, "BOTTOMLEFT", 0, -8)
 
-  local classRowCount = math.ceil(#CLASS_ORDER / 4)
-  self.frame.classSection:SetHeight(classRowCount * 50)
-  for index, classToken in ipairs(CLASS_ORDER) do
+  local classChips = {}
+  for _, classToken in ipairs(CLASS_ORDER) do
     local check = self.frame.classChecks[classToken]
     if check then
-      local row = math.floor((index - 1) / 4)
-      local column = (index - 1) % 4
-      check:ClearAllPoints()
-      check:SetPoint("LEFT", self.frame.classCells[index], "LEFT", 12, 0)
       check:Show()
+      classChips[#classChips + 1] = check
     end
   end
+  Frames.LayoutChipFlow(self.frame.classSection, classChips, 700)
 
   local bottomAnchor = classCollapsed and self.frame.classHeader or self.frame.classSection
+
+  local selectedClassCount = 0
+  for _, classToken in ipairs(CLASS_ORDER) do
+    if load.classes[classToken] then
+      selectedClassCount = selectedClassCount + 1
+    end
+  end
 
   local specIndex = 0
   for _, classToken in ipairs(CLASS_ORDER) do
@@ -1539,13 +1543,11 @@ function Panel:RefreshSpecSection(aura)
         specIndex = specIndex + 1
         local check = self.frame.specChecks[specIndex]
         if not check then
-          check = Frames.CreateCheckbox(self.frame.conditionsRoot, "")
+          check = Frames.CreateChip(self.frame.specSection, "")
           self.frame.specChecks[specIndex] = check
         end
-        check:ClearAllPoints()
-        check:SetPoint("TOPLEFT", self.frame.specHeader, "BOTTOMLEFT", 0, -8 - ((specIndex - 1) * 24))
         local key = classToken .. ":" .. si
-        check.Text:SetText(string.format("%s: %s", info.className, specName))
+        check:SetLabel(selectedClassCount > 1 and string.format("%s: %s", info.className, specName) or specName)
         check:SetChecked(load.specs[key] == true)
         check:SetScript("OnClick", function(selfCheck)
           load.specs[key] = selfCheck:GetChecked() == true or nil
@@ -1559,15 +1561,24 @@ function Panel:RefreshSpecSection(aura)
   end
 
   self.frame.specHeader:ClearAllPoints()
+  self.frame.specSection:ClearAllPoints()
   if hasClasses and not classCollapsed then
     self.frame.specHeader:SetPoint("TOPLEFT", self.frame.classSection, "BOTTOMLEFT", 0, -12)
     self.frame.specHeader:SetText("Specializations")
     self.frame.specHeader:Show()
     self.frame.specToggle:Hide()
-    bottomAnchor = self.frame.specChecks[specIndex] or self.frame.specHeader
+    self.frame.specSection:SetPoint("TOPLEFT", self.frame.specHeader, "BOTTOMLEFT", 0, -8)
+    self.frame.specSection:Show()
+    local specChips = {}
+    for index = 1, specIndex do
+      specChips[#specChips + 1] = self.frame.specChecks[index]
+    end
+    Frames.LayoutChipFlow(self.frame.specSection, specChips, 700)
+    bottomAnchor = self.frame.specSection
   else
     self.frame.specHeader:Hide()
     self.frame.specToggle:Hide()
+    self.frame.specSection:Hide()
   end
 
   self.frame.talentHeader:ClearAllPoints()
@@ -2174,22 +2185,16 @@ function Panel:Create(parent)
   frame.classChecks = {}
   frame.classCells = {}
 
-  for index, classToken in ipairs(CLASS_ORDER) do
+  -- Classes and specs are chips in a wrapping row (click to include). Chips are
+  -- CheckButtons, so the saved load.classes / load.specs maps are unchanged.
+  for _, classToken in ipairs(CLASS_ORDER) do
     local classInfo = CLASS_SPECS[classToken]
-    local row = math.floor((index - 1) / 4)
-    local column = (index - 1) % 4
-    local cell = frame.classSection:CreateTexture(nil, "BACKGROUND", nil, -2)
-    cell:SetTexture("Interface\\Buttons\\WHITE8x8")
-    cell:SetPoint("TOPLEFT", column * 175, -(row * 50))
-    cell:SetSize(173, 48)
-    Theme.SetTexture(cell, "canvasAlt")
-    frame.classCells[index] = cell
-    local check = Frames.CreateCheckbox(frame.classSection, classInfo.className)
-    check:SetPoint("LEFT", cell, "LEFT", 12, 0)
-    frame.classChecks[classToken] = check
+    frame.classChecks[classToken] = Frames.CreateChip(frame.classSection, classInfo.className)
   end
 
   frame.specHeader = Frames.CreateLabel(frame.conditionsRoot, "", "GameFontNormal")
+  frame.specSection = CreateFrame("Frame", nil, frame.conditionsRoot)
+  frame.specSection:SetSize(700, 24)
   frame.specToggle = Frames.CreateButton(frame.conditionsRoot, "v", 22, 20, function()
     frame.collapsedSections.spec = not frame.collapsedSections.spec
     local aura = ns.Registry:GetAura(ns.db.ui.selectedAuraId)

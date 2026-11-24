@@ -116,6 +116,15 @@ local function CachePut(key, value)
   return value
 end
 
+-- Spell textures are display values; if the client ever returns a secret here,
+-- treat it as unavailable so it is never branched on or cached.
+local function NonSecretTexture(value)
+  if value ~= nil and issecretvalue and issecretvalue(value) then
+    return nil
+  end
+  return value
+end
+
 function Spells:GetSpellTextureByOverride(iconOverrideId, iconOverrideName)
   local numericId = tonumber(iconOverrideId or 0) or 0
   if numericId > 0 then
@@ -127,10 +136,10 @@ function Spells:GetSpellTextureByOverride(iconOverrideId, iconOverrideName)
 
     local texture = nil
     if C_Spell and C_Spell.GetSpellTexture then
-      texture = C_Spell.GetSpellTexture(numericId)
+      texture = NonSecretTexture(C_Spell.GetSpellTexture(numericId))
     end
     if not texture and GetSpellTexture then
-      texture = GetSpellTexture(numericId)
+      texture = NonSecretTexture(GetSpellTexture(numericId))
     end
     if not texture then
       texture = numericId
@@ -151,10 +160,10 @@ function Spells:GetSpellTextureByOverride(iconOverrideId, iconOverrideName)
 
   local texture = nil
   if C_Spell and C_Spell.GetSpellTexture then
-    texture = C_Spell.GetSpellTexture(spellName)
+    texture = NonSecretTexture(C_Spell.GetSpellTexture(spellName))
   end
   if not texture and GetSpellTexture then
-    texture = GetSpellTexture(spellName)
+    texture = NonSecretTexture(GetSpellTexture(spellName))
   end
 
   return CachePut(cacheKey, texture)

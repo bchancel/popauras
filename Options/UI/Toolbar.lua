@@ -42,42 +42,46 @@ local function StyleSecondaryButton(button)
   Frames.StyleSecondaryButton(button)
 end
 
+-- A single compact row that sits at the bottom of the sidebar: one accent
+-- action (New Aura) and three quiet ghost actions.
+local TOOLBAR_BUTTON_HEIGHT = 26
+
 function Toolbar:Create(parent)
   local frame = CreateFrame("Frame", nil, parent)
-  frame:SetHeight(Theme.layout.toolbarHeight)
+  frame:SetHeight(TOOLBAR_BUTTON_HEIGHT + 4)
 
-  frame.newButton = Frames.CreateButton(frame, "+ New Aura", 92, 36, function()
+  frame.newButton = Frames.CreateButton(frame, "+ New Aura", 88, TOOLBAR_BUTTON_HEIGHT, function()
     ns.ui.MainWindow:OpenNewAuraPicker()
   end)
-  frame.newButton:SetPoint("TOPLEFT", 0, 0)
-  frame.newButton:SetWidth(92)
+  frame.newButton:SetPoint("LEFT", 0, 0)
+  frame.newButton:SetWidth(88)
   StylePrimaryButton(frame.newButton)
-  Theme.ApplyTypography(frame.newButton:GetFontString(), "control")
+  Theme.ApplyTypography(frame.newButton:GetFontString(), "controlSmall")
 
-  frame.arrangeButton = Frames.CreateButton(frame, "Arrange", 66, 36, function()
+  frame.arrangeButton = Frames.CreateButton(frame, "Arrange", 66, TOOLBAR_BUTTON_HEIGHT, function()
     ns.ui.ArrangeMode:Start()
   end)
-  frame.arrangeButton:SetPoint("TOPLEFT", frame.newButton, "TOPRIGHT", 4, 0)
-  StyleSecondaryButton(frame.arrangeButton)
+  frame.arrangeButton:SetPoint("LEFT", frame.newButton, "RIGHT", 4, 0)
+  Theme.StyleButton(frame.arrangeButton, "ghost")
   Theme.ApplyTypography(frame.arrangeButton:GetFontString(), "caption")
 
-  frame.importButton = Frames.CreateButton(frame, "Import", 67, 36, function()
+  frame.importButton = Frames.CreateButton(frame, "Import", 70, TOOLBAR_BUTTON_HEIGHT, function()
     ns.ui.MainWindow:OpenGlobalImport()
   end)
-  frame.importButton:SetPoint("TOPLEFT", frame.arrangeButton, "TOPRIGHT", 4, 0)
-  frame.importButton:SetWidth(67)
-  StyleSecondaryButton(frame.importButton)
+  frame.importButton:SetPoint("LEFT", frame.arrangeButton, "RIGHT", 2, 0)
+  frame.importButton:SetWidth(70)
+  Theme.StyleButton(frame.importButton, "ghost")
   Theme.ApplyTypography(frame.importButton:GetFontString(), "caption")
   CreateTransferIcon(frame.importButton, "down")
 
-  frame.exportButton = Frames.CreateButton(frame, "Export", 67, 36, function()
+  frame.exportButton = Frames.CreateButton(frame, "Export", 70, TOOLBAR_BUTTON_HEIGHT, function()
     if ns.ui.ExportWindow then
       ns.ui.ExportWindow:ShowAll()
     end
   end)
-  frame.exportButton:SetPoint("TOPLEFT", frame.importButton, "TOPRIGHT", 4, 0)
+  frame.exportButton:SetPoint("LEFT", frame.importButton, "RIGHT", 2, 0)
   frame.exportButton:SetPoint("RIGHT", frame, "RIGHT", 0, 0)
-  StyleSecondaryButton(frame.exportButton)
+  Theme.StyleButton(frame.exportButton, "ghost")
   Theme.ApplyTypography(frame.exportButton:GetFontString(), "caption")
   CreateTransferIcon(frame.exportButton, "up")
 
@@ -88,9 +92,9 @@ function Toolbar:Create(parent)
   Theme.SetText(frame.contextLabel, "textMuted")
   frame.contextLabel:Hide()
 
-  frame.divider = Theme.CreateAccentLine(frame, 1, "borderStrong")
-  frame.divider:SetPoint("BOTTOMLEFT", 0, 0)
-  frame.divider:SetPoint("BOTTOMRIGHT", 0, 0)
+  frame.divider = Theme.CreateAccentLine(frame, 1, "border")
+  frame.divider:SetPoint("TOPLEFT", 0, 4)
+  frame.divider:SetPoint("TOPRIGHT", 0, 4)
 
   self.frame = frame
   return frame

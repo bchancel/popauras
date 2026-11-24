@@ -1,8 +1,8 @@
-## Interface: 120100
+## Interface: 120100, 120107
 ## Title: PopAuras Options
 ## Notes: Load-on-demand configuration editor for PopAuras
 ## Author: Popabeast-Sargeras
-## Version: 12.1.11
+## Version: 12.1.12
 ## Dependencies: PopAuras
 ## LoadOnDemand: 1
 
@@ -27,6 +27,8 @@ UI\Panels\PositionPanel.lua
 UI\Panels\GroupPanel.lua
 UI\Panels\ImportExportPanel.lua
 UI\Panels\InterruptTrackerDisplayPanel.lua
+UI\SettingsSearch.lua
+UI\HeaderPreview.lua
 UI\MainWindow.lua
 
 Ready.lua

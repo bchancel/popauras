@@ -12,36 +12,69 @@ Theme.backdrop = {
   edgeSize = 1,
 }
 
+-- One accent family (EllesmereUI-style teal) over hue-biased dark neutrals.
+-- `navigation` is the quiet uppercase section-title colour, not a second accent.
 Theme.colors = {
   transparent = { 0.000, 0.000, 0.000, 0.00 },
-  canvas = { 0.035, 0.064, 0.084, 0.99 },
-  canvasAlt = { 0.047, 0.086, 0.112, 0.99 },
-  control = { 0.018, 0.038, 0.054, 1.00 },
-  surface = { 0.064, 0.116, 0.150, 0.98 },
-  surfaceRaised = { 0.082, 0.150, 0.190, 0.99 },
-  surfaceHover = { 0.070, 0.190, 0.245, 1.00 },
-  surfacePressed = { 0.035, 0.230, 0.340, 1.00 },
-  rowOdd = { 0.045, 0.082, 0.105, 0.92 },
-  rowEven = { 0.055, 0.105, 0.135, 0.92 },
-  accentSoft = { 0.025, 0.210, 0.315, 0.96 },
-  accent = { 0.035, 0.610, 0.875, 1.00 },
-  accentBright = { 0.210, 0.790, 1.000, 1.00 },
-  border = { 0.140, 0.240, 0.300, 1.00 },
-  borderStrong = { 0.120, 0.360, 0.460, 1.00 },
-  borderFocus = { 0.075, 0.610, 0.830, 1.00 },
-  text = { 0.925, 0.955, 0.975, 1.00 },
-  textSecondary = { 0.725, 0.790, 0.835, 1.00 },
-  textMuted = { 0.500, 0.590, 0.660, 1.00 },
-  textAccent = { 0.250, 0.740, 0.950, 1.00 },
-  groupAccent = { 0.250, 0.740, 0.950, 1.00 },
-  navigation = { 0.340, 0.860, 0.560, 1.00 },
-  success = { 0.025, 0.360, 0.310, 1.00 },
-  successBorder = { 0.070, 0.760, 0.640, 1.00 },
+  canvas = { 0.050, 0.068, 0.085, 0.99 },
+  canvasAlt = { 0.039, 0.053, 0.068, 0.99 },
+  control = { 0.075, 0.108, 0.135, 0.95 },
+  surface = { 0.068, 0.090, 0.110, 0.98 },
+  surfaceRaised = { 0.088, 0.115, 0.138, 0.99 },
+  surfaceHover = { 0.105, 0.140, 0.165, 1.00 },
+  surfacePressed = { 0.045, 0.210, 0.170, 1.00 },
+  rowOdd = { 0.060, 0.080, 0.098, 0.96 },
+  rowEven = { 0.074, 0.097, 0.117, 0.96 },
+  accentSoft = { 0.028, 0.200, 0.155, 0.96 },
+  accent = { 0.047, 0.824, 0.616, 1.00 },
+  accentBright = { 0.330, 0.930, 0.760, 1.00 },
+  border = { 0.150, 0.185, 0.210, 1.00 },
+  borderStrong = { 0.205, 0.250, 0.280, 1.00 },
+  borderFocus = { 0.047, 0.700, 0.525, 1.00 },
+  text = { 0.950, 0.960, 0.970, 1.00 },
+  textSecondary = { 0.760, 0.790, 0.810, 1.00 },
+  textMuted = { 0.520, 0.560, 0.590, 1.00 },
+  textAccent = { 0.180, 0.860, 0.660, 1.00 },
+  groupAccent = { 0.180, 0.860, 0.660, 1.00 },
+  navigation = { 0.560, 0.600, 0.630, 1.00 },
+  success = { 0.028, 0.200, 0.155, 1.00 },
+  successBorder = { 0.047, 0.824, 0.616, 1.00 },
   danger = { 0.310, 0.055, 0.070, 0.92 },
-  dangerBorder = { 0.760, 0.180, 0.200, 1.00 },
+  dangerBorder = { 0.880, 0.345, 0.370, 1.00 },
+  toggleTrackOff = { 0.180, 0.215, 0.240, 1.00 },
+  toggleKnobOff = { 0.620, 0.650, 0.670, 1.00 },
+  toggleKnobOn = { 1.000, 1.000, 1.000, 1.00 },
 }
 
 Theme.primaryFont = "Fonts\\ARIALN.TTF"
+
+-- Editor-only glyph/shape textures ship with PopAuras_Options (the editor is
+-- the only consumer of these Theme widgets).
+Theme.SHAPE_PATH = "Interface\\AddOns\\PopAuras_Options\\Media\\Icons\\"
+local PILL_TEXTURE = Theme.SHAPE_PATH .. "UiPill"
+local KNOB_TEXTURE = Theme.SHAPE_PATH .. "UiKnob"
+local CHEVRON_TEXTURE = Theme.SHAPE_PATH .. "UiChevron"
+
+-- When EllesmereUI is installed, the editor borrows its Expressway face so the
+-- two configuration windows read as one family. Probed once; falls back to
+-- Arial Narrow if the file cannot be loaded.
+local ELLESMERE_EDITOR_FONT = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
+
+function Theme.GetEditorFont()
+  if Theme._editorFont == nil then
+    Theme._editorFont = false
+    local Media = ns.util.Media
+    if Media and Media.IsEllesmereAvailable and Media:IsEllesmereAvailable() and UIParent then
+      local probe = UIParent:CreateFontString(nil, "OVERLAY")
+      local ok, loaded = pcall(probe.SetFont, probe, ELLESMERE_EDITOR_FONT, 12, "")
+      if ok and loaded then
+        Theme._editorFont = ELLESMERE_EDITOR_FONT
+      end
+      probe:Hide()
+    end
+  end
+  return Theme._editorFont or Theme.primaryFont
+end
 
 Theme.typography = {
   micro = { size = 9, outline = "" },
@@ -100,8 +133,18 @@ function Theme.ApplyTypography(fontString, role, outlineOverride)
     fontString,
     definition.size,
     outlineOverride == nil and definition.outline or outlineOverride,
-    definition.file or Theme.primaryFont
+    definition.file or Theme.GetEditorFont()
   )
+end
+
+-- For previews that must mirror an aura's own configured font size instead of
+-- an editor typography role. Keeps every editor font call routed via Theme.
+function Theme.ApplyFontSize(fontString, size, outline)
+  if not fontString then
+    return
+  end
+  local resolved = math.max(6, math.floor((tonumber(size) or 12) + 0.5))
+  Fonts.Apply(fontString, resolved, outline or "", Theme.primaryFont)
 end
 
 function Theme.PixelSetPoint(region, point, relativeTo, relativePoint, x, y)
@@ -459,10 +502,32 @@ function Theme.StyleCheckbox(check)
   Theme.SetText(check.Text, "textSecondary")
 end
 
+-- Pill switch: a rounded 38x20 track (accent when on, dim when off) with a
+-- round 14px knob that slides between the ends. The track is drawn centred in
+-- whatever hit area the caller sized, so existing layouts keep their spacing.
+local TOGGLE_TRACK_W, TOGGLE_TRACK_H, TOGGLE_KNOB = 38, 20, 14
+local TOGGLE_KNOB_X = (TOGGLE_TRACK_W - TOGGLE_KNOB) / 2 - 3
+
 local function PositionToggleKnob(check, offsetX)
   check._popAurasToggleKnob:ClearAllPoints()
-  check._popAurasToggleKnob:SetPoint("CENTER", check, "CENTER", offsetX, 0)
+  check._popAurasToggleKnob:SetPoint("CENTER", check._popAurasToggleTrack, "CENTER", offsetX, 0)
   check._popAurasToggleX = offsetX
+end
+
+local function ApplyToggleColors(check, hovered)
+  local checked = check:GetChecked() and true or false
+  local enabled = not check.IsEnabled or check:IsEnabled()
+  local track = check._popAurasToggleTrack
+  if checked then
+    local accent = Theme.GetColor(hovered and "accentBright" or "accent")
+    track:SetVertexColor(accent[1], accent[2], accent[3], 0.90)
+  else
+    local off = Theme.GetColor(hovered and "borderStrong" or "toggleTrackOff")
+    track:SetVertexColor(off[1], off[2], off[3], 1)
+  end
+  Theme.SetTexture(check._popAurasToggleKnob, checked and "toggleKnobOn" or "toggleKnobOff")
+  track:SetAlpha(enabled and 1 or 0.4)
+  check._popAurasToggleKnob:SetAlpha(enabled and 1 or 0.4)
 end
 
 function Theme.UpdateToggle(check, animate)
@@ -471,9 +536,8 @@ function Theme.UpdateToggle(check, animate)
   end
 
   local checked = check:GetChecked() and true or false
-  local targetX = checked and 10 or -10
-  SetFlatBoxColors(check, checked and "accentSoft" or "surfaceRaised", checked and "accent" or "border")
-  Theme.SetTexture(check._popAurasToggleKnob, checked and "accentBright" or "textSecondary")
+  local targetX = checked and TOGGLE_KNOB_X or -TOGGLE_KNOB_X
+  ApplyToggleColors(check, check._popAurasToggleHovered == true)
 
   local currentX = tonumber(check._popAurasToggleX)
   if animate and currentX and math.abs(targetX - currentX) > 0.1 then
@@ -481,7 +545,7 @@ function Theme.UpdateToggle(check, animate)
     local elapsedTotal = 0
     check:SetScript("OnUpdate", function(self, elapsed)
       elapsedTotal = elapsedTotal + (tonumber(elapsed) or 0)
-      local progress = math.min(1, elapsedTotal / 0.12)
+      local progress = math.min(1, elapsedTotal / 0.09)
       local eased = 1 - ((1 - progress) * (1 - progress))
       PositionToggleKnob(self, startX + ((targetX - startX) * eased))
       if progress >= 1 then
@@ -500,11 +564,16 @@ function Theme.StyleToggle(check)
   end
 
   HideTextureRegions(check)
-  EnsureFlatBox(check)
+  if not check._popAurasToggleTrack then
+    check._popAurasToggleTrack = check:CreateTexture(nil, "ARTWORK", nil, 1)
+    check._popAurasToggleTrack:SetTexture(PILL_TEXTURE)
+    check._popAurasToggleTrack:SetSize(TOGGLE_TRACK_W, TOGGLE_TRACK_H)
+    check._popAurasToggleTrack:SetPoint("CENTER")
+  end
   if not check._popAurasToggleKnob then
     check._popAurasToggleKnob = check:CreateTexture(nil, "OVERLAY")
-    check._popAurasToggleKnob:SetTexture(WHITE_TEXTURE)
-    check._popAurasToggleKnob:SetSize(14, 14)
+    check._popAurasToggleKnob:SetTexture(KNOB_TEXTURE)
+    check._popAurasToggleKnob:SetSize(TOGGLE_KNOB, TOGGLE_KNOB)
   end
 
   if not check._popAurasToggleHooks then
@@ -516,12 +585,21 @@ function Theme.StyleToggle(check)
       Theme.UpdateToggle(self)
     end)
     check:HookScript("OnEnter", function(self)
-      local checked = self:GetChecked() and true or false
-      SetFlatBoxColors(self, checked and "accentSoft" or "surfaceHover", checked and "accentBright" or "borderFocus")
+      self._popAurasToggleHovered = true
+      ApplyToggleColors(self, true)
     end)
     check:HookScript("OnLeave", function(self)
-      Theme.UpdateToggle(self)
+      self._popAurasToggleHovered = false
+      ApplyToggleColors(self, false)
     end)
+    -- Panels often call SetChecked/Enable/Disable directly while refreshing;
+    -- keep the switch visual in step without every caller remembering to.
+    if type(hooksecurefunc) == "function" then
+      hooksecurefunc(check, "SetChecked", function(self) Theme.UpdateToggle(self) end)
+      hooksecurefunc(check, "SetEnabled", function(self) ApplyToggleColors(self, false) end)
+      hooksecurefunc(check, "Enable", function(self) ApplyToggleColors(self, false) end)
+      hooksecurefunc(check, "Disable", function(self) ApplyToggleColors(self, false) end)
+    end
   end
 
   Theme.UpdateToggle(check)
@@ -531,11 +609,11 @@ local function ApplyDropdownState(dropdown, hovered)
   if dropdown._popAurasDropdownStyle == "success" then
     SetFlatBoxColors(dropdown, "success", hovered and "text" or "successBorder")
     Theme.SetText(dropdown.Text, "text")
-    Theme.SetText(dropdown._popAurasArrow, hovered and "text" or "successBorder")
+    Theme.SetTexture(dropdown._popAurasArrow, hovered and "text" or "successBorder")
   else
     SetFlatBoxColors(dropdown, hovered and "surfaceRaised" or "control", hovered and "borderFocus" or "border")
     Theme.SetText(dropdown.Text, hovered and "text" or "textSecondary")
-    Theme.SetText(dropdown._popAurasArrow, hovered and "accentBright" or "textAccent")
+    Theme.SetTexture(dropdown._popAurasArrow, hovered and "text" or "textMuted")
   end
 end
 
@@ -670,10 +748,10 @@ function Theme.StyleDropdown(dropdown, styleKey)
   end
 
   if not dropdown._popAurasArrow then
-    dropdown._popAurasArrow = dropdown:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(dropdown._popAurasArrow, 11, "")
-    dropdown._popAurasArrow:SetPoint("RIGHT", dropdown, "RIGHT", -23, 1)
-    dropdown._popAurasArrow:SetText("v")
+    dropdown._popAurasArrow = dropdown:CreateTexture(nil, "OVERLAY")
+    dropdown._popAurasArrow:SetTexture(CHEVRON_TEXTURE)
+    dropdown._popAurasArrow:SetSize(12, 12)
+    dropdown._popAurasArrow:SetPoint("RIGHT", dropdown, "RIGHT", -24, 1)
   end
 
   if dropdown.Text then
@@ -701,28 +779,18 @@ local function StyleScrollButton(button, label)
     return
   end
 
+  -- EllesmereUI-style scrollbars have no step arrows: wheel and thumb only.
   HideTextureRegions(button)
-  button:SetSize(14, 14)
-  button:SetNormalTexture(WHITE_TEXTURE)
-  button:SetPushedTexture(WHITE_TEXTURE)
-  button:SetHighlightTexture(WHITE_TEXTURE, "ADD")
-
-  button:GetNormalTexture():SetAlpha(1)
-  button:GetPushedTexture():SetAlpha(1)
-  Theme.SetTexture(button:GetNormalTexture(), "surfaceRaised")
-  Theme.SetTexture(button:GetPushedTexture(), "surfacePressed")
-  local highlight = button:GetHighlightTexture()
-  highlight:SetAlpha(1)
-  local accent = Theme.GetColor("accent")
-  highlight:SetVertexColor(accent[1], accent[2], accent[3], 0.28)
-
-  if not button._popAurasScrollLabel then
-    button._popAurasScrollLabel = button:CreateFontString(nil, "OVERLAY")
-    Fonts.Apply(button._popAurasScrollLabel, 10, "")
-    button._popAurasScrollLabel:SetPoint("CENTER", 0, 0)
-    button._popAurasScrollLabel:SetText(label)
-    Theme.SetText(button._popAurasScrollLabel, "textAccent")
+  HideButtonStateTexture(button, "NormalTexture", "GetNormalTexture")
+  HideButtonStateTexture(button, "PushedTexture", "GetPushedTexture")
+  HideButtonStateTexture(button, "DisabledTexture", "GetDisabledTexture")
+  HideButtonStateTexture(button, "HighlightTexture", "GetHighlightTexture")
+  if button._popAurasScrollLabel then
+    button._popAurasScrollLabel:Hide()
   end
+  button:SetSize(8, 1)
+  button:SetAlpha(0)
+  button:EnableMouse(false)
 end
 
 function Theme.StyleScrollFrame(scrollFrame)
@@ -743,28 +811,27 @@ function Theme.StyleScrollFrame(scrollFrame)
     return
   end
 
-  scrollBar:SetWidth(14)
+  scrollBar:SetWidth(8)
   HideRegion(scrollBar.Track)
 
   if not scrollBar._popAurasTrack then
     scrollBar._popAurasTrack = scrollBar:CreateTexture(nil, "BACKGROUND")
     scrollBar._popAurasTrack:SetTexture(WHITE_TEXTURE)
-    scrollBar._popAurasTrack:SetPoint("TOP", 0, -15)
-    scrollBar._popAurasTrack:SetPoint("BOTTOM", 0, 15)
-    scrollBar._popAurasTrack:SetWidth(4)
+    scrollBar._popAurasTrack:SetPoint("TOP", 0, -2)
+    scrollBar._popAurasTrack:SetPoint("BOTTOM", 0, 2)
+    scrollBar._popAurasTrack:SetWidth(2)
   end
-  Theme.SetTexture(scrollBar._popAurasTrack, "control")
+  Theme.SetTexture(scrollBar._popAurasTrack, "border")
 
   if scrollBar.Background then
-    scrollBar.Background:SetTexture(WHITE_TEXTURE)
-    Theme.SetTexture(scrollBar.Background, "canvas")
+    HideRegion(scrollBar.Background)
   end
 
   local thumb = scrollBar.GetThumbTexture and scrollBar:GetThumbTexture() or scrollBar.ThumbTexture
   if thumb then
     thumb:SetTexture(WHITE_TEXTURE)
-    thumb:SetWidth(6)
-    Theme.SetTexture(thumb, "accent")
+    thumb:SetWidth(4)
+    Theme.SetTexture(thumb, "textMuted")
   end
 
   local upButton = scrollBar.ScrollUpButton or scrollBar.UpButton
