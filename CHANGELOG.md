@@ -1,5 +1,5 @@
-# v12.1.12
-- Redesigned the options window with a single teal accent, flat setting rows, rounded switches, slimmer scrollbars, and the EllesmereUI font when EllesmereUI is installed.
+# v12.1.13
+- Redesigned the options window with a single teal accent, flat setting rows, rounded switches, and slimmer scrollbars.
 - The aura list now shows each aura's icon. A single actions button (or right-click) moves, duplicates, groups, ungroups, or deletes an aura, and a grip shows that rows can be dragged.
 - Added a live preview of the selected aura to the editor header.
 - Added a settings search that jumps to and highlights the matching option.
@@ -8,6 +8,9 @@
 - Redesigned the Create a New Aura page with grouped categories, new type icons, a type filter, and a cleaner create dialog.
 - Debug Trigger and Preview Animation are now icon buttons in the editor header.
 - Updated for patch 12.1.7, and spell icon lookups now ignore restricted values.
+
+# v12.1.12
+- First release of the options redesign described in v12.1.13.
 
 # v12.1.11
 - Added an Arrange screen to adjust auras and groups using a grid.

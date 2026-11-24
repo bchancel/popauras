@@ -40,9 +40,9 @@ if ($tocText -notmatch '(?m)^## Interface:\s*120100,\s*120107\s*$' -or
     $optionsTocText -notmatch '(?m)^## Interface:\s*120100,\s*120107\s*$') {
     throw "Core and options TOCs must target interfaces 120100 and 120107"
 }
-if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.12\s*$' -or
-    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.12\s*$') {
-    throw "Core and options metadata are not aligned to release 12.1.12"
+if ($tocText -notmatch '(?m)^## Version:\s*12\.1\.13\s*$' -or
+    $optionsTocText -notmatch '(?m)^## Version:\s*12\.1\.13\s*$') {
+    throw "Core and options metadata are not aligned to release 12.1.13"
 }
 if ($optionsTocText -notmatch '(?m)^## LoadOnDemand:\s*1\s*$' -or
     $optionsTocText -notmatch '(?m)^## Dependencies:\s*PopAuras\s*$') {
